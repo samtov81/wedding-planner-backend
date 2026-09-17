@@ -30,6 +30,14 @@ export class ForbiddenError extends DomainError {
   }
 }
 
+/** Identidad ausente o rechazada: credenciales inválidas, token caducado. */
+export class UnauthorizedError extends DomainError {
+  readonly httpStatus = 401
+  constructor(message: string, code = 'UNAUTHORIZED') {
+    super(message, code)
+  }
+}
+
 export class ConflictError extends DomainError {
   readonly httpStatus = 409
   constructor(message: string, code = 'CONFLICT') {

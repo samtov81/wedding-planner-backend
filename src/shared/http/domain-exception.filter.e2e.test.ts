@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-assignment */
 import {
   Controller,
   Get,
@@ -41,7 +41,7 @@ interface ErrorResponse {
 
 describe('DomainExceptionFilter e2e', () => {
   let app: INestApplication
-  let server: unknown
+  let server: any
 
   beforeAll(async () => {
     app = await NestFactory.create(TestAppModule, { logger: false })
@@ -55,7 +55,7 @@ describe('DomainExceptionFilter e2e', () => {
   })
 
   it('traduce un error de dominio a su código HTTP en la aplicación real', async () => {
-    const response = (await (request(server) as unknown).get('/test/not-found')) as {
+    const response = (await request(server).get('/test/not-found')) as {
       status: number
       body: ErrorResponse
     }
@@ -68,7 +68,7 @@ describe('DomainExceptionFilter e2e', () => {
   })
 
   it('nunca incluye el stack en la respuesta en la aplicación real', async () => {
-    const response = (await (request(server) as unknown).get('/test/not-found')) as {
+    const response = (await request(server).get('/test/not-found')) as {
       body: ErrorResponse
     }
 
@@ -76,7 +76,7 @@ describe('DomainExceptionFilter e2e', () => {
   })
 
   it('incluye requestId en la respuesta', async () => {
-    const response = (await (request(server) as unknown).get('/test/not-found')) as {
+    const response = (await request(server).get('/test/not-found')) as {
       body: ErrorResponse
     }
 
@@ -88,7 +88,7 @@ describe('DomainExceptionFilter e2e', () => {
   })
 
   it('propaga el requestId del header x-request-id si está presente', async () => {
-    const response = (await (request(server) as unknown)
+    const response = (await request(server)
       .get('/test/not-found')
       .set('x-request-id', 'custom-req-123')) as { body: ErrorResponse }
 
@@ -96,7 +96,7 @@ describe('DomainExceptionFilter e2e', () => {
   })
 
   it('devuelve el x-request-id en la cabecera de respuesta', async () => {
-    const response = (await (request(server) as unknown).get('/test/not-found')) as {
+    const response = (await request(server).get('/test/not-found')) as {
       headers: Record<string, unknown>
     }
 

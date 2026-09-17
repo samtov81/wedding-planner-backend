@@ -28,6 +28,7 @@
     "@nestjs/platform-express": "^11.2.5",
     "@prisma/client": "^6.19.3",
     "@react-email/components": "^1.0.12",
+    "argon2": "^0.45.1",
     "bullmq": "^6.3.6",
     "ioredis": "^6.0.0",
     "nestjs-pino": "^5.2.0",

@@ -13,7 +13,12 @@ export default tseslint.config(
           // Los ficheros de configuración en la raíz (este, dependency-cruiser,
           // vitest) no viven bajo el tsconfig de src/test: se lintean sin el
           // programa de tipos del proyecto en vez de fallar el parseo.
-          allowDefaultProject: ['eslint.config.mjs', '.dependency-cruiser.cjs', 'vitest.config.ts'],
+          allowDefaultProject: [
+            'eslint.config.mjs',
+            '.dependency-cruiser.cjs',
+            'vitest.config.ts',
+            'prisma.config.ts',
+          ],
         },
         tsconfigRootDir: import.meta.dirname,
       },

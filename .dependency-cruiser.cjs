@@ -21,10 +21,14 @@ module.exports = {
         'domain/ es el núcleo: entidades y reglas puras. No conoce Prisma, ni NestJS, ni Zod, ' +
         'ni ningún paquete externo. Los módulos nativos de Node (node:crypto, etc.) son ' +
         'primitivas de la plataforma, no dependencias sustituibles, y quedan permitidos. Si ' +
-        'necesita algo de node_modules, es un puerto en application/.',
-      from: { path: '^src/modules/[^/]+/domain' },
+        'necesita algo de node_modules, es un puerto en application/. El domain/ de un módulo ' +
+        'tampoco puede importar el domain/ de OTRO módulo: eso salta su puerto público igual ' +
+        'que si importara su infrastructure/. `$1` ata el permiso al mismo módulo capturado en ' +
+        '`from.path` (dependency-cruiser sí sustituye backreferences en `to.pathNot`, no sólo ' +
+        'en `to.path`; ver la regla `modulos-no-se-tocan-las-tripas` de abajo, que ya lo hacía).',
+      from: { path: '^src/modules/([^/]+)/domain' },
       to: {
-        pathNot: `^src/(modules/[^/]+/domain|shared/domain)|${NODE_BUILTINS}`,
+        pathNot: `^src/modules/$1/domain|^src/shared/domain|${NODE_BUILTINS}`,
         dependencyTypesNot: ['type-only'],
       },
     },

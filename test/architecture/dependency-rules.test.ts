@@ -80,6 +80,51 @@ describe('regla de dependencia', () => {
 // (`(?!$1)`) que dependency-cruiser no soporta — `$1` sólo se sustituye
 // dentro de `path`/`pathNot`, nunca dentro de un lookahead. Esta suite
 // comprueba que, tras la reescritura, la regla SÍ dispara de verdad.
+// Corrección 3: el `[^/]+` de `to.pathNot` en domain-no-depende-de-nada no
+// estaba atado al módulo capturado en `from`, así que el domain/ de un módulo
+// podía importar el domain/ de OTRO módulo y saltarse su puerto público. Se
+// reescribe con un grupo de captura en `from.path` y `$1` en `to.pathNot`
+// (el mismo patrón que ya usaba `modulos-no-se-tocan-las-tripas`).
+describe('regla domain-no-depende-de-nada entre módulos distintos', () => {
+  const moduloA = join(process.cwd(), 'src/modules/__probe_dom_a__')
+  const moduloB = join(process.cwd(), 'src/modules/__probe_dom_b__')
+
+  afterEach(() => {
+    rmSync(moduloA, { recursive: true, force: true })
+    rmSync(moduloB, { recursive: true, force: true })
+  })
+
+  it('rechaza que el domain/ de un módulo importe el domain/ de otro módulo', () => {
+    mkdirSync(join(moduloB, 'domain'), { recursive: true })
+    writeFileSync(join(moduloB, 'domain', 'entidad.ts'), 'export const entidad = 1\n')
+
+    mkdirSync(join(moduloA, 'domain'), { recursive: true })
+    writeFileSync(
+      join(moduloA, 'domain', 'malo.ts'),
+      "import { entidad } from '../../__probe_dom_b__/domain/entidad'\nexport const y = entidad\n",
+    )
+
+    const { code, salida } = correrCruiser()
+
+    expect(code).not.toBe(0)
+    expect(salida).toMatch(/domain-no-depende-de-nada/)
+  })
+
+  it('acepta que el domain/ de un módulo importe su PROPIO domain/', () => {
+    mkdirSync(join(moduloA, 'domain'), { recursive: true })
+    writeFileSync(join(moduloA, 'domain', 'entidad.ts'), 'export const entidad = 1\n')
+    writeFileSync(
+      join(moduloA, 'domain', 'usaEntidad.ts'),
+      "import { entidad } from './entidad'\nexport const y = entidad\n",
+    )
+
+    const { code, salida } = correrCruiser()
+
+    expect(code).toBe(0)
+    expect(salida).not.toMatch(/domain-no-depende-de-nada/)
+  })
+})
+
 describe('regla modulos-no-se-tocan-las-tripas', () => {
   const moduloA = join(process.cwd(), 'src/modules/__probe_a__')
   const moduloB = join(process.cwd(), 'src/modules/__probe_b__')

@@ -1,0 +1,248 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SystemRole {
+  USER
+  ADMIN
+}
+
+enum EventRole {
+  COUPLE
+  PLANNER
+}
+
+enum MembershipStatus {
+  INVITED
+  ACTIVE
+  REVOKED
+}
+
+enum VendorProfileStatus {
+  DRAFT
+  PUBLISHED
+  SUSPENDED
+}
+
+enum EventVendorStatus {
+  SHORTLISTED
+  BOOKED
+  CANCELLED
+}
+
+enum RsvpStatus {
+  CONFIRMED
+  PENDING
+  DECLINED
+}
+
+enum InvitationStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  BOUNCED
+  COMPLAINED
+  RESPONDED
+}
+
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  email           String     @unique
+  passwordHash    String
+  fullName        String
+  systemRole      SystemRole @default(USER)
+  emailVerifiedAt DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  sessions      Session[]
+  memberships   EventMembership[]
+  ownedEvents   Event[]           @relation("EventOwner")
+  vendorProfile VendorProfile?
+  notifications Notification[]
+
+  @@map("users")
+}
+
+/// Refresh tokens. Se guarda el HASH, nunca el token. `familyId` agrupa la
+/// cadena de rotaciones: presentar uno ya revocado sólo puede ser un robo, y
+/// entonces cae la familia entera (ver Tarea 7).
+model Session {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  familyId  String    @db.Uuid
+  expiresAt DateTime
+  revokedAt DateTime?
+  ip        String?
+  userAgent String?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("sessions")
+}
+
+/// Ficha de marketplace. Existe sin ningún evento: un proveedor puede
+/// registrarse y publicarse con cero bodas contratadas.
+model VendorProfile {
+  id           String              @id @default(uuid()) @db.Uuid
+  userId       String              @unique @db.Uuid
+  businessName String
+  category     String
+  specialty    String?
+  bio          String?
+  contact      Json?
+  status       VendorProfileStatus @default(DRAFT)
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventVendors EventVendor[]
+
+  @@index([category, status])
+  @@map("vendor_profiles")
+}
+
+model Event {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          String
+  weddingDate   DateTime
+  timezone      String   @default("UTC")
+  venueLocation String?
+  ownerId       String   @db.Uuid
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  owner         User              @relation("EventOwner", fields: [ownerId], references: [id])
+  memberships   EventMembership[]
+  vendors       EventVendor[]
+  guests        Guest[]
+  notifications Notification[]
+
+  @@index([ownerId])
+  @@map("events")
+}
+
+/// Quienes PLANIFICAN el evento. No incluye vendors: ver EventVendor.
+model EventMembership {
+  id          String           @id @default(uuid()) @db.Uuid
+  eventId     String           @db.Uuid
+  userId      String           @db.Uuid
+  role        EventRole
+  status      MembershipStatus @default(ACTIVE)
+  invitedById String?          @db.Uuid
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([eventId, userId])
+  @@index([userId])
+  @@map("event_memberships")
+}
+
+/// Quien TRABAJA en el evento: relación comercial, no membresía. O bien apunta
+/// a una ficha del marketplace, o bien lleva los datos de un proveedor sin
+/// cuenta. Exactamente uno de los dos — lo garantiza un CHECK, ver Step 3.
+model EventVendor {
+  id              String            @id @default(uuid()) @db.Uuid
+  eventId         String            @db.Uuid
+  vendorProfileId String?           @db.Uuid
+  externalName    String?
+  externalEmail   String?
+  externalPhone   String?
+  category        String
+  specialty       String?
+  assignedBudget  Decimal?          @db.Decimal(12, 2)
+  status          EventVendorStatus @default(SHORTLISTED)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  vendorProfile VendorProfile? @relation(fields: [vendorProfileId], references: [id])
+
+  @@index([eventId])
+  @@index([vendorProfileId])
+  @@map("event_vendors")
+}
+
+/// `email` es opcional: se invita también por teléfono, en persona o por carta.
+/// La unicidad es un índice PARCIAL (ver Step 3) para no estorbar a quien no
+/// tiene correo, sin dejar de impedir invitar dos veces al mismo buzón.
+model Guest {
+  id        String     @id @default(uuid()) @db.Uuid
+  eventId   String     @db.Uuid
+  name      String
+  email     String?
+  group     String
+  rsvp      RsvpStatus @default(PENDING)
+  dietary   String?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  event       Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  invitations GuestInvitation[]
+
+  // Orden estable de paginación por cursor: (createdAt, id) es único y total.
+  @@index([eventId, createdAt, id])
+  @@index([eventId, rsvp])
+  @@map("guests")
+}
+
+model GuestInvitation {
+  id              String           @id @default(uuid()) @db.Uuid
+  guestId         String           @db.Uuid
+  tokenHash       String           @unique
+  status          InvitationStatus @default(QUEUED)
+  resendMessageId String?
+  sentAt          DateTime?
+  respondedAt     DateTime?
+  expiresAt       DateTime
+  createdAt       DateTime         @default(now())
+
+  guest Guest @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  @@index([guestId])
+  @@index([resendMessageId])
+  @@map("guest_invitations")
+}
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  eventId   String    @db.Uuid
+  userId    String    @db.Uuid
+  type      String
+  payload   Json
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([eventId, createdAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @db.Uuid
+  eventId     String?  @db.Uuid
+  action      String
+  target      String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  @@index([eventId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@map("audit_logs")
+}

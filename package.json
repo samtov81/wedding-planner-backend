@@ -1,0 +1,37 @@
+{
+  "name": "backend-nucleo-invitados",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write .",
+    "build": "tsc -b",
+    "dev": "node --watch dist/main.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@nestjs/common": "^11.2.5",
+    "@nestjs/core": "^11.2.5",
+    "@nestjs/platform-express": "^11.2.5",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@swc/core": "^1.16.2",
+    "@types/node": "^26.6.1",
+    "prettier": "^3.9.7",
+    "typescript": "^5.9.3",
+    "unplugin-swc": "^1.6.0",
+    "vitest": "^3.2.7"
+  }
+}

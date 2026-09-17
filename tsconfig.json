@@ -7,6 +7,7 @@
     "rootDir": "./",
     "baseUrl": "./",
     "paths": { "@/*": ["src/*"] },
+    "jsx": "react-jsx",
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "strict": true,

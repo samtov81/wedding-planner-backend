@@ -7,13 +7,15 @@ import { EmailYaRegistradoError } from '../domain/user-errors'
 /**
  * Repositorio de usuarios en memoria para tests. Se comporta idénticamente
  * a `PrismaUserRepository`: normaliza emails, rechaza duplicados, filtra
- * el passwordHash en findById. Usado por Tarea 8 (autenticación) para
- * escribir tests sin dependencia en Prisma.
+ * el passwordHash en findById, devuelve createdAt/updatedAt.
+ * Usado por Tarea 8 (autenticación) para escribir tests sin dependencia en Prisma.
  */
-export class UserRepositoryEnMemoria implements UserRepository {
-  private usuarios: UserConHash[] = []
+type UserWithTimestamps = UserConHash & { createdAt: Date; updatedAt: Date }
 
-  constructor(usuariosIniciales: UserConHash[] = []) {
+export class UserRepositoryEnMemoria implements UserRepository {
+  private usuarios: UserWithTimestamps[] = []
+
+  constructor(usuariosIniciales: UserWithTimestamps[] = []) {
     this.usuarios = usuariosIniciales.map((u) => ({ ...u }))
   }
 
@@ -39,13 +41,16 @@ export class UserRepositoryEnMemoria implements UserRepository {
       throw new EmailYaRegistradoError()
     }
 
-    const usuario: UserConHash = {
+    const ahora = new Date()
+    const usuario: UserWithTimestamps = {
       id: randomUUID(),
       email: emailNormalizado,
       passwordHash: datos.passwordHash,
       fullName: datos.fullName,
       systemRole: 'USER',
       emailVerifiedAt: null,
+      createdAt: ahora,
+      updatedAt: ahora,
     }
 
     this.usuarios.push({ ...usuario })

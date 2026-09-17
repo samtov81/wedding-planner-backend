@@ -43,10 +43,13 @@ su propio ciclo de spec, plan e implementación.
 
 ### Fuera de alcance, deliberadamente
 
-Pagos y pasarela; almacenamiento de ficheros (S3) y todo lo que depende de él
-(moodboard, ficheros compartidos, contratos firmados); GraphQL; i18n;
-OpenTelemetry; multi-región. Ninguno lo necesita este vertical, y cada uno
-arrastra decisiones que merecen su propia ronda de diseño.
+Pagos y pasarela; los dominios que dependen de ficheros (moodboard, ficheros
+compartidos, contratos firmados); GraphQL; i18n; OpenTelemetry; multi-región.
+Ninguno lo necesita este vertical, y cada uno arrastra decisiones que merecen su
+propia ronda de diseño.
+
+El **almacenamiento de ficheros está decidido: Cloudflare R2** (§10.4). Lo que
+queda fuera son los dominios que lo consumen, no la elección de proveedor.
 
 ## 3. Decisiones tomadas
 
@@ -58,6 +61,7 @@ arrastra decisiones que merecen su propia ronda de diseño.
 | Runner de tests | Vitest | Mismo runner que el frontend: una sola cultura de tests entre repos. |
 | Contrato con el frontend | OpenAPI generado | El backend es fuente de verdad y publica OpenAPI generado desde sus Zod (`nestjs-zod` + `@nestjs/swagger`). Los repos siguen independientes; la divergencia la detecta la generación del cliente. |
 | Actores | 4 roles: pareja, vendor, planner, admin | Requisito de producto. |
+| Almacenamiento | Cloudflare R2 | Compatible con la API de S3 y sin coste de egress, que es el que más crece sirviendo moodboards y portfolios. |
 
 ## 4. Arquitectura
 
@@ -135,9 +139,9 @@ EventVendor       id, eventId, category, specialty, assignedBudget,
                   CHECK: exactamente uno de los dos lados presente
                   └ quien TRABAJA en el evento: relación comercial, no membresía
 
-Guest             id, eventId, name, email, group, rsvp(CONFIRMED|PENDING|DECLINED),
+Guest             id, eventId, name, email?, group, rsvp(CONFIRMED|PENDING|DECLINED),
                   dietary?, timestamps
-                  UNIQUE(eventId, email)
+                  UNIQUE(eventId, email) WHERE email IS NOT NULL
 
 GuestInvitation   id, guestId, tokenHash(unique), status(QUEUED|SENT|DELIVERED|
                   BOUNCED|COMPLAINED|RESPONDED), resendMessageId?,
@@ -189,6 +193,32 @@ Los contadores de invitados por estado de RSVP se calculan con `GROUP BY` sobre
 `Guest`. No existe ninguna columna de contador. Si el coste se vuelve un problema
 medido, se cachean en Redis con invalidación por escritura — **nunca** se
 persisten como fuente de verdad.
+
+### 5.4 El email del invitado es opcional
+
+No toda lista de invitados es una lista de correos: se invita por teléfono, en
+persona o por carta, y el frontend ya pinta `dietary` como `null` con un guion,
+así que la ausencia de dato no es un caso extraño en este dominio.
+
+La unicidad pasa a ser un **índice único parcial** (`WHERE email IS NOT NULL`):
+sigue impidiendo invitar dos veces al mismo correo dentro de un evento —que es
+lo que protege de envíos duplicados— y deja de estorbar a los invitados sin
+email. Dos invitados distintos **no** pueden compartir correo dentro del mismo
+evento; si eso hiciera falta (dos hermanos con un buzón común), habría que
+modelar el "grupo de invitación" como entidad propia, y eso no está en este
+alcance.
+
+La consecuencia real no está en el esquema sino en el caso de uso: **un invitado
+sin email no puede recibir invitación.** Eso no puede resolverse en silencio.
+
+- `POST /events/:eventId/guests/invitations` devuelve un resultado por invitado:
+  encolados y omitidos, con el motivo. Nunca descarta filas sin decirlo.
+- `POST /events/:eventId/guests/:guestId/invitation` sobre un invitado sin email
+  devuelve `422` con un error de dominio tipado (`GuestHasNoEmail`), no un `500`
+  del adaptador de correo ni un `202` mentiroso.
+- El RSVP de un invitado sin email lo registra la pareja o el planner a mano por
+  `PATCH /events/:eventId/guests/:guestId`. El flujo del token público es una vía
+  más de responder, no la única.
 
 ## 6. Autorización
 
@@ -362,6 +392,40 @@ sockets conectados a otra.
 Eventos emitidos: `guest.rsvp.updated`, `guest.invitation.status`,
 `notification.created`.
 
+### 10.4 Ficheros — Cloudflare R2
+
+**No se implementa en esta entrega.** El proveedor está decidido y las reglas de
+diseño quedan fijadas aquí, pero `StoragePort` y su adaptador se construyen con
+el primer dominio que suba ficheros (moodboard o contratos). El vertical de
+invitados no sube un solo byte, y una abstracción de almacenamiento sin ningún
+caso real que la atraviese es la forma habitual de acertar con la API
+equivocada.
+
+R2 es compatible con la API de S3, así que se integra con `@aws-sdk/client-s3`
+apuntando al endpoint de la cuenta. Lo que lo distingue de S3 y motiva la
+elección es que **no cobra egress**, que en un producto que sirve moodboards,
+portfolios de vendors y contratos es justo el coste que más crece.
+
+Como todo adaptador de este backend, entra por un puerto: `StoragePort` en
+`application/` (`presignUpload`, `presignDownload`, `delete`), implementación R2
+en `infrastructure/`. En tests, un adaptador en memoria.
+
+Dos reglas de diseño que se fijan ahora para que los dominios futuros las den por
+dadas:
+
+- **Los ficheros no atraviesan la API.** El cliente pide una URL prefirmada de
+  subida, sube directo a R2 y luego confirma contra el backend. Pasar binarios
+  por el proceso Node consume memoria, bloquea workers y no escala.
+- **El bucket es privado y no se sirve por URL pública.** La lectura también va
+  por URL prefirmada de vida corta, emitida sólo tras pasar la misma
+  autorización de evento que el resto. Un contrato de boda o la lista de
+  invitados en PDF no pueden quedar accesibles a quien adivine una URL.
+
+Los metadatos (clave en el bucket, tamaño, tipo, propietario, evento) se
+persisten en Postgres: R2 guarda bytes, no es el catálogo. El tipo declarado por
+el cliente no se cree — se valida contra una allowlist y contra un límite de
+tamaño en el momento de prefirmar.
+
 ## 11. Seguridad
 
 - `helmet`; CORS con allowlist explícita, nunca `*`; límites de tamaño de cuerpo.
@@ -441,3 +505,9 @@ que produjo.
 11. Arrancar sin una variable de entorno obligatoria falla inmediatamente y con
     un mensaje que nombra la variable.
 12. `/openapi.json` refleja los esquemas Zod reales de los DTOs.
+13. Se puede crear un invitado sin email, y el envío masivo lo reporta como
+    omitido con su motivo en vez de descartarlo en silencio.
+14. Pedir la invitación individual de un invitado sin email devuelve `422` con
+    `GuestHasNoEmail`.
+15. Dos invitados del mismo evento no pueden compartir email; varios invitados
+    sin email conviven sin violar el índice único parcial.

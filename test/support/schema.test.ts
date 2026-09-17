@@ -78,4 +78,33 @@ describe('restricciones del esquema', () => {
       }),
     ).rejects.toMatchObject({ code: 'P2002', meta: { target: ['eventId', 'email'] } })
   })
+
+  it('rechaza borrar una VendorProfile que tiene un EventVendor asociado', async () => {
+    const perfilUser = await prisma.user.create({
+      data: { email: 'con-historial@test.com', passwordHash: 'x', fullName: 'Con Historial' },
+    })
+    const perfil = await prisma.vendorProfile.create({
+      data: { userId: perfilUser.id, businessName: 'Con Historial SL', category: 'Fotografía' },
+    })
+    await prisma.eventVendor.create({
+      data: { eventId, vendorProfileId: perfil.id, category: 'Fotografía' },
+    })
+
+    await expect(prisma.vendorProfile.delete({ where: { id: perfil.id } })).rejects.toThrow(
+      /event_vendors_vendorProfileId_fkey/,
+    )
+  })
+
+  it('permite borrar una VendorProfile sin ningún EventVendor asociado', async () => {
+    const perfilUser = await prisma.user.create({
+      data: { email: 'sin-historial@test.com', passwordHash: 'x', fullName: 'Sin Historial' },
+    })
+    const perfil = await prisma.vendorProfile.create({
+      data: { userId: perfilUser.id, businessName: 'Sin Historial SL', category: 'DJ' },
+    })
+
+    await expect(prisma.vendorProfile.delete({ where: { id: perfil.id } })).resolves.toMatchObject({
+      id: perfil.id,
+    })
+  })
 })

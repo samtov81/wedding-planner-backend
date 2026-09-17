@@ -21,6 +21,13 @@ interface CuerpoError {
   message: string
 }
 
+interface CuerpoMe {
+  id: string
+  email: string
+  fullName: string
+  systemRole: string
+}
+
 /**
  * `Response.headers` de superagent lo tipa como `Record<string, string>`,
  * pero Node siempre entrega `set-cookie` como array (aunque sea de uno), por
@@ -86,10 +93,18 @@ describe('Auth e2e', () => {
     expect(cuerpoLogin.accessToken).toBeDefined()
     expect(cuerpoLogin.refreshToken).toBeUndefined() // va en cookie, no en el cuerpo
 
-    await request(server)
+    // `me` recarga el usuario de la base de datos, no reparte los claims del
+    // token: por eso trae email y nombre, y por eso un usuario borrado o
+    // degradado deja de pasar antes de que caduque su access token.
+    const yo = await request(server)
       .get('/auth/me')
       .set('Authorization', `Bearer ${cuerpoLogin.accessToken}`)
       .expect(200)
+    expect(yo.body as CuerpoMe).toMatchObject({
+      email: 'ana@test.com',
+      fullName: 'Ana',
+      systemRole: 'USER',
+    })
 
     // La cookie tal como llega del servidor (incluye Path y Expires): se
     // reenvía a mano porque `server` aquí no es un agente con jar propio.
@@ -106,11 +121,14 @@ describe('Auth e2e', () => {
     expect(cookieRotada).not.toBe(cookie)
 
     // El primer refresh token ya fue rotado: presentarlo de nuevo es un reuso
-    // y tiene que caer con 403, no colarse.
-    await request(server)
+    // y tiene que caer con 401, no colarse. 401 y no 403 porque un refresh
+    // muerto es un fallo de IDENTIDAD, no de permiso sobre un recurso: es lo
+    // que hace que el cliente dispare "re-autenticar".
+    const reuso = await request(server)
       .post('/auth/refresh')
       .set('Cookie', cookie ?? '')
-      .expect(403)
+      .expect(401)
+    expect((reuso.body as CuerpoError).code).toBe('REFRESH_REUSED')
 
     // Logout con la cookie vigente (la rotada) revoca la familia entera.
     await request(server)
@@ -122,7 +140,7 @@ describe('Auth e2e', () => {
     await request(server)
       .post('/auth/refresh')
       .set('Cookie', cookieRotada ?? '')
-      .expect(403)
+      .expect(401)
   })
 
   it('devuelve el mismo error para email inexistente y contraseña incorrecta', async () => {
@@ -147,7 +165,14 @@ describe('Auth e2e', () => {
     expect(cuerpoInexistente.message).toBe(cuerpoMalaClave.message)
   })
 
-  it('rechaza un registro duplicado con 409', async () => {
+  /**
+   * Ratifica una LIMITACIÓN CONOCIDA, no el comportamiento deseado a largo
+   * plazo: el 409 convierte `/auth/register` en un oráculo de enumeración de
+   * cuentas (ver el riesgo aceptado en `auth.controller.ts`). Se fija así
+   * mientras no exista el flujo de verificación de email (DESIGN-GAP #6) que
+   * permitiría responder siempre 201; cuando exista, este test cambia con él.
+   */
+  it('rechaza un registro duplicado con 409 (limitación conocida, no objetivo)', async () => {
     await request(server)
       .post('/auth/register')
       .send({ email: 'duplicado@test.com', password: 'una-contraseña-larga', fullName: 'D' })

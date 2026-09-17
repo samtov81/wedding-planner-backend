@@ -37,6 +37,19 @@ export class AuthController {
     @Inject(ENV) private readonly env: Env,
   ) {}
 
+  /**
+   * RIESGO ACEPTADO (ligado al DESIGN-GAP #6, `register.use-case.ts`):
+   * registrar un email ya existente responde `409 EMAIL_ALREADY_REGISTERED`,
+   * así que este endpoint permite ENUMERAR CUENTAS — basta leer el status, sin
+   * necesidad de cronometrar `/auth/login` como hace el hash señuelo de
+   * `LoginUseCase`. Se filtra una sola cosa: si un email concreto tiene cuenta.
+   * No se arregla aquí porque el arreglo correcto (responder siempre 201 y
+   * avisar por correo al dueño de la cuenta existente) exige emitir y canjear
+   * un token de verificación de email, y no hay tabla donde persistirlo: es
+   * exactamente lo que el DESIGN-GAP #6 documenta como inexistente. Lo
+   * desbloquea esa tabla más el endpoint de verificación; hasta entonces,
+   * media feature sin dónde guardarse sería peor que el riesgo conocido.
+   */
   @Post('register')
   async register(@Body() body: unknown): Promise<{ id: string; email: string; fullName: string }> {
     const datos = this.validar(registerSchema, body)
@@ -48,10 +61,18 @@ export class AuthController {
   @HttpCode(200)
   async login(
     @Body() body: unknown,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ accessToken: string }> {
     const datos = this.validar(loginSchema, body)
-    const { accessToken, refreshToken } = await this.loginUseCase.ejecutar(datos)
+    // El origen se captura aquí, que es el único sitio que lo conoce, y se
+    // guarda con la sesión: cuando salte la detección de reuso hay que poder
+    // decir desde qué IP y qué dispositivo nació esa familia.
+    const { accessToken, refreshToken } = await this.loginUseCase.ejecutar({
+      ...datos,
+      ip: req.ip ?? null,
+      userAgent: req.get('user-agent') ?? null,
+    })
     this.ponerCookieRefresh(res, refreshToken)
     return { accessToken }
   }

@@ -66,6 +66,24 @@ describe('RefreshUseCase', () => {
     expect(sesiones.familiaRevocada('familia-1')).toBe(true)
   })
 
+  it('dos rotaciones CONCURRENTES del mismo token: una gana, la otra es reuso', async () => {
+    const primero = await emitirPrimero()
+
+    // Las dos peticiones leen la sesión ANTES de que ninguna la revoque, así
+    // que ambas ven `revokedAt === null`: la comprobación de reuso por lectura
+    // no las distingue. Lo único que puede hacerlo es el compare-and-swap de
+    // `rotar`, que sólo una de las dos puede ganar.
+    const resultados = await Promise.allSettled([caso.ejecutar(primero), caso.ejecutar(primero)])
+
+    const rechazados = resultados.filter((r) => r.status === 'rejected')
+    expect(rechazados).toHaveLength(1)
+    expect((rechazados[0] as PromiseRejectedResult).reason).toBeInstanceOf(RefreshReutilizadoError)
+
+    // Y perder la carrera no es un incidente menor: es la firma de un token
+    // robado, así que cae la familia entera, incluido el hijo recién emitido.
+    expect(sesiones.familiaRevocada('familia-1')).toBe(true)
+  })
+
   it('rechaza un refresh que no existe', async () => {
     await expect(caso.ejecutar('inventado')).rejects.toThrow(RefreshInvalidoError)
   })

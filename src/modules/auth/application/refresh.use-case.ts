@@ -30,15 +30,28 @@ export class RefreshUseCase {
 
     if (sesion.expiresAt.getTime() <= Date.now()) throw new RefreshInvalidoError()
 
-    await this.sesiones.revocar(sesion.id)
-
     const nuevo = this.tokens.generarRefresh()
-    await this.sesiones.crear({
-      userId: sesion.userId,
-      tokenHash: nuevo.hash,
-      familyId: sesion.familyId,
-      expiresAt: this.tokens.caducidadRefresh(),
+
+    // Revocar + crear en UNA operación atómica. El booleano es el resultado
+    // del compare-and-swap: `false` significa que otra petición revocó esta
+    // misma sesión entre la lectura de arriba y este punto. Dos peticiones
+    // con el MISMO refresh sólo pueden ser el cliente legítimo y quien le
+    // copió el token, así que perder la carrera es reuso, exactamente igual
+    // que presentar uno ya revocado — y se trata igual: cae la familia.
+    const ganada = await this.sesiones.rotar({
+      sesionARevocar: sesion.id,
+      nueva: {
+        userId: sesion.userId,
+        tokenHash: nuevo.hash,
+        familyId: sesion.familyId,
+        expiresAt: this.tokens.caducidadRefresh(),
+      },
     })
+
+    if (!ganada) {
+      await this.sesiones.revocarFamilia(sesion.familyId)
+      throw new RefreshReutilizadoError()
+    }
 
     // El rol se relee del usuario, NO se asume: firmar siempre 'USER' degradaría
     // a un admin en cuanto refrescara, y cachearlo en la sesión dejaría vivo el

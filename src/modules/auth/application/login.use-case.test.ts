@@ -75,6 +75,29 @@ describe('LoginUseCase', () => {
     expect(sesion1?.familyId).not.toBe(sesion2?.familyId)
   })
 
+  it('guarda la IP y el User-Agent con la sesión', async () => {
+    const resultado = await caso.ejecutar({
+      email: 'ana@test.com',
+      password: 'clave-correcta',
+      ip: '203.0.113.7',
+      userAgent: 'Mozilla/5.0 (prueba)',
+    })
+
+    // Cuando salte la detección de reuso hay que poder decir desde dónde nació
+    // la familia; si estas columnas quedan a NULL, esa pregunta no tiene
+    // respuesta posible.
+    expect(sesiones.origenDe(resultado.refreshToken)).toEqual({
+      ip: '203.0.113.7',
+      userAgent: 'Mozilla/5.0 (prueba)',
+    })
+  })
+
+  it('deja el origen a null cuando el llamante no lo aporta', async () => {
+    const resultado = await caso.ejecutar({ email: 'ana@test.com', password: 'clave-correcta' })
+
+    expect(sesiones.origenDe(resultado.refreshToken)).toEqual({ ip: null, userAgent: null })
+  })
+
   it('rechaza una contraseña incorrecta con CredencialesInvalidasError', async () => {
     await expect(caso.ejecutar({ email: 'ana@test.com', password: 'incorrecta' })).rejects.toThrow(
       CredencialesInvalidasError,

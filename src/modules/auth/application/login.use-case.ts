@@ -25,6 +25,14 @@ const HASH_SENUELO =
 export interface DatosLogin {
   email: string
   password: string
+  /**
+   * Origen de la petición. Se guarda con la sesión porque el día que salte la
+   * detección de reuso la pregunta operativa es "¿desde qué IP y qué
+   * dispositivo se abrió esta familia?", y sin esto no hay con qué responder.
+   * Opcionales: un caso de uso disparado fuera de HTTP no los tiene.
+   */
+  ip?: string | null
+  userAgent?: string | null
 }
 
 @Injectable()
@@ -55,6 +63,8 @@ export class LoginUseCase {
       tokenHash: refresh.hash,
       familyId,
       expiresAt: this.tokens.caducidadRefresh(),
+      ip: datos.ip ?? null,
+      userAgent: datos.userAgent ?? null,
     })
 
     return {

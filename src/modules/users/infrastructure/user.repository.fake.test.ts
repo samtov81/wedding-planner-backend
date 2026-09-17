@@ -15,24 +15,20 @@ describe('Equivalencia: UserRepositoryEnMemoria vs PrismaUserRepository', () => 
     onModuleDestroy?: () => Promise<void>
   }
 
-  beforeAll(
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-explicit-any
-    async () => {
-      pg = await startPostgres()
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
-      const client: any = new PrismaClient({ datasources: { db: { url: pg.url } } })
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      client.onModuleInit = async () => {}
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      client.onModuleDestroy = async () => {}
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-      prisma = client
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
-      repoReal = new PrismaUserRepository(client)
-      repoFake = new UserRepositoryEnMemoria()
-    },
-    120_000,
-  )
+  beforeAll(async () => {
+    pg = await startPostgres()
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
+    const client: any = new PrismaClient({ datasources: { db: { url: pg.url } } })
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    client.onModuleInit = async () => {}
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    client.onModuleDestroy = async () => {}
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    prisma = client
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-argument
+    repoReal = new PrismaUserRepository(client)
+    repoFake = new UserRepositoryEnMemoria()
+  }, 120_000)
 
   afterAll(async () => {
     await prisma.$disconnect()
@@ -92,23 +88,23 @@ describe('Equivalencia: UserRepositoryEnMemoria vs PrismaUserRepository', () => 
       fullName: 'Bob',
     })
 
-    // Real: segundo create con distinta grafía debe lanzar
-    const realError = repoReal.create({
-      email: 'BOB@EXAMPLE.COM',
-      passwordHash: 'hash2',
-      fullName: 'Bob',
-    })
+    // Real: segundo create con distinta grafía debe lanzar — pasar directamente a expect
+    await expect(
+      repoReal.create({
+        email: 'BOB@EXAMPLE.COM',
+        passwordHash: 'hash2',
+        fullName: 'Bob',
+      }),
+    ).rejects.toThrow(EmailYaRegistradoError)
 
-    // Fake: segundo create con distinta grafía debe lanzar
-    const fakeError = repoFake.create({
-      email: 'BOB@EXAMPLE.COM',
-      passwordHash: 'hash2',
-      fullName: 'Bob',
-    })
-
-    // Ambas lanzan la MISMA clase de error
-    await expect(realError).rejects.toThrow(EmailYaRegistradoError)
-    await expect(fakeError).rejects.toThrow(EmailYaRegistradoError)
+    // Fake: segundo create con distinta grafía debe lanzar — pasar directamente a expect
+    await expect(
+      repoFake.create({
+        email: 'BOB@EXAMPLE.COM',
+        passwordHash: 'hash2',
+        fullName: 'Bob',
+      }),
+    ).rejects.toThrow(EmailYaRegistradoError)
   })
 
   it('findById devuelve objeto SIN passwordHash en ambas impls', async () => {

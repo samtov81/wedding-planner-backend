@@ -13,6 +13,7 @@ import type { MailMessage, MailPort, MailResult } from '../application/mail.port
 export class FakeMailAdapter implements MailPort {
   readonly enviados: MailMessage[] = []
   private fallo: Error | null = null
+  private readonly porClave = new Map<string, string>()
 
   /** Hace fallar SÓLO el siguiente envío: así se prueban los reintentos. */
   fallarProximoEnvio(error: Error): void {
@@ -26,7 +27,16 @@ export class FakeMailAdapter implements MailPort {
       return Promise.reject(error)
     }
 
+    // Misma clave, mismo resultado y ningún correo nuevo: como `Idempotency-Key`.
+    const previo =
+      mensaje.idempotencyKey === undefined ? undefined : this.porClave.get(mensaje.idempotencyKey)
+    if (previo !== undefined) return Promise.resolve({ providerMessageId: previo })
+
     this.enviados.push(mensaje)
-    return Promise.resolve({ providerMessageId: `fake-${randomUUID()}` })
+    const providerMessageId = `fake-${randomUUID()}`
+    if (mensaje.idempotencyKey !== undefined) {
+      this.porClave.set(mensaje.idempotencyKey, providerMessageId)
+    }
+    return Promise.resolve({ providerMessageId })
   }
 }

@@ -1,6 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq'
 import { Inject } from '@nestjs/common'
-import type { Job } from 'bullmq'
+import { UnrecoverableError, type Job } from 'bullmq'
+import { z } from 'zod'
 
 import { ENV } from '@/config/config.module'
 import {
@@ -13,17 +14,38 @@ import {
   INVITATION_REPOSITORY,
   type InvitationRepository,
 } from '../application/invitation.repository'
-import { COLA_EMAIL, type PayloadInvitacion } from '../application/send-invitations.use-case'
+import {
+  COLA_EMAIL,
+  JOB_INVITACION,
+  jobIdDeInvitacion,
+  type PayloadInvitacion,
+} from '../application/send-invitations.use-case'
+
+/**
+ * Lo que sale de Redis es ENTRADA: otro proceso lo escribió y puede venir de una
+ * versión anterior del código. Se valida como cualquier otra frontera.
+ */
+const payloadInvitacionSchema = z.object({
+  invitationId: z.string().min(1),
+  token: z.string().min(1),
+  requestId: z.string(),
+}) satisfies z.ZodType<PayloadInvitacion>
 
 /**
  * Worker de las invitaciones. Vive en `interfaces/` por el mismo motivo que un
  * controlador: es una PUERTA de entrada al sistema —la de la cola en vez de la
  * de HTTP—, no una regla de negocio.
  *
- * Es idempotente por dos vías independientes: el `jobId` determinista impide
- * que se encolen dos jobs para la misma invitación, y la guarda de `status`
- * impide que una REENTREGA del mismo job mande un segundo correo. Hacen falta
- * las dos: BullMQ garantiza "al menos una vez", no "exactamente una vez".
+ * Qué evita un segundo correo, y qué no. BullMQ garantiza "al menos una vez":
+ *  - REENTREGA del mismo job con la invitación ya SENT: la guarda de `status`.
+ *  - Envío correcto y fallo DESPUÉS (`marcarEnviada` lanza, la invitación sigue
+ *    QUEUED y el job se reintenta): la clave de idempotencia hacia el
+ *    proveedor (`invitation-<id>`), que hace del reenvío un no-op. Resend la
+ *    recuerda 24 h; un reintento fuera de esa ventana SÍ mandaría otro correo
+ *    (con el backoff actual, 5 intentos desde 2 s, no se llega).
+ *  - NO cubre dos envíos masivos seguidos: crean invitaciones distintas, con
+ *    ids, jobIds y claves distintos (hueco conocido, ruling C16; ver
+ *    `jobIdDeInvitacion`).
  */
 @Processor(COLA_EMAIL)
 export class InvitationProcessor extends WorkerHost {
@@ -36,8 +58,19 @@ export class InvitationProcessor extends WorkerHost {
     super()
   }
 
-  async process(job: Job<PayloadInvitacion>): Promise<void> {
-    const invitacion = await this.invitaciones.buscarConInvitadoYEvento(job.data.invitationId)
+  async process(job: Job): Promise<void> {
+    // `email` es la cola COMPARTIDA de todo el correo. Un job de otro tipo no es
+    // una invitación rota: es trabajo de otro worker, y se deja pasar sin tocar.
+    if (job.name !== JOB_INVITACION) return
+
+    const leido = payloadInvitacionSchema.safeParse(job.data)
+    // Un payload roto no lo arregla ningún reintento: `UnrecoverableError` lo
+    // manda directo a fallidos (visible, y borrado a los 7 días) sin cinco
+    // intentos inútiles.
+    if (!leido.success) throw new UnrecoverableError('Payload de invitación inválido')
+    const datos = leido.data
+
+    const invitacion = await this.invitaciones.buscarConInvitadoYEvento(datos.invitationId)
 
     // La invitación pudo borrarse entre el encolado y el procesado. No es un
     // error: se descarta el job sin reintentar, porque reintentar no la va a
@@ -57,7 +90,7 @@ export class InvitationProcessor extends WorkerHost {
       guestName: invitacion.guest.name,
       eventName: invitacion.event.name,
       weddingDate: formatearFecha(invitacion.event.weddingDate),
-      rsvpUrl: `${this.env.APP_URL}/rsvp/${job.data.token}`,
+      rsvpUrl: `${this.env.APP_URL}/rsvp/${datos.token}`,
     })
 
     // Si el proveedor falla, este `await` LANZA y el error sale del worker sin
@@ -70,6 +103,7 @@ export class InvitationProcessor extends WorkerHost {
       html,
       text,
       tags: { eventId: invitacion.event.id, invitationId: invitacion.id },
+      idempotencyKey: jobIdDeInvitacion(invitacion.id),
     })
 
     // SENT y el id del proveedor en la misma escritura: el webhook (Tarea 13)

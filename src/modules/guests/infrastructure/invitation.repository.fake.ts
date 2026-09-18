@@ -66,8 +66,23 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
 
   /** Indexado por hash, como el `@unique` de la columna: dos iguales chocan. */
   private readonly idsPorHash = new Map<string, string>()
+  private readonly fallosAlCrear = new Map<string, Error>()
+  private falloAlMarcar: Error | null = null
+
+  /** Simula que el `create` de ESE invitado falla (p. ej. `P2003`, borrado a mitad). */
+  fallarCrearPara(guestId: string, error: Error): void {
+    this.fallosAlCrear.set(guestId, error)
+  }
+
+  /** Hace fallar SÓLO el siguiente `marcarEnviada`: la ventana tras un envío correcto. */
+  fallarProximoMarcado(error: Error): void {
+    this.falloAlMarcar = error
+  }
 
   crear(datos: DatosCrearInvitacion): Promise<{ id: string }> {
+    const fallo = this.fallosAlCrear.get(datos.guestId)
+    if (fallo !== undefined) return Promise.reject(fallo)
+
     if (this.idsPorHash.has(datos.tokenHash)) {
       // El `@unique` de `tokenHash` en el esquema, replicado: el doble no puede
       // aceptar lo que Postgres rechazaría.
@@ -87,6 +102,11 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
   }
 
   marcarEnviada(id: string, providerMessageId: string): Promise<void> {
+    if (this.falloAlMarcar !== null) {
+      const error = this.falloAlMarcar
+      this.falloAlMarcar = null
+      return Promise.reject(error)
+    }
     const fila = this.buscar(id)
     if (fila !== undefined) {
       fila.status = 'SENT'

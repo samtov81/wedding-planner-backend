@@ -35,4 +35,19 @@ describe('FakeMailAdapter', () => {
     ).rejects.toThrow('proveedor caído')
     expect(mail.enviados).toHaveLength(0)
   })
+
+  it('con la MISMA clave de idempotencia no envía dos veces y devuelve el mismo id', async () => {
+    // Replica el `Idempotency-Key` de Resend: un doble que ignorase la clave
+    // daría verde a un worker que manda dos correos al reintentar.
+    const mail = new FakeMailAdapter()
+    const mensaje = { to: 'a@test.com', subject: 's', html: 'h', text: 't' }
+
+    const a = await mail.send({ ...mensaje, idempotencyKey: 'invitation-1' })
+    const b = await mail.send({ ...mensaje, idempotencyKey: 'invitation-1' })
+    const c = await mail.send({ ...mensaje, idempotencyKey: 'invitation-2' })
+
+    expect(mail.enviados).toHaveLength(2)
+    expect(b.providerMessageId).toBe(a.providerMessageId)
+    expect(c.providerMessageId).not.toBe(a.providerMessageId)
+  })
 })

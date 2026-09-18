@@ -6,7 +6,15 @@ import { caducidadInvitacion, generarTokenInvitacion } from '../domain/invitatio
 import { GUEST_REPOSITORY, type GuestRepository } from './guest.repository'
 import { INVITATION_REPOSITORY, type InvitationRepository } from './invitation.repository'
 
-export type MotivoOmision = 'NO_EMAIL' | 'ALREADY_RESPONDED'
+/**
+ * `ENQUEUE_FAILED` es el tercer motivo: el invitado DEBÍA recibir invitación y
+ * algo falló al crearla o encolarla. Va en `skipped` y no en una lista aparte a
+ * propósito: la forma `{ queued, skipped }` es la del contrato de la tarea, y un
+ * cliente que ya recorre `skipped` por motivo lo ve sin cambiar de forma. El
+ * motivo distingue "no se le manda por diseño" (NO_EMAIL, ALREADY_RESPONDED)
+ * de "no se le ha podido mandar" (ENQUEUE_FAILED, reintentable).
+ */
+export type MotivoOmision = 'NO_EMAIL' | 'ALREADY_RESPONDED' | 'ENQUEUE_FAILED'
 
 export interface ResultadoEnvio {
   queued: Array<{ guestId: string; invitationId: string }>
@@ -23,7 +31,28 @@ export interface PayloadInvitacion {
   requestId: string
 }
 
-/** Un jobId determinista por invitación: encolar dos veces deja UN job. */
+/**
+ * Un fallido definitivo se borra de Redis a los 7 días. El payload lleva el
+ * token EN CLARO, que vale 90 días (`DIAS_DE_VALIDEZ`): con la política común
+ * del adaptador (`removeOnFail: false`) se quedaría allí para siempre. Siete
+ * días dan margen para inspeccionar la cola muerta un fin de semana largo sin
+ * dejar una credencial viva indefinidamente.
+ */
+export const RETENCION_FALLIDOS_MS = 7 * 86_400_000
+
+/**
+ * jobId derivado de la invitación. Encolar dos veces el MISMO `invitationId`
+ * deja un solo job, pero a este nivel eso no ocurre nunca: cada llamada crea
+ * invitaciones con ids nuevos.
+ *
+ * HUECO CONOCIDO (ruling C16): dos envíos masivos seguidos (un doble clic)
+ * crean dos invitaciones por invitado y encolan dos jobs, y el invitado recibe
+ * dos correos. Cerrarlo exige decidir qué identifica a una invitación en el
+ * tiempo (¿una por invitado y evento? ¿una por campaña?), diseño de dominio que
+ * el plan no fijó y que la Tarea 14 puede condicionar. Hoy lo único que evita
+ * duplicados es la guarda de estado del worker, que sólo cubre la REENTREGA del
+ * mismo job.
+ */
 export function jobIdDeInvitacion(invitationId: string): string {
   // Separador `-`, NUNCA `:`: BullMQ usa los dos puntos como separador de
   // claves de Redis y rechaza el job ("Custom Id cannot contain :"). Con `:`
@@ -57,13 +86,26 @@ export class SendInvitationsUseCase {
         continue
       }
 
-      const invitationId = await encolarInvitacion(
-        this.invitaciones,
-        this.cola,
-        invitado.id,
-        requestId,
-      )
-      resultado.queued.push({ guestId: invitado.id, invitationId })
+      // Un fallo aislado NO tumba el lote. Sin esto, el `create` del invitado
+      // nº 80 que lanza (p. ej. borrado a mitad → 404) abortaría la llamada con
+      // 79 correos ya en camino, y quien llama recibiría un 404 de un envío que
+      // en su mayor parte SÍ se hizo. El detalle del error no sale en la
+      // respuesta: el motivo basta para reintentar y no filtra internos.
+      //
+      // DESIGN-GAP: si `crear` va bien y `enqueue` falla (Redis caído), la fila
+      // queda en QUEUED sin job que la procese. Se reporta como ENQUEUE_FAILED,
+      // pero la fila huérfana no se limpia aquí.
+      try {
+        const invitationId = await encolarInvitacion(
+          this.invitaciones,
+          this.cola,
+          invitado.id,
+          requestId,
+        )
+        resultado.queued.push({ guestId: invitado.id, invitationId })
+      } catch {
+        resultado.skipped.push({ guestId: invitado.id, reason: 'ENQUEUE_FAILED' })
+      }
     }
 
     return resultado
@@ -77,8 +119,12 @@ export class SendInvitationsUseCase {
  *
  * DÓNDE VIVE EL TOKEN EN CLARO. La tabla guarda sólo el hash, así que el token
  * original no es recuperable — y el worker lo necesita para construir el
- * enlace. Por eso viaja en el PAYLOAD del job: es la única copia, vive en Redis
- * mientras dura el job y desaparece al completarse. Descartadas:
+ * enlace. Por eso viaja en el PAYLOAD del job: es la única copia. Vive en Redis
+ * mientras el job está pendiente o reintentando; se borra al COMPLETAR
+ * (`removeOnComplete: true`, no las 24 h de la política común) y, si el job
+ * agota los reintentos, a los `RETENCION_FALLIDOS_MS` (no "nunca", que es lo
+ * que haría `removeOnFail: false`). La limpieza por edad de BullMQ es
+ * perezosa: 7 días es un mínimo, no una hora exacta. Descartadas:
  *  - guardarlo en claro en la tabla: anula el propósito del hash,
  *  - que lo genere el worker: cambiaría en cada reintento e invalidaría el
  *    enlace que el invitado ya tiene en la bandeja.
@@ -100,6 +146,8 @@ export async function encolarInvitacion(
   const payload: PayloadInvitacion = { invitationId: invitacion.id, token, requestId }
   await cola.enqueue(COLA_EMAIL, JOB_INVITACION, payload, {
     jobId: jobIdDeInvitacion(invitacion.id),
+    removeOnComplete: true,
+    removeOnFailAfterMs: RETENCION_FALLIDOS_MS,
   })
 
   return invitacion.id

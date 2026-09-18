@@ -5,6 +5,13 @@ export interface MailMessage {
   text: string
   /** Etiquetas del proveedor; sirven para segmentar métricas de entrega. */
   tags?: Record<string, string>
+  /**
+   * Clave de idempotencia hacia el proveedor (`Idempotency-Key` en Resend): dos
+   * envíos con la misma clave producen UN correo y devuelven el mismo id. Cubre
+   * el reintento que llega después de un envío que sí salió. Resend la recuerda
+   * 24 h: fuera de esa ventana no protege.
+   */
+  idempotencyKey?: string
 }
 
 export interface MailResult {

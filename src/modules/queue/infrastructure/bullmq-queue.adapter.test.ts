@@ -52,4 +52,17 @@ describe('BullmqQueueAdapter', () => {
     expect(job?.opts.attempts).toBe(5)
     expect(job?.opts.backoff).toMatchObject({ type: 'exponential' })
   })
+
+  it('aplica la retención pedida: se borra al completar y el fallido caduca', async () => {
+    await adaptador.enqueue(
+      'email',
+      'guest-invitation',
+      {},
+      { jobId: 'invitation-inv-3', removeOnComplete: true, removeOnFailAfterMs: 7 * 86_400_000 },
+    )
+
+    const job = await cola.getJob('invitation-inv-3')
+    expect(job?.opts.removeOnComplete).toBe(true)
+    expect(job?.opts.removeOnFail).toEqual({ age: 7 * 86_400 })
+  })
 })

@@ -7,6 +7,8 @@ interface Encolado {
   nombre: string
   datos: unknown
   jobId: string
+  /** Las opciones tal cual: los tests assertan la retención, no sólo el jobId. */
+  opciones: EnqueueOptions
 }
 
 /**
@@ -25,7 +27,7 @@ export class InMemoryQueueAdapter implements QueuePort {
     opciones: EnqueueOptions,
   ): Promise<void> {
     if (!this.encolados.some((e) => e.jobId === opciones.jobId)) {
-      this.encolados.push({ cola, nombre, datos, jobId: opciones.jobId })
+      this.encolados.push({ cola, nombre, datos, jobId: opciones.jobId, opciones })
     }
     return Promise.resolve()
   }

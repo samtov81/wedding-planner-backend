@@ -1,6 +1,7 @@
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/in-memory-queue.adapter'
 
 import type { Guest, RsvpStatus } from '../domain/guest'
+import { DIAS_DE_VALIDEZ } from '../domain/invitation'
 import { GuestRepositoryEnMemoria } from '../infrastructure/guest.repository.fake'
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
 import { SendInvitationsUseCase } from './send-invitations.use-case'
@@ -75,6 +76,11 @@ describe('SendInvitationsUseCase', () => {
 
     // Separador `-` y no `:`: BullMQ rechaza un jobId con dos puntos, que es su
     // separador de claves de Redis ("Custom Id cannot contain :").
+    //
+    // HUECO CONOCIDO (ruling C16): el nombre del test es el del brief, pero a
+    // este nivel el jobId no evita duplicados — cada llamada crea invitaciones
+    // con ids nuevos, así que dos envíos masivos seguidos encolan dos jobs por
+    // invitado. Lo único que protege de verdad es la guarda de estado del worker.
     expect(cola.encolados[0]?.jobId).toBe(`invitation-${resultado.queued[0]?.invitationId ?? ''}`)
   })
 
@@ -117,5 +123,30 @@ describe('SendInvitationsUseCase', () => {
 
   it('un evento sin invitados devuelve listas vacías, no un error', async () => {
     expect(await caso.ejecutar('ev-vacio')).toEqual({ queued: [], skipped: [] })
+  })
+
+  it('encola con retención mínima: el token en claro no sobrevive al job en Redis', async () => {
+    sembrar('g1', 'a@test.com', 'PENDING')
+
+    await caso.ejecutar('ev-1')
+
+    const opciones = cola.encolados[0]?.opciones
+    expect(opciones?.removeOnComplete).toBe(true)
+    expect(opciones?.removeOnFailAfterMs).toBeGreaterThan(0)
+    // Y un fallido definitivo se borra MUCHO antes de que caduque el token.
+    expect(opciones?.removeOnFailAfterMs ?? Infinity).toBeLessThan(DIAS_DE_VALIDEZ * 86_400_000)
+  })
+
+  it('un fallo en UN invitado no tumba el lote: se reporta y los demás siguen', async () => {
+    sembrar('g1', 'a@test.com', 'PENDING')
+    sembrar('g2', 'b@test.com', 'PENDING')
+    sembrar('g3', 'c@test.com', 'PENDING')
+    invitaciones.fallarCrearPara('g2', new Error('el invitado se borró a mitad'))
+
+    const resultado = await caso.ejecutar('ev-1')
+
+    expect(resultado.queued.map((q) => q.guestId)).toEqual(['g1', 'g3'])
+    expect(resultado.skipped).toEqual([{ guestId: 'g2', reason: 'ENQUEUE_FAILED' }])
+    expect(cola.encolados).toHaveLength(2)
   })
 })

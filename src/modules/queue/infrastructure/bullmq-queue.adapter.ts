@@ -45,6 +45,13 @@ export class BullmqQueueAdapter implements QueuePort, OnModuleDestroy {
       ...OPCIONES_POR_DEFECTO,
       jobId: opciones.jobId,
       ...(opciones.delayMs !== undefined ? { delay: opciones.delayMs } : {}),
+      ...(opciones.removeOnComplete === true ? { removeOnComplete: true } : {}),
+      // BullMQ mide la edad en SEGUNDOS; el puerto, como `delayMs`, en ms.
+      // Ojo: la limpieza por edad es perezosa —BullMQ la aplica cuando otro job
+      // termina o falla—, así que la edad es un mínimo, no una hora exacta.
+      ...(opciones.removeOnFailAfterMs !== undefined
+        ? { removeOnFail: { age: Math.ceil(opciones.removeOnFailAfterMs / 1_000) } }
+        : {}),
     })
   }
 

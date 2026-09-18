@@ -1,10 +1,10 @@
-import type { Job } from 'bullmq'
+import { UnrecoverableError, type Job } from 'bullmq'
 
 import type { InvitationRenderer } from '@/modules/mail/application/invitation-renderer.port'
 import { FakeMailAdapter } from '@/modules/mail/infrastructure/fake-mail.adapter'
 import { renderGuestInvitation } from '@/modules/mail/infrastructure/templates/guest-invitation'
 
-import type { PayloadInvitacion } from '../application/send-invitations.use-case'
+import { JOB_INVITACION, type PayloadInvitacion } from '../application/send-invitations.use-case'
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
 import { InvitationProcessor } from './invitation.processor'
 
@@ -13,14 +13,14 @@ describe('InvitationProcessor', () => {
   let mail: FakeMailAdapter
   let procesador: InvitationProcessor
 
-  /** Un job de mentira: el worker sólo mira `data`. */
-  function jobFalso(datos: Partial<PayloadInvitacion>): Job<PayloadInvitacion> {
+  /** Un job de mentira: el worker sólo mira `name` y `data`. */
+  function jobFalso(datos: Partial<PayloadInvitacion>, name: string = JOB_INVITACION): Job {
     const data: PayloadInvitacion = {
       invitationId: datos.invitationId ?? 'inv-1',
       token: datos.token ?? 'token-en-claro',
       requestId: datos.requestId ?? 'req-1',
     }
-    return { data } as Job<PayloadInvitacion>
+    return { name, data } as Job
   }
 
   beforeEach(() => {
@@ -106,5 +106,44 @@ describe('InvitationProcessor', () => {
     await procesador.process(jobFalso({ invitationId: 'inv-1' }))
 
     expect(mail.enviados).toHaveLength(1)
+  })
+
+  it('ignora un job de OTRO tipo en la cola compartida: ni envía ni lanza', async () => {
+    // `email` es la cola de TODO el correo. Un aviso de contraseña que caiga
+    // aquí no es una invitación rota: es otro trabajo, y no es de este worker.
+    invitaciones.añadir({ id: 'inv-1', status: 'QUEUED' })
+
+    await expect(
+      procesador.process(jobFalso({ invitationId: 'inv-1' }, 'password-reset')),
+    ).resolves.toBeUndefined()
+
+    expect(mail.enviados).toHaveLength(0)
+    expect(invitaciones.buscar('inv-1')?.status).toBe('QUEUED')
+  })
+
+  it('un payload de invitación malformado no envía y NO se reintenta', async () => {
+    // Lo que sale de Redis es entrada, no código nuestro: se valida. Y un
+    // payload roto no lo arregla ningún reintento, así que falla sin reintentar.
+    const roto = { name: JOB_INVITACION, data: { invitationId: 42 } } as unknown as Job
+
+    await expect(procesador.process(roto)).rejects.toBeInstanceOf(UnrecoverableError)
+    expect(mail.enviados).toHaveLength(0)
+  })
+
+  it('si falla el marcado DESPUÉS de un envío correcto, el reintento no manda otro correo', async () => {
+    // La ventana que la guarda de `status` no cubre: el correo ya salió, pero
+    // la invitación sigue QUEUED. La clave de idempotencia hacia el proveedor
+    // es lo que convierte el reintento en un no-op.
+    invitaciones.añadir({ id: 'inv-1', status: 'QUEUED' })
+    invitaciones.fallarProximoMarcado(new Error('base de datos caída'))
+
+    await expect(procesador.process(jobFalso({ invitationId: 'inv-1' }))).rejects.toThrow(
+      'base de datos caída',
+    )
+    await procesador.process(jobFalso({ invitationId: 'inv-1' }))
+
+    expect(mail.enviados).toHaveLength(1)
+    expect(mail.enviados[0]?.idempotencyKey).toBe('invitation-inv-1')
+    expect(invitaciones.buscar('inv-1')?.status).toBe('SENT')
   })
 })

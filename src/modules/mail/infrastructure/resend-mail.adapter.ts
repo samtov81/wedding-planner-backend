@@ -20,16 +20,19 @@ export class ResendMailAdapter implements MailPort {
   }
 
   async send(mensaje: MailMessage): Promise<MailResult> {
-    const { data, error } = await this.cliente.emails.send({
-      from: this.env.MAIL_FROM,
-      to: mensaje.to,
-      subject: mensaje.subject,
-      html: mensaje.html,
-      text: mensaje.text,
-      ...(mensaje.tags !== undefined
-        ? { tags: Object.entries(mensaje.tags).map(([name, value]) => ({ name, value })) }
-        : {}),
-    })
+    const { data, error } = await this.cliente.emails.send(
+      {
+        from: this.env.MAIL_FROM,
+        to: mensaje.to,
+        subject: mensaje.subject,
+        html: mensaje.html,
+        text: mensaje.text,
+        ...(mensaje.tags !== undefined
+          ? { tags: Object.entries(mensaje.tags).map(([name, value]) => ({ name, value })) }
+          : {}),
+      },
+      mensaje.idempotencyKey !== undefined ? { idempotencyKey: mensaje.idempotencyKey } : {},
+    )
 
     // Se lanza para que BullMQ reintente. Un error del proveedor devuelto como
     // valor se traga en silencio y la invitación se queda en QUEUED para siempre.

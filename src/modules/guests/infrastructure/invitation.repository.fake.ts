@@ -129,6 +129,12 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
     return Promise.resolve()
   }
 
+  caducar(id: string): Promise<void> {
+    const fila = this.buscar(id)
+    if (fila !== undefined) fila.expiresAt = new Date()
+    return Promise.resolve()
+  }
+
   actualizarEstadoPorMessageId(messageId: string, estado: InvitationStatus): Promise<void> {
     for (const fila of this.filas) {
       if (fila.resendMessageId === messageId) fila.status = estado

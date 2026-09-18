@@ -1,10 +1,13 @@
+import { Logger } from '@nestjs/common'
+
+import type { QueuePort } from '@/modules/queue/application/queue.port'
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/in-memory-queue.adapter'
 
 import type { Guest, RsvpStatus } from '../domain/guest'
 import { DIAS_DE_VALIDEZ } from '../domain/invitation'
 import { GuestRepositoryEnMemoria } from '../infrastructure/guest.repository.fake'
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
-import { SendInvitationsUseCase } from './send-invitations.use-case'
+import { COLA_INVITACIONES, SendInvitationsUseCase } from './send-invitations.use-case'
 
 describe('SendInvitationsUseCase', () => {
   let invitados: GuestRepositoryEnMemoria
@@ -148,5 +151,49 @@ describe('SendInvitationsUseCase', () => {
     expect(resultado.queued.map((q) => q.guestId)).toEqual(['g1', 'g3'])
     expect(resultado.skipped).toEqual([{ guestId: 'g2', reason: 'ENQUEUE_FAILED' }])
     expect(cola.encolados).toHaveLength(2)
+  })
+
+  it('encola en la cola PROPIA de invitaciones, no en la `email` compartida', async () => {
+    sembrar('g1', 'a@test.com', 'PENDING')
+
+    await caso.ejecutar('ev-1')
+
+    expect(cola.encolados[0]?.cola).toBe(COLA_INVITACIONES)
+    expect(cola.encolados[0]?.nombre).toBe('guest-invitation')
+  })
+
+  it('un fallo por invitado se REGISTRA con guestId y requestId, no se traga', async () => {
+    const registro = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    sembrar('g1', 'a@test.com', 'PENDING')
+    invitaciones.fallarCrearPara('g1', new Error('el invitado se borró a mitad'))
+
+    await caso.ejecutar('ev-1', 'req-9')
+
+    const lineas = registro.mock.calls.map((llamada) => JSON.stringify(llamada))
+    expect(lineas.some((l) => l.includes('g1') && l.includes('req-9'))).toBe(true)
+    registro.mockRestore()
+  })
+
+  it('el log del fallo NUNCA lleva el token en claro', async () => {
+    const registro = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+    let token = ''
+    const colaCaida: QueuePort = {
+      enqueue: (_cola, _nombre, datos) => {
+        token = (datos as { token: string }).token
+        return Promise.reject(new Error('Redis caído'))
+      },
+    }
+    sembrar('g1', 'a@test.com', 'PENDING')
+
+    const resultado = await new SendInvitationsUseCase(invitados, invitaciones, colaCaida).ejecutar(
+      'ev-1',
+      'req-9',
+    )
+
+    expect(resultado.skipped).toEqual([{ guestId: 'g1', reason: 'ENQUEUE_FAILED' }])
+    expect(token).not.toBe('')
+    expect(registro).toHaveBeenCalled()
+    expect(JSON.stringify(registro.mock.calls)).not.toContain(token)
+    registro.mockRestore()
   })
 })

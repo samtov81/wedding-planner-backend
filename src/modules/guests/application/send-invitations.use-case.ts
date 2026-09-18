@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, Logger } from '@nestjs/common'
 
 import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
 
@@ -12,7 +12,9 @@ import { INVITATION_REPOSITORY, type InvitationRepository } from './invitation.r
  * propósito: la forma `{ queued, skipped }` es la del contrato de la tarea, y un
  * cliente que ya recorre `skipped` por motivo lo ve sin cambiar de forma. El
  * motivo distingue "no se le manda por diseño" (NO_EMAIL, ALREADY_RESPONDED)
- * de "no se le ha podido mandar" (ENQUEUE_FAILED, reintentable).
+ * de "no se le ha podido mandar" (ENQUEUE_FAILED). Que reintentarlo sirva
+ * depende de la causa: una caída de Redis, sí; un invitado borrado a mitad
+ * (`P2003`), no. La causa queda en el log, no en la respuesta.
  */
 export type MotivoOmision = 'NO_EMAIL' | 'ALREADY_RESPONDED' | 'ENQUEUE_FAILED'
 
@@ -21,7 +23,15 @@ export interface ResultadoEnvio {
   skipped: Array<{ guestId: string; reason: MotivoOmision }>
 }
 
-export const COLA_EMAIL = 'email' as const
+/**
+ * DESIGN-GAP: el brief dice cola `email`. Se usa una cola PROPIA por orden del
+ * controlador (ruling C17): `email` ya tiene otros productores (`verify-email`
+ * del registro, `event-invitation` de invitar miembros) sin worker todavía, y
+ * este worker, al tomar sus jobs y retornar, los marcaría COMPLETADOS y BullMQ
+ * los borraría sin enviarse. Sin nadie escuchando `email`, esperan en `waiting`
+ * a su worker, que es lo correcto. El nombre del job y el payload no cambian.
+ */
+export const COLA_INVITACIONES = 'invitations' as const
 export const JOB_INVITACION = 'guest-invitation'
 
 /** Payload del job. Lo consumen el worker (aquí) y el RSVP público (Tarea 14). */
@@ -32,11 +42,12 @@ export interface PayloadInvitacion {
 }
 
 /**
- * Un fallido definitivo se borra de Redis a los 7 días. El payload lleva el
- * token EN CLARO, que vale 90 días (`DIAS_DE_VALIDEZ`): con la política común
- * del adaptador (`removeOnFail: false`) se quedaría allí para siempre. Siete
- * días dan margen para inspeccionar la cola muerta un fin de semana largo sin
- * dejar una credencial viva indefinidamente.
+ * Edad a partir de la cual BullMQ PUEDE recortar un fallido de esta cola. No es
+ * una cota: el recorte sólo corre cuando otro job de la cola falla después (ver
+ * `bullmq-queue.adapter.ts`), así que el último lote de fallos se queda en
+ * Redis sin límite. Lo que sí protege el token es que el worker CADUCA la
+ * invitación cuando el job agota sus intentos (ruling C18): el token que quede
+ * en el payload deja de servir, dure lo que dure allí.
  */
 export const RETENCION_FALLIDOS_MS = 7 * 86_400_000
 
@@ -67,6 +78,12 @@ export class SendInvitationsUseCase {
     @Inject(INVITATION_REPOSITORY) private readonly invitaciones: InvitationRepository,
     @Inject(QUEUE_PORT) private readonly cola: QueuePort,
   ) {}
+
+  /**
+   * `Logger` de Nest y no el pino de `shared/logging`: cablear ese es de la
+   * Tarea 16; cuando llegue, el `Logger` de Nest se redirige a él sin tocar esto.
+   */
+  private readonly registro = new Logger(SendInvitationsUseCase.name)
 
   async ejecutar(eventId: string, requestId = ''): Promise<ResultadoEnvio> {
     const todos = await this.invitados.listarTodos(eventId)
@@ -103,7 +120,17 @@ export class SendInvitationsUseCase {
           requestId,
         )
         resultado.queued.push({ guestId: invitado.id, invitationId })
-      } catch {
+      } catch (error) {
+        // Se registra ANTES de reportarlo: 150 ENQUEUE_FAILED por una caída de
+        // Redis sin una línea de log serían invisibles, y un error de
+        // programación quedaría enmascarado para siempre. guestId y requestId,
+        // NUNCA el token: el token sólo vive dentro de `encolarInvitacion` y en el
+        // payload, y ni Prisma (recibe el hash) ni la cola lo repiten en sus
+        // errores.
+        this.registro.error(
+          `No se pudo encolar la invitación guestId=${invitado.id} requestId=${requestId}`,
+          error instanceof Error ? error.stack : String(error),
+        )
         resultado.skipped.push({ guestId: invitado.id, reason: 'ENQUEUE_FAILED' })
       }
     }
@@ -120,11 +147,13 @@ export class SendInvitationsUseCase {
  * DÓNDE VIVE EL TOKEN EN CLARO. La tabla guarda sólo el hash, así que el token
  * original no es recuperable — y el worker lo necesita para construir el
  * enlace. Por eso viaja en el PAYLOAD del job: es la única copia. Vive en Redis
- * mientras el job está pendiente o reintentando; se borra al COMPLETAR
- * (`removeOnComplete: true`, no las 24 h de la política común) y, si el job
- * agota los reintentos, a los `RETENCION_FALLIDOS_MS` (no "nunca", que es lo
- * que haría `removeOnFail: false`). La limpieza por edad de BullMQ es
- * perezosa: 7 días es un mínimo, no una hora exacta. Descartadas:
+ * mientras el job está pendiente o reintentando y se borra al COMPLETAR
+ * (`removeOnComplete: true`, no las 24 h de la política común). Si el job
+ * agota los reintentos, su payload PUEDE quedarse en Redis sin límite: el
+ * recorte por `RETENCION_FALLIDOS_MS` sólo corre cuando otro job de la cola
+ * falla después. Por eso el worker caduca la invitación en el último intento
+ * fallido (ruling C18): el token sobrevive en Redis, pero ya no abre nada.
+ * Descartadas:
  *  - guardarlo en claro en la tabla: anula el propósito del hash,
  *  - que lo genere el worker: cambiaría en cada reintento e invalidaría el
  *    enlace que el invitado ya tiene en la bandeja.
@@ -144,7 +173,7 @@ export async function encolarInvitacion(
   })
 
   const payload: PayloadInvitacion = { invitationId: invitacion.id, token, requestId }
-  await cola.enqueue(COLA_EMAIL, JOB_INVITACION, payload, {
+  await cola.enqueue(COLA_INVITACIONES, JOB_INVITACION, payload, {
     jobId: jobIdDeInvitacion(invitacion.id),
     removeOnComplete: true,
     removeOnFailAfterMs: RETENCION_FALLIDOS_MS,

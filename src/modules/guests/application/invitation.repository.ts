@@ -42,6 +42,14 @@ export interface InvitationRepository {
 
   marcarRespondida(id: string): Promise<void>
 
+  /**
+   * `expiresAt = ahora`: el token deja de servir aunque siga en algún sitio (el
+   * payload de un job fallido en Redis). No hay estado de fallo en
+   * `InvitationStatus` y el esquema no se toca, así que la caducidad ES la
+   * invalidación. No lanza si la invitación ya no existe.
+   */
+  caducar(id: string): Promise<void>
+
   /** Lo usa el webhook del proveedor (Tarea 13), que casa por `resendMessageId`. */
   actualizarEstadoPorMessageId(messageId: string, estado: InvitationStatus): Promise<void>
 }

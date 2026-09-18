@@ -4,24 +4,48 @@ import type { InvitationRenderer } from '@/modules/mail/application/invitation-r
 import { FakeMailAdapter } from '@/modules/mail/infrastructure/fake-mail.adapter'
 import { renderGuestInvitation } from '@/modules/mail/infrastructure/templates/guest-invitation'
 
-import { JOB_INVITACION, type PayloadInvitacion } from '../application/send-invitations.use-case'
+import {
+  COLA_INVITACIONES,
+  JOB_INVITACION,
+  type PayloadInvitacion,
+} from '../application/send-invitations.use-case'
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
 import { InvitationProcessor } from './invitation.processor'
+
+/**
+ * Clave de metadata de `@Processor`. `@nestjs/bullmq` no la exporta en su
+ * `exports` de paquete, así que se repite el literal de `bull.constants.js`.
+ */
+const PROCESSOR_METADATA = 'bullmq:processor_metadata'
 
 describe('InvitationProcessor', () => {
   let invitaciones: InvitationRepositoryEnMemoria
   let mail: FakeMailAdapter
   let procesador: InvitationProcessor
 
-  /** Un job de mentira: el worker sólo mira `name` y `data`. */
-  function jobFalso(datos: Partial<PayloadInvitacion>, name: string = JOB_INVITACION): Job {
+  /**
+   * Un job de mentira: el worker mira `data` y, para saber si es el ÚLTIMO
+   * intento, `attemptsMade` (intentos fallidos previos) y `opts.attempts`.
+   * Por defecto, el primero de cinco, como la política del adaptador.
+   */
+  function jobFalso(
+    datos: Partial<PayloadInvitacion>,
+    intento: { attemptsMade: number; attempts: number } = { attemptsMade: 0, attempts: 5 },
+  ): Job {
     const data: PayloadInvitacion = {
       invitationId: datos.invitationId ?? 'inv-1',
       token: datos.token ?? 'token-en-claro',
       requestId: datos.requestId ?? 'req-1',
     }
-    return { name, data } as Job
+    return {
+      name: JOB_INVITACION,
+      data,
+      attemptsMade: intento.attemptsMade,
+      opts: { attempts: intento.attempts },
+    } as Job
   }
+
+  const CADUCIDAD_ORIGINAL = new Date(Date.UTC(2027, 0, 1))
 
   beforeEach(() => {
     invitaciones = new InvitationRepositoryEnMemoria()
@@ -108,19 +132,6 @@ describe('InvitationProcessor', () => {
     expect(mail.enviados).toHaveLength(1)
   })
 
-  it('ignora un job de OTRO tipo en la cola compartida: ni envía ni lanza', async () => {
-    // `email` es la cola de TODO el correo. Un aviso de contraseña que caiga
-    // aquí no es una invitación rota: es otro trabajo, y no es de este worker.
-    invitaciones.añadir({ id: 'inv-1', status: 'QUEUED' })
-
-    await expect(
-      procesador.process(jobFalso({ invitationId: 'inv-1' }, 'password-reset')),
-    ).resolves.toBeUndefined()
-
-    expect(mail.enviados).toHaveLength(0)
-    expect(invitaciones.buscar('inv-1')?.status).toBe('QUEUED')
-  })
-
   it('un payload de invitación malformado no envía y NO se reintenta', async () => {
     // Lo que sale de Redis es entrada, no código nuestro: se valida. Y un
     // payload roto no lo arregla ningún reintento, así que falla sin reintentar.
@@ -145,5 +156,54 @@ describe('InvitationProcessor', () => {
     expect(mail.enviados).toHaveLength(1)
     expect(mail.enviados[0]?.idempotencyKey).toBe('invitation-inv-1')
     expect(invitaciones.buscar('inv-1')?.status).toBe('SENT')
+  })
+
+  it('escucha SU cola, no la `email` compartida con otros productores', () => {
+    // Un worker que toma un job ajeno y retorna lo marca COMPLETADO y BullMQ lo
+    // borra: los `verify-email` y `event-invitation` desaparecerían sin enviarse.
+    // La única forma de que esperen en `waiting` a su worker es no escuchar su cola.
+    const metadatos = Reflect.getMetadata(PROCESSOR_METADATA, InvitationProcessor) as {
+      name: string
+    }
+    expect(metadatos.name).toBe(COLA_INVITACIONES)
+    expect(COLA_INVITACIONES).not.toBe('email')
+  })
+
+  it('el ÚLTIMO intento fallido caduca la invitación: el token que quede en Redis ya no vale', async () => {
+    invitaciones.añadir({ id: 'inv-1', status: 'QUEUED', expiresAt: CADUCIDAD_ORIGINAL })
+    mail.fallarProximoEnvio(new Error('proveedor caído'))
+    const antes = Date.now()
+
+    await expect(
+      procesador.process(jobFalso({ invitationId: 'inv-1' }, { attemptsMade: 4, attempts: 5 })),
+    ).rejects.toThrow('proveedor caído')
+
+    const expira = invitaciones.buscar('inv-1')?.expiresAt.getTime() ?? Infinity
+    expect(expira).toBeGreaterThanOrEqual(antes)
+    expect(expira).toBeLessThanOrEqual(Date.now())
+  })
+
+  it('un intento NO final que falla no caduca nada: BullMQ lo va a reintentar', async () => {
+    invitaciones.añadir({ id: 'inv-1', status: 'QUEUED', expiresAt: CADUCIDAD_ORIGINAL })
+    mail.fallarProximoEnvio(new Error('proveedor caído'))
+
+    await expect(
+      procesador.process(jobFalso({ invitationId: 'inv-1' }, { attemptsMade: 3, attempts: 5 })),
+    ).rejects.toThrow('proveedor caído')
+
+    expect(invitaciones.buscar('inv-1')?.expiresAt).toEqual(CADUCIDAD_ORIGINAL)
+  })
+
+  it('si el correo YA salió y falla el marcado en el último intento, NO se caduca', async () => {
+    // El enlace está en la bandeja del invitado: caducarlo le rompería el RSVP.
+    invitaciones.añadir({ id: 'inv-1', status: 'QUEUED', expiresAt: CADUCIDAD_ORIGINAL })
+    invitaciones.fallarProximoMarcado(new Error('base de datos caída'))
+
+    await expect(
+      procesador.process(jobFalso({ invitationId: 'inv-1' }, { attemptsMade: 4, attempts: 5 })),
+    ).rejects.toThrow('base de datos caída')
+
+    expect(mail.enviados).toHaveLength(1)
+    expect(invitaciones.buscar('inv-1')?.expiresAt).toEqual(CADUCIDAD_ORIGINAL)
   })
 })

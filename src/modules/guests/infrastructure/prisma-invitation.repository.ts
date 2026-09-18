@@ -71,6 +71,14 @@ export class PrismaInvitationRepository implements InvitationRepository {
     })
   }
 
+  async caducar(id: string): Promise<void> {
+    // `updateMany`: la invitación pudo borrarse; caducar lo inexistente no es error.
+    await this.prisma.guestInvitation.updateMany({
+      where: { id },
+      data: { expiresAt: new Date() },
+    })
+  }
+
   async actualizarEstadoPorMessageId(messageId: string, estado: InvitationStatus): Promise<void> {
     // `updateMany`: un webhook puede llegar para un id que ya no existe, y eso
     // afecta a 0 filas en vez de lanzar. No es un error que el proveedor nos

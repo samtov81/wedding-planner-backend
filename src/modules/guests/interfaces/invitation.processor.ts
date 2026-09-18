@@ -1,5 +1,5 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq'
-import { Inject } from '@nestjs/common'
+import { Inject, Logger } from '@nestjs/common'
 import { UnrecoverableError, type Job } from 'bullmq'
 import { z } from 'zod'
 
@@ -15,8 +15,7 @@ import {
   type InvitationRepository,
 } from '../application/invitation.repository'
 import {
-  COLA_EMAIL,
-  JOB_INVITACION,
+  COLA_INVITACIONES,
   jobIdDeInvitacion,
   type PayloadInvitacion,
 } from '../application/send-invitations.use-case'
@@ -46,8 +45,12 @@ const payloadInvitacionSchema = z.object({
  *  - NO cubre dos envíos masivos seguidos: crean invitaciones distintas, con
  *    ids, jobIds y claves distintos (hueco conocido, ruling C16; ver
  *    `jobIdDeInvitacion`).
+ *
+ * Escucha su cola PROPIA, `invitations` (ruling C17): por eso no filtra por
+ * nombre de job. Sobre la cola `email` compartida, retornar ante un job ajeno
+ * lo marcaría COMPLETADO y BullMQ lo borraría sin enviarse.
  */
-@Processor(COLA_EMAIL)
+@Processor(COLA_INVITACIONES)
 export class InvitationProcessor extends WorkerHost {
   constructor(
     @Inject(INVITATION_REPOSITORY) private readonly invitaciones: InvitationRepository,
@@ -58,18 +61,57 @@ export class InvitationProcessor extends WorkerHost {
     super()
   }
 
-  async process(job: Job): Promise<void> {
-    // `email` es la cola COMPARTIDA de todo el correo. Un job de otro tipo no es
-    // una invitación rota: es trabajo de otro worker, y se deja pasar sin tocar.
-    if (job.name !== JOB_INVITACION) return
+  private readonly registro = new Logger(InvitationProcessor.name)
 
+  async process(job: Job): Promise<void> {
     const leido = payloadInvitacionSchema.safeParse(job.data)
     // Un payload roto no lo arregla ningún reintento: `UnrecoverableError` lo
-    // manda directo a fallidos (visible, y borrado a los 7 días) sin cinco
-    // intentos inútiles.
+    // manda directo a fallidos sin cinco intentos inútiles. Un payload que no
+    // identifica invitación tampoco permite caducarla (ruling C18): si trae un
+    // token, ese token sigue valiendo. Aceptado: sólo puede venir de un bug o de
+    // alguien con escritura en Redis, no del flujo normal.
     if (!leido.success) throw new UnrecoverableError('Payload de invitación inválido')
     const datos = leido.data
 
+    const envio = { salio: false }
+    try {
+      await this.enviar(datos, envio)
+    } catch (error) {
+      // ÚLTIMO intento fallido → se caduca la invitación ANTES de relanzar
+      // (ruling C18). El payload, con el token en claro, puede quedarse en el
+      // conjunto de fallidos de Redis sin límite (el recorte por edad no lo
+      // acota); caducada, el token ya no abre nada.
+      //
+      // Se decide aquí, dentro de `process`, y no en el evento `failed` del
+      // worker: aquí la caducidad queda escrita ANTES de que BullMQ dé el job
+      // por fallido, se prueba sin Redis, y si `caducar` falla se registra en
+      // vez de perderse en un emisor de eventos. La regla de "último" replica la
+      // de BullMQ (`Job.shouldRetryJob`): no quedan intentos, o el error es
+      // `UnrecoverableError`.
+      //
+      // Si el correo YA salió (el fallo fue al marcar), NO se caduca: el enlace
+      // está en la bandeja del invitado y caducarlo le rompería el RSVP.
+      if (!envio.salio && esUltimoIntento(job, error)) {
+        await this.caducarSinOcultar(datos, error)
+      }
+      throw error
+    }
+  }
+
+  private async caducarSinOcultar(datos: PayloadInvitacion, original: unknown): Promise<void> {
+    try {
+      await this.invitaciones.caducar(datos.invitationId)
+    } catch (fallo) {
+      // Se registra y se sigue: el error que BullMQ debe ver es el ORIGINAL.
+      this.registro.error(
+        `No se pudo caducar la invitación invitationId=${datos.invitationId} ` +
+          `requestId=${datos.requestId} tras agotar intentos (${String(original)})`,
+        fallo instanceof Error ? fallo.stack : String(fallo),
+      )
+    }
+  }
+
+  private async enviar(datos: PayloadInvitacion, envio: { salio: boolean }): Promise<void> {
     const invitacion = await this.invitaciones.buscarConInvitadoYEvento(datos.invitationId)
 
     // La invitación pudo borrarse entre el encolado y el procesado. No es un
@@ -105,12 +147,20 @@ export class InvitationProcessor extends WorkerHost {
       tags: { eventId: invitacion.event.id, invitationId: invitacion.id },
       idempotencyKey: jobIdDeInvitacion(invitacion.id),
     })
+    envio.salio = true
 
     // SENT y el id del proveedor en la misma escritura: el webhook (Tarea 13)
     // casa por `resendMessageId`, así que si esto falla el webhook llega a una
     // invitación que no sabe reconocer.
     await this.invitaciones.marcarEnviada(invitacion.id, providerMessageId)
   }
+}
+
+/** Misma regla que `Job.shouldRetryJob` de BullMQ, vista desde dentro del intento. */
+function esUltimoIntento(job: Job, error: unknown): boolean {
+  if (error instanceof UnrecoverableError) return true
+  // `attemptsMade` cuenta los intentos YA terminados; éste es el `+ 1`.
+  return job.attemptsMade + 1 >= (job.opts.attempts ?? 1)
 }
 
 /** Fecha legible en el correo. UTC explícito: el worker no está en la zona de la boda. */

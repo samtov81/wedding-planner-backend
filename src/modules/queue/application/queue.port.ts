@@ -1,4 +1,9 @@
-export type QueueName = 'email' | 'notifications' | 'maintenance'
+/**
+ * `invitations` tiene cola PROPIA (ruling C17): en BullMQ un worker que toma un
+ * job y retorna lo marca completado, así que un worker sobre una cola compartida
+ * se come los jobs de los demás productores. Cada tipo con worker propio, su cola.
+ */
+export type QueueName = 'email' | 'invitations' | 'notifications' | 'maintenance'
 
 export interface EnqueueOptions {
   /**
@@ -19,8 +24,11 @@ export interface EnqueueOptions {
    */
   removeOnComplete?: true
   /**
-   * Edad máxima de un job fallido definitivo en Redis. Sin ella, los fallidos se
-   * conservan SIN LÍMITE (la política común no los borra), con su payload.
+   * Edad por encima de la cual BullMQ PUEDE recortar los fallidos. NO es una
+   * cota: el recorte sólo corre cuando OTRO job de la misma cola con esta opción
+   * falla definitivamente, así que el último lote de fallidos se queda sin
+   * límite hasta que falle otro. Sin ella, los fallidos no se recortan nunca.
+   * Un secreto en el payload necesita además invalidarse en origen.
    */
   removeOnFailAfterMs?: number
 }

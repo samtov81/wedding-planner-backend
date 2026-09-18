@@ -14,7 +14,7 @@ import { GUEST_REPOSITORY } from './application/guest.repository'
 import { GuestSummaryUseCase } from './application/guest-summary.use-case'
 import { INVITATION_REPOSITORY } from './application/invitation.repository'
 import { ListGuestsUseCase } from './application/list-guests.use-case'
-import { COLA_EMAIL, SendInvitationsUseCase } from './application/send-invitations.use-case'
+import { COLA_INVITACIONES, SendInvitationsUseCase } from './application/send-invitations.use-case'
 import { SendSingleInvitationUseCase } from './application/send-single-invitation.use-case'
 import { UpdateGuestUseCase } from './application/update-guest.use-case'
 import { PrismaGuestRepository } from './infrastructure/prisma-guest.repository'
@@ -42,7 +42,8 @@ import { InvitationProcessor } from './interfaces/invitation.processor'
     // El worker de `@Processor` lo monta el explorador de `@nestjs/bullmq`, y
     // para eso la cola tiene que estar registrada en este módulo: sin este
     // `registerQueue`, `InvitationProcessor` no arranca (NO_QUEUE_FOUND).
-    BullModule.registerQueue({ name: COLA_EMAIL }),
+    // Su cola PROPIA, no `email` (ruling C17; ver `COLA_INVITACIONES`).
+    BullModule.registerQueue({ name: COLA_INVITACIONES }),
   ],
   controllers: [GuestsController],
   providers: [

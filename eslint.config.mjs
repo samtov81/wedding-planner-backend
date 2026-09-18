@@ -18,6 +18,8 @@ export default tseslint.config(
             '.dependency-cruiser.cjs',
             'vitest.config.ts',
             'prisma.config.ts',
+            'vitest.smoke.config.ts',
+            'scripts/*.mjs',
           ],
         },
         tsconfigRootDir: import.meta.dirname,
@@ -69,6 +71,14 @@ export default tseslint.config(
       sourceType: 'commonjs',
       globals: { module: 'writable', require: 'readonly', __dirname: 'readonly' },
     },
+  },
+  {
+    // Scripts de build en Node puro: sus rutas salen de recorrer `dist/`, que
+    // acaba de escribir `tsc`, no de ninguna entrada externa, así que la regla
+    // de rutas no literales sólo daría falsos positivos.
+    files: ['scripts/*.mjs'],
+    languageOptions: { globals: { process: 'readonly', console: 'readonly' } },
+    rules: { 'security/detect-non-literal-fs-filename': 'off' },
   },
   { ignores: ['dist/', 'coverage/', 'node_modules/'] },
 )

@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common'
 
 import { DomainError, InvalidCursorError } from '../domain'
+import { urlParaRegistro } from '../logging/redaccion'
 
 interface RespuestaDeError {
   code: string
@@ -54,6 +55,9 @@ export class DomainExceptionFilter implements ExceptionFilter {
       return { status: 400, cuerpo: { code: 'INVALID_CURSOR', message: exception.message } }
     }
 
+    const delParser = errorDelParser(exception)
+    if (delParser !== null) return delParser
+
     if (exception instanceof HttpException) {
       const respuesta = exception.getResponse()
       return {
@@ -74,16 +78,50 @@ export class DomainExceptionFilter implements ExceptionFilter {
 }
 
 /**
- * Segmentos de ruta que SON una credencial: el token del RSVP público
- * (`/rsvp/:token`) es lo único que hace falta para responder por alguien.
- * La URL se registra para poder depurar un 500; el token, nunca.
+ * Tipos que body-parser pone en sus errores (`err.type`). Sólo ESTOS se
+ * traducen a 4xx: un error cualquiera con un `status` numérico (el de un
+ * cliente HTTP interno, por ejemplo) sigue siendo un 500 opaco.
  *
- * `i` porque Express casa las rutas sin distinguir mayúsculas: `/RSVP/<token>`
- * llega al mismo controlador y tiene que tacharse igual. Sin anclar al
- * principio por el mismo motivo (`//rsvp/<token>` también casa).
+ * Por qué hace falta: el parser corre como middleware de Express y Nest manda
+ * su `next(err)` a los filtros. Sin esto, un cuerpo de 2 MB era un 500
+ * "Error no controlado" en el log, cuando es un error del cliente.
  */
-const TOKEN_EN_RUTA = /(\/rsvp\/)[^/?#]+/gi
+const TIPOS_DEL_PARSER = new Set([
+  'entity.too.large',
+  'entity.parse.failed',
+  'entity.verify.failed',
+  'encoding.unsupported',
+  'charset.unsupported',
+  'request.aborted',
+  'request.size.invalid',
+  'parameters.too.many',
+])
 
-function urlParaRegistro(url: string | undefined): string | undefined {
-  return url?.replace(TOKEN_EN_RUTA, '$1[REDACTADO]')
+function errorDelParser(exception: unknown): { status: number; cuerpo: RespuestaDeError } | null {
+  if (!(exception instanceof Error)) return null
+  const { type, status } = exception as Error & { type?: unknown; status?: unknown }
+  if (typeof type !== 'string' || !TIPOS_DEL_PARSER.has(type)) return null
+  if (typeof status !== 'number' || status < 400 || status >= 500) return null
+
+  if (status === 413) {
+    return {
+      status,
+      cuerpo: {
+        code: 'PAYLOAD_TOO_LARGE',
+        message: 'El cuerpo de la petición es demasiado grande',
+      },
+    }
+  }
+  if (status === 415) {
+    return {
+      status,
+      cuerpo: { code: 'UNSUPPORTED_MEDIA_TYPE', message: 'Codificación del cuerpo no soportada' },
+    }
+  }
+  // El mensaje del parser (`Unexpected token } in JSON at position 7`) no sale:
+  // describe el parser, no la API.
+  return {
+    status,
+    cuerpo: { code: 'INVALID_BODY', message: 'El cuerpo de la petición no es válido' },
+  }
 }

@@ -2,16 +2,12 @@ import { randomUUID } from 'node:crypto'
 import type { Server } from 'node:http'
 
 import { type INestApplication } from '@nestjs/common'
-import { NestFactory } from '@nestjs/core'
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
-import cookieParser from 'cookie-parser'
 import request from 'supertest'
 import { Webhook } from 'svix'
 
-import { AppModule } from '@/app.module'
-import { DomainExceptionFilter } from '@/shared/http/domain-exception.filter'
-
+import { crearAppComoMain } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 
 type EstadoInvitacion = 'QUEUED' | 'SENT' | 'DELIVERED' | 'BOUNCED' | 'COMPLAINED' | 'RESPONDED'
@@ -91,11 +87,10 @@ describe('Webhook de Resend e2e', () => {
     process.env.APP_URL = 'http://localhost:5173'
     process.env.RESEND_WEBHOOK_SECRET = SECRETO
 
-    // Igual que `main.ts`: sin `rawBody: true` no hay bytes que verificar.
-    app = await NestFactory.create(AppModule, { logger: false, rawBody: true })
-    app.use(cookieParser())
-    app.useGlobalFilters(new DomainExceptionFilter())
-    await app.init()
+    // El arranque de `main.ts` (`configurarApp`): el parser de cuerpo con su
+    // límite es el que se despliega, y la firma tiene que seguir verificándose
+    // sobre los bytes crudos que ese parser guarda.
+    app = await crearAppComoMain()
     server = app.getHttpServer() as Server
     prisma = new PrismaClient({ datasources: { db: { url: pg.url } } })
 
@@ -252,5 +247,32 @@ describe('Webhook de Resend e2e', () => {
       .expect(201)
 
     expect((respuesta.body as { id?: string }).id).toBeDefined()
+  })
+
+  describe('con el límite de cuerpo del arranque (Tarea 16)', () => {
+    /** Un evento válido y firmado, inflado con un campo que el DTO ignora. */
+    function cuerpoDeTamaño(bytes: number, mensaje: string): string {
+      const relleno = 'x'.repeat(bytes)
+      return `{ "type": "email.delivered", "created_at": "2026-09-18T10:00:00.000Z", "data": { "email_id": "${mensaje}", "relleno": "${relleno}" } }`
+    }
+
+    it('un webhook de 150 kB (por encima del límite por defecto de Express) se verifica y aplica', async () => {
+      const { id, mensaje } = await invitacionEnviada()
+      const cuerpo = cuerpoDeTamaño(150_000, mensaje)
+
+      await enviar(cuerpo, firmar(cuerpo)).expect(204)
+
+      expect(await estadoDe(id)).toBe('DELIVERED')
+    })
+
+    it('un webhook por encima de 256 kB es 413 antes de verificar nada', async () => {
+      const { id, mensaje } = await invitacionEnviada()
+      const cuerpo = cuerpoDeTamaño(300_000, mensaje)
+
+      const respuesta = await enviar(cuerpo, firmar(cuerpo)).expect(413)
+
+      expect((respuesta.body as { code?: string }).code).toBe('PAYLOAD_TOO_LARGE')
+      expect(await estadoDe(id)).toBe('SENT')
+    })
   })
 })

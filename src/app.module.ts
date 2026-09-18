@@ -9,6 +9,7 @@ import { AuthModule } from '@/modules/auth/auth.module'
 import { DatabaseModule } from '@/modules/database/database.module'
 import { EventsModule } from '@/modules/events/events.module'
 import { GuestsModule } from '@/modules/guests/guests.module'
+import { HealthModule } from '@/modules/health/health.module'
 import { MailModule } from '@/modules/mail/mail.module'
 import { NotificationsModule } from '@/modules/notifications/notifications.module'
 import { QueueModule } from '@/modules/queue/queue.module'
@@ -16,10 +17,12 @@ import { UsersModule } from '@/modules/users/users.module'
 import { VendorsModule } from '@/modules/vendors/vendors.module'
 import { crearLimitadores } from '@/shared/http/limitadores'
 import { RequestIdMiddleware } from '@/shared/http/request-id.middleware'
+import { RegistroModule } from '@/shared/logging/registro.module'
 
 @Module({
   imports: [
     ConfigModule,
+    RegistroModule,
     DatabaseModule,
     MailModule,
     QueueModule,
@@ -33,10 +36,9 @@ import { RequestIdMiddleware } from '@/shared/http/request-id.middleware'
      * `login`) sólo las rutas que los piden con `@LimiteDeRuta`. El porqué y el
      * mecanismo (`skipIf`) están en `shared/http/limitadores.ts`.
      *
-     * Hueco conocido para la Tarea 16: configurar `trust proxy`. El contador es
-     * por `req.ip`; detrás de un balanceador sin él, todos los clientes
-     * comparten la IP del balanceador y los límites cuentan por proxy, no por
-     * cliente — el global sería 120/min para toda la aplicación.
+     * El contador es por `req.ip`: detrás de un balanceador, `TRUST_PROXY`
+     * (Tarea 16, `configurarApp`) decide que salga del cliente y no del
+     * balanceador. `/health` está exento (ver `HealthController`).
      */
     ThrottlerModule.forRootAsync({
       inject: [ENV],
@@ -51,6 +53,7 @@ import { RequestIdMiddleware } from '@/shared/http/request-id.middleware'
     VendorsModule,
     GuestsModule,
     NotificationsModule,
+    HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

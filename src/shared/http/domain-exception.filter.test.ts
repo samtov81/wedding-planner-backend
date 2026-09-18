@@ -99,4 +99,50 @@ describe('DomainExceptionFilter', () => {
       )
     })
   })
+
+  describe('errores del parser del cuerpo (body-parser)', () => {
+    /** La forma exacta que body-parser pasa a `next(err)` (un `http-errors`). */
+    function errorDelParser(status: number, type: string, message: string): Error {
+      return Object.assign(new Error(message), { status, statusCode: status, expose: true, type })
+    }
+
+    it('un cuerpo por encima del límite es 413 PAYLOAD_TOO_LARGE, no un 500', () => {
+      const registro = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
+      const { host, json, status } = hostFalso('/auth/register')
+
+      new DomainExceptionFilter().catch(
+        errorDelParser(413, 'entity.too.large', 'request entity too large'),
+        host,
+      )
+
+      expect(status).toHaveBeenCalledWith(413)
+      expect(json.mock.calls[0]?.[0]).toMatchObject({ code: 'PAYLOAD_TOO_LARGE' })
+      // Es culpa del cliente: no se registra como "error no controlado".
+      expect(registro).not.toHaveBeenCalled()
+    })
+
+    it('un JSON mal formado es 400 INVALID_BODY, sin devolver el detalle del parser', () => {
+      const { host, json, status } = hostFalso('/auth/login')
+
+      new DomainExceptionFilter().catch(
+        errorDelParser(400, 'entity.parse.failed', 'Unexpected token } in JSON at position 7'),
+        host,
+      )
+
+      expect(status).toHaveBeenCalledWith(400)
+      expect(json.mock.calls[0]?.[0]).toMatchObject({ code: 'INVALID_BODY' })
+      expect(JSON.stringify(json.mock.calls[0])).not.toContain('Unexpected token')
+    })
+
+    it('un error cualquiera con `status` NO se cuela como 4xx: sólo los del parser', () => {
+      const { host, status } = hostFalso()
+
+      new DomainExceptionFilter().catch(
+        Object.assign(new Error('fallo de un cliente HTTP interno'), { status: 404, expose: true }),
+        host,
+      )
+
+      expect(status).toHaveBeenCalledWith(500)
+    })
+  })
 })

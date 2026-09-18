@@ -80,8 +80,12 @@ const NO_EXISTE: RespuestaSala = { ok: false, code: 'NOT_FOUND' }
  * `event:<id>`; un vendor BOOKED en `event:<id>:vendors`, donde hoy no se
  * emite nada — por REST no ve invitados, y todo lo que se emite a un evento
  * son datos de invitados.
+ *
+ * CORS: lo pone `RedisIoAdapter` con la allowlist del entorno, la misma que el
+ * HTTP. Aquí no: el CORS de Socket.IO es del servidor, no de un namespace, y el
+ * decorador sólo admite valores fijos.
  */
-@WebSocketGateway({ namespace: NAMESPACE_REALTIME, cors: { origin: false } })
+@WebSocketGateway({ namespace: NAMESPACE_REALTIME })
 export class NotificationsGateway implements OnGatewayInit, OnGatewayConnection {
   @WebSocketServer() readonly server!: Namespace
 

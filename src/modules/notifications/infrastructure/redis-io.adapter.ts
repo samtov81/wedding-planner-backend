@@ -18,12 +18,28 @@ import type { Server, ServerOptions } from 'socket.io'
  * Aquí se usa `ioredis`, que ya es dependencia (BullMQ, throttler) y que
  * `@socket.io/redis-adapter` soporta igual: una segunda librería cliente de
  * Redis no aporta nada.
+ *
+ * CORS (Tarea 16): `origenes` es la MISMA allowlist que el HTTP
+ * (`origenesPermitidos`), aplicada aquí y no en el decorador del gateway,
+ * porque el CORS de Socket.IO es del SERVIDOR (engine.io), no de un namespace,
+ * y el decorador sólo admite valores fijos en tiempo de compilación.
+ *  - `cors`: cabeceras para el long-polling, que sí pasa por CORS.
+ *  - `allowRequest`: el WebSocket NO pasa por CORS; el navegador lo abre desde
+ *    cualquier página y sólo manda `Origin`. Sin esta comprobación, la
+ *    allowlist no cubriría el transporte que de verdad se usa. Una petición SIN
+ *    `Origin` no viene de un navegador (no hay página que suplantar) y pasa: la
+ *    autenticación por token del namespace sigue aplicándose.
+ * Sin `origenes` (tests que montan el adapter a mano) no hay cabeceras CORS:
+ * el mismo `origin: false` que el gateway declaraba antes.
  */
 export class RedisIoAdapter extends IoAdapter {
   private readonly clientes: Redis[] = []
   private fabrica: ReturnType<typeof createAdapter> | null = null
 
-  constructor(app: INestApplicationContext) {
+  constructor(
+    app: INestApplicationContext,
+    private readonly origenes?: readonly string[],
+  ) {
     super(app)
   }
 
@@ -38,7 +54,18 @@ export class RedisIoAdapter extends IoAdapter {
 
   override createIOServer(port: number, options?: ServerOptions): Server {
     if (this.fabrica === null) throw new Error('RedisIoAdapter: llama a conectar() antes de usarlo')
-    const servidor = super.createIOServer(port, options) as Server
+    const permitidos = this.origenes
+    const conOrigenes: Partial<ServerOptions> | undefined =
+      permitidos === undefined
+        ? undefined
+        : {
+            cors: { origin: [...permitidos], credentials: true },
+            allowRequest: (req, callback) => {
+              const origen = req.headers.origin
+              callback(null, origen === undefined || permitidos.includes(origen))
+            },
+          }
+    const servidor = super.createIOServer(port, { ...options, ...conOrigenes }) as Server
     servidor.adapter(this.fabrica)
     return servidor
   }

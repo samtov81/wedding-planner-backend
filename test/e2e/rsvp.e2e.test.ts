@@ -2,20 +2,22 @@ import type { Server } from 'node:http'
 import { inspect } from 'node:util'
 
 import { type INestApplication, type LoggerService } from '@nestjs/common'
+import type { NestExpressApplication } from '@nestjs/platform-express'
 import { Test } from '@nestjs/testing'
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import { Queue } from 'bullmq'
-import cookieParser from 'cookie-parser'
 import Redis from 'ioredis'
 import request from 'supertest'
 
 import { AppModule } from '@/app.module'
+import { ENV } from '@/config/config.module'
+import type { Env } from '@/config/env.schema'
+import { configurarApp, OPCIONES_DE_FABRICA } from '@/configurar-app'
 import { generarTokenInvitacion } from '@/modules/guests/domain/invitation'
 import { NOTIFICATION_PORT } from '@/modules/notifications/application/notification.port'
 import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
 import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
-import { DomainExceptionFilter } from '@/shared/http/domain-exception.filter'
 
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 
@@ -79,15 +81,18 @@ describe('RSVP público e2e', () => {
    * cablea el adaptador de Prisma: el rollback con el adaptador REAL está en
    * `realtime.e2e.test.ts`. La cola es la REAL (BullMQ sobre el Redis del test).
    */
-  async function crearApp(): Promise<INestApplication> {
+  async function crearApp(): Promise<NestExpressApplication> {
     const modulo = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(NOTIFICATION_PORT)
       .useValue(notificaciones)
       .setLogger(registro)
       .compile()
-    const nueva = modulo.createNestApplication({ rawBody: true, logger: registro })
-    nueva.use(cookieParser())
-    nueva.useGlobalFilters(new DomainExceptionFilter())
+    const nueva = modulo.createNestApplication<NestExpressApplication>({
+      ...OPCIONES_DE_FABRICA,
+      logger: registro,
+    })
+    // El arranque de `main.ts`: body parser, CORS, helmet, filtro… (Tarea 16).
+    await configurarApp(nueva, nueva.get<Env>(ENV))
     await nueva.init()
     return nueva
   }
@@ -427,7 +432,7 @@ describe('RSVP público e2e', () => {
       // instancia contaría sus 5 y el límite real sería 5 × instancias.
       const otra = await crearApp()
       otrasApps.push(otra)
-      const otroServidor = otra.getHttpServer() as Server
+      const otroServidor = otra.getHttpServer()
 
       for (let i = 0; i < 3; i += 1) {
         await request(server)

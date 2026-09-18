@@ -75,6 +75,19 @@ describe('JwtAuthGuard', () => {
     ).rejects.toThrow(UnauthorizedException)
   })
 
+  it('un fallo de la base de datos al recargar NO se disfraza de 401: el error sale tal cual', async () => {
+    // Con un 401, durante una caída de la base cada petición diría "token
+    // inválido o caducado": los clientes cerrarían la sesión del usuario y la
+    // caída no se vería en ningún sitio. Tiene que llegar al filtro como 500.
+    const caida = new Error('conexión con la base de datos perdida')
+    vi.spyOn(usuarios, 'findById').mockRejectedValueOnce(caida)
+    const token = tokens.firmarAccess({ id: 'user-1', systemRole: 'ADMIN' })
+
+    await expect(
+      guard.canActivate(contexto({ headers: { authorization: `Bearer ${token}` } })),
+    ).rejects.toBe(caida)
+  })
+
   it('rechaza una petición sin cabecera Authorization', async () => {
     await expect(guard.canActivate(contexto({ headers: {} }))).rejects.toThrow(
       UnauthorizedException,

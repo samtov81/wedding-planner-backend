@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common'
 
 import { USER_REPOSITORY, type UserRepository } from '@/modules/users/application/user.repository'
+import { UnauthorizedError } from '@/shared/domain'
 
 import {
   ACCESS_TOKEN_RECHAZADO,
@@ -51,8 +52,16 @@ export class JwtAuthGuard implements CanActivate {
         this.usuarios,
         cabecera.slice('Bearer '.length),
       )
-    } catch {
-      throw new UnauthorizedException(ACCESS_TOKEN_RECHAZADO)
+    } catch (error) {
+      // SÓLO el rechazo del token es un 401. Un fallo al recargar el usuario
+      // (la base de datos caída) sale tal cual y el filtro lo responde como
+      // 500: convertirlo en 401 haría que, durante una caída, cada petición
+      // dijera "token caducado", los clientes cerraran la sesión y la caída no
+      // se viera. Mismo criterio que el gateway (`conSalaAutorizada`).
+      if (error instanceof UnauthorizedError) {
+        throw new UnauthorizedException(ACCESS_TOKEN_RECHAZADO)
+      }
+      throw error
     }
     return true
   }

@@ -32,11 +32,11 @@ interface EventVendorRespuesta {
  * evento es cosa de quien lo planifica, no de un vendor ya contratado ni de
  * cualquiera con acceso de sólo lectura.
  *
- * `@RequireEventAccess` va en CADA método, no en la clase: `EventAccessGuard`
- * lee la metadata con `reflector.get(PERMITIDOS, contexto.getHandler())`, que
- * sólo mira el HANDLER — `SetMetadata` puesto en la clase no llega ahí y el
- * decorador quedaría inerte sin avisar (ver notas de la Tarea 10 sobre este
- * mismo riesgo). El precedente es `EventsController`, que hace lo mismo.
+ * `@RequireEventAccess` va en CADA método, no en la clase: cuando se escribió,
+ * `EventAccessGuard` sólo leía la metadata del HANDLER y el decorador de clase
+ * quedaba inerte sin avisar (ver notas de la Tarea 10). Desde el arreglo I-3
+ * de la revisión final el guard lee también la clase y falla cerrado sin
+ * decorador; la repetición por método se conserva.
  */
 @UseGuards(JwtAuthGuard, EventAccessGuard)
 @Controller('events/:eventId/vendors')

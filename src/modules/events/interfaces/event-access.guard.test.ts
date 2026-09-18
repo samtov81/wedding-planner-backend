@@ -13,16 +13,29 @@ import { RequireEventAccess } from './require-event-access.decorator'
 const UUID_EVENTO = '11111111-1111-4111-8111-111111111111'
 
 /**
- * Controlador de mentira: dos rutas, una abierta y otra sólo para COUPLE.
- * Los métodos se anotan `this: void` porque el test los pasa sueltos a
- * `getHandler()`, exactamente como hace Nest, y sin la anotación
- * `@typescript-eslint/unbound-method` los da por mal desligados.
+ * Controlador de mentira: una ruta abierta a todo acceso, otra sólo para
+ * COUPLE y otra a la que se le OLVIDÓ el decorador. Los métodos se anotan
+ * `this: void` porque el test los pasa sueltos a `getHandler()`, exactamente
+ * como hace Nest, y sin la anotación `@typescript-eslint/unbound-method` los
+ * da por mal desligados.
  */
 class ControladorDePrueba {
+  @RequireEventAccess('COUPLE', 'PLANNER', 'VENDOR')
   cualquiera(this: void): void {}
 
   @RequireEventAccess('COUPLE')
   soloPareja(this: void): void {}
+
+  sinDecorador(this: void): void {}
+}
+
+/** El decorador en la CLASE, como lo escribió el primer borrador de la Tarea 10. */
+@RequireEventAccess('COUPLE')
+class ControladorSoloParejaEnClase {
+  heredaLaClase(this: void): void {}
+
+  @RequireEventAccess('COUPLE', 'PLANNER')
+  elMetodoGana(this: void): void {}
 }
 
 interface PeticionFalsa {
@@ -31,11 +44,15 @@ interface PeticionFalsa {
   eventAccess?: unknown
 }
 
-function contextoCon(req: PeticionFalsa, handler: () => void): ExecutionContext {
+function contextoCon(
+  req: PeticionFalsa,
+  handler: () => void,
+  clase: abstract new () => unknown = ControladorDePrueba,
+): ExecutionContext {
   return {
     switchToHttp: () => ({ getRequest: () => req }),
     getHandler: () => handler,
-    getClass: () => ControladorDePrueba,
+    getClass: () => clase,
   } as unknown as ExecutionContext
 }
 
@@ -160,6 +177,83 @@ describe('EventAccessGuard', () => {
     await expect(guard.canActivate(contextoCon(req, soloPareja))).rejects.toBeInstanceOf(
       ForbiddenError,
     )
+  })
+
+  describe('falla CERRADO: la lista de permitidos es obligatoria', () => {
+    it.each([
+      ['un miembro COUPLE', { id: 'ana', systemRole: 'USER' as const }],
+      ['un ADMIN', { id: 'root', systemRole: 'ADMIN' as const }],
+      ['un extraño', { id: 'extraño', systemRole: 'USER' as const }],
+    ])(
+      'una ruta sin @RequireEventAccess es un error de programación (500) para %s',
+      async (_q, user) => {
+        const req: PeticionFalsa = { params: { eventId: UUID_EVENTO }, user }
+        const sinDecorador = ControladorDePrueba.prototype.sinDecorador
+
+        const error = await guard
+          .canActivate(contextoCon(req, sinDecorador))
+          .catch((e: unknown) => e)
+
+        // Un `Error` plano, no un `DomainError`: el filtro lo convierte en 500.
+        expect(error).toBeInstanceOf(Error)
+        expect(error).not.toBeInstanceOf(NotFoundError)
+        expect(error).not.toBeInstanceOf(ForbiddenError)
+        expect((error as Error).message).toBe('EventAccessGuard requires @RequireEventAccess')
+        expect(req.eventAccess).toBeUndefined()
+      },
+    )
+  })
+
+  describe('la metadata de CLASE cuenta (el bypass del primer borrador de la Tarea 10)', () => {
+    const heredaLaClase = ControladorSoloParejaEnClase.prototype.heredaLaClase
+    const elMetodoGana = ControladorSoloParejaEnClase.prototype.elMetodoGana
+
+    it('un decorador en la clase se aplica a sus métodos: un PLANNER recibe 403', async () => {
+      const pedro: PeticionFalsa = {
+        params: { eventId: UUID_EVENTO },
+        user: { id: 'pedro', systemRole: 'USER' },
+      }
+      const ana: PeticionFalsa = {
+        params: { eventId: UUID_EVENTO },
+        user: { id: 'ana', systemRole: 'USER' },
+      }
+
+      await expect(
+        guard.canActivate(contextoCon(pedro, heredaLaClase, ControladorSoloParejaEnClase)),
+      ).rejects.toBeInstanceOf(ForbiddenError)
+      await expect(
+        guard.canActivate(contextoCon(ana, heredaLaClase, ControladorSoloParejaEnClase)),
+      ).resolves.toBe(true)
+    })
+
+    it('un vendor BOOKED tampoco pasa por una ruta restringida en la clase', async () => {
+      repo.perfiles.push({ id: 'perfil-1', userId: 'foto' })
+      repo.eventVendors.push({
+        id: 'ev-v-1',
+        eventId: UUID_EVENTO,
+        vendorProfileId: 'perfil-1',
+        status: 'BOOKED',
+      })
+      const req: PeticionFalsa = {
+        params: { eventId: UUID_EVENTO },
+        user: { id: 'foto', systemRole: 'USER' },
+      }
+
+      await expect(
+        guard.canActivate(contextoCon(req, heredaLaClase, ControladorSoloParejaEnClase)),
+      ).rejects.toBeInstanceOf(ForbiddenError)
+    })
+
+    it('el decorador del método, si lo hay, prevalece sobre el de la clase', async () => {
+      const pedro: PeticionFalsa = {
+        params: { eventId: UUID_EVENTO },
+        user: { id: 'pedro', systemRole: 'USER' },
+      }
+
+      await expect(
+        guard.canActivate(contextoCon(pedro, elMetodoGana, ControladorSoloParejaEnClase)),
+      ).resolves.toBe(true)
+    })
   })
 
   it('sin usuario autenticado es 401: falta identidad, no permiso', async () => {

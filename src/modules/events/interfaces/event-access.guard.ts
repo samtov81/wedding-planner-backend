@@ -26,6 +26,25 @@ export class EventAccessGuard implements CanActivate {
   ) {}
 
   async canActivate(contexto: ExecutionContext): Promise<boolean> {
+    // Método Y clase: un `@RequireEventAccess` en la clase se aplica a todos
+    // sus métodos, y el de un método prevalece sobre el de su clase. Leer sólo
+    // el handler dejaba inerte, y en silencio, el decorador de clase: así pasó
+    // el bypass del primer borrador de la Tarea 10.
+    const permitidos = this.reflector.getAllAndOverride<PermisoDeEvento[] | undefined>(PERMITIDOS, [
+      contexto.getHandler(),
+      contexto.getClass(),
+    ])
+
+    // Falla CERRADO. Sin lista, esto antes dejaba pasar a CUALQUIER acceso,
+    // vendor incluido: el error más fácil de cometer (olvidar el decorador)
+    // abría la ruta. Es un error de programación, no una respuesta de negocio:
+    // `Error` plano → 500, y se ve en el primer test o petición a la ruta.
+    // Se comprueba ANTES de resolver el acceso, así que el 500 es el mismo
+    // para todos y no dice nada del evento.
+    if (permitidos === undefined) {
+      throw new Error('EventAccessGuard requires @RequireEventAccess')
+    }
+
     const req = contexto.switchToHttp().getRequest<PeticionConAcceso>()
 
     // DESIGN-GAP: el brief da por hecho que `req.user` existe porque
@@ -52,12 +71,7 @@ export class EventAccessGuard implements CanActivate {
     // saberlo, y convierte cada ruta en un oráculo para enumerar la plataforma.
     if (resultado.kind === 'none') throw new NotFoundError(NO_EXISTE)
 
-    const permitidos = this.reflector.get<PermisoDeEvento[] | undefined>(
-      PERMITIDOS,
-      contexto.getHandler(),
-    )
-
-    if (permitidos !== undefined && resultado.kind !== 'admin') {
+    if (resultado.kind !== 'admin') {
       const mio = etiquetaDe(resultado)
       // Aquí SÍ 403: ya sabemos que tiene acceso al evento, así que decirle
       // que no puede hacer *esta* operación no le revela nada nuevo.

@@ -33,9 +33,8 @@ interface PaginaRespuesta {
  * Las notificaciones PROPIAS del usuario en un evento: lo que un cliente que
  * estuvo desconectado recupera. El socket es latencia; esto es el canal.
  *
- * `COUPLE` y `PLANNER` en CADA método, no en la clase: `EventAccessGuard` lee
- * la metadata del HANDLER y a nivel de clase el decorador sería inerte (ver
- * `EventVendorsController`). Un vendor contratado no es miembro y no recibe
+ * `COUPLE` y `PLANNER` en CADA método, no en la clase, por el mismo motivo
+ * histórico que `EventVendorsController` (hoy el guard ya lee la clase). Un vendor contratado no es miembro y no recibe
  * notificaciones, así que no tiene nada que leer aquí: 403, como en
  * `/guests`. ADMIN pasa (el guard lo resuelve antes de mirar la lista) y ve
  * las suyas, que son las de un miembro más si lo es, o ninguna.

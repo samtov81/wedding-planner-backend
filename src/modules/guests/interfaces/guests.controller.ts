@@ -65,13 +65,12 @@ interface PaginaRespuesta {
  * endpoint agregado y anonimizado, no acceso a la tabla.
  *
  * DESIGN-GAP: el brief pone `@RequireEventAccess('COUPLE','PLANNER')` UNA vez,
- * a nivel de clase. Ahí es INERTE y en silencio: `EventAccessGuard` lee la
- * metadata con `reflector.get(PERMITIDOS, contexto.getHandler())`, que sólo
- * mira el handler, así que el decorador de clase no llega nunca y el
- * controlador quedaría abierto a cualquiera con acceso al evento —incluido el
- * vendor que el propio brief quiere excluir—. Se repite en CADA método, y el
- * e2e comprueba las seis rutas una por una: un decorador que falta se ve igual
- * que uno que está, y deja la suite en verde.
+ * a nivel de clase. Cuando se escribió, ahí era INERTE: el guard sólo leía la
+ * metadata del handler y el controlador quedaba abierto a cualquiera con
+ * acceso al evento —incluido el vendor que el propio brief quiere excluir—.
+ * Se repitió en CADA método, y el e2e comprueba las rutas una por una. Desde
+ * el arreglo I-3 de la revisión final el guard lee también la clase y falla
+ * cerrado sin decorador; la repetición por método se conserva.
  */
 @UseGuards(JwtAuthGuard, EventAccessGuard)
 @Controller('events/:eventId/guests')

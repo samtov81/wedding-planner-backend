@@ -59,11 +59,12 @@ export class EventsController {
   }
 
   /**
-   * Sin `@RequireEventAccess`: leer el evento lo puede hacer cualquiera que
-   * esté dentro, incluido un vendor contratado. El filtro que importa ya lo
-   * ha aplicado el guard, y es un 404 para todos los demás.
+   * Leer el evento lo puede hacer cualquiera que esté dentro, incluido un
+   * vendor contratado; la lista es explícita porque el guard falla cerrado sin
+   * ella. El filtro que importa es el 404 del guard para todos los demás.
    */
   @UseGuards(EventAccessGuard)
+  @RequireEventAccess('COUPLE', 'PLANNER', 'VENDOR')
   @Get(':eventId')
   async verEvento(
     @Param('eventId') eventId: string,
@@ -73,7 +74,10 @@ export class EventsController {
     // Sólo lo alcanza un ADMIN: a cualquier otro el guard ya le habría dado
     // 404, porque no se puede tener membresía de un evento que no existe.
     if (evento === null) throw new EventoNoEncontradoError()
-    return { ...this.aRespuesta(evento), access: acceso ?? { kind: 'none' } }
+    // El guard siempre deja el acceso resuelto; si falta, la ruta perdió el
+    // guard, y eso es un error de programación, no un acceso `none` inventado.
+    if (acceso === undefined) throw new Error('verEvento requires EventAccessGuard')
+    return { ...this.aRespuesta(evento), access: acceso }
   }
 
   /** Invitar toca quién manda en el evento: sólo COUPLE. */

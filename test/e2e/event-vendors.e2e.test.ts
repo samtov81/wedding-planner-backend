@@ -242,6 +242,44 @@ describe('Vendors por evento e2e', () => {
       .expect(403)
 
     expect((negado.body as CuerpoError).code).toBe('FORBIDDEN')
+
+    // Ronda de arreglo 1, hallazgo Important #2 (C12): el test de arriba sólo
+    // cubría POST, así que quitar el decorador de PATCH o DELETE dejaba la
+    // suite entera en verde — justo el fallo silencioso que esta tarea
+    // encontró en su propio primer borrador. Se repite la comprobación en
+    // las otras tres rutas, con el estado que este mismo test ya dejó listo
+    // (fotografo BOOKED, con acceso pero sin permiso de gestión).
+    const listaDeAna = await request(server)
+      .get(`/events/${evento}/vendors`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(200)
+    const [algunProveedor] = listaDeAna.body as CuerpoEventVendor[]
+    if (algunProveedor === undefined)
+      throw new Error('el listado de Ana debería traer al menos uno')
+
+    const negadoGet = await request(server)
+      .get(`/events/${evento}/vendors`)
+      .set('Authorization', `Bearer ${fotografo.accessToken}`)
+      .expect(403)
+    expect((negadoGet.body as CuerpoError).code).toBe('FORBIDDEN')
+
+    const negadoPatch = await request(server)
+      .patch(`/events/${evento}/vendors/${algunProveedor.id}`)
+      .set('Authorization', `Bearer ${fotografo.accessToken}`)
+      .send({ status: 'CANCELLED' })
+      .expect(403)
+    expect((negadoPatch.body as CuerpoError).code).toBe('FORBIDDEN')
+
+    const negadoDelete = await request(server)
+      .delete(`/events/${evento}/vendors/${algunProveedor.id}`)
+      .set('Authorization', `Bearer ${fotografo.accessToken}`)
+      .expect(403)
+    expect((negadoDelete.body as CuerpoError).code).toBe('FORBIDDEN')
+
+    // Y que ninguno de los tres intentos negados haya tocado la fila.
+    const sigueIgual = await prisma.eventVendor.findUnique({ where: { id: algunProveedor.id } })
+    expect(sigueIgual).not.toBeNull()
+    expect(sigueIgual?.status).not.toBe('CANCELLED')
   })
 
   it('elimina un proveedor', async () => {

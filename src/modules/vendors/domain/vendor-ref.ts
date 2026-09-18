@@ -41,12 +41,28 @@ export interface EntradaVendorRef {
  * un error de Postgres sin explicar qué está mal. Este value object da un 422
  * con el motivo ANTES de llegar ahí. Las dos capas responden a preguntas
  * distintas y ninguna sustituye a la otra.
+ *
+ * DESIGN-GAP (ordenado por el controlador de la revisión, ronda 1, hallazgo
+ * Important #1 — C11): el brief sólo comprobaba `vendorProfileId` y
+ * `externalName` para detectar ambigüedad. Con eso, `{ vendorProfileId,
+ * externalEmail, externalPhone }` pasaba como `linked` y el email/teléfono se
+ * tiraban en silencio al construir la fila — un 201 que miente sobre qué se
+ * guardó, e inconsistente con `externalName` en la misma posición, que sí
+ * daba 422. Se corta aquí, no en el DTO: `parseVendorRef` es el único sitio
+ * que conoce la regla completa de exclusividad, y el DTO ya delega en él a
+ * propósito (ver docblock de `createEventVendorSchema`) para no duplicarla.
+ * Cualquier `externalEmail`/`externalPhone` no vacío junto a un
+ * `vendorProfileId` no vacío es ahora tan ambiguo como `externalName`.
  */
 export function parseVendorRef(entrada: EntradaVendorRef): VendorRef {
   const enlazado = entrada.vendorProfileId?.trim() ?? ''
   const nombre = entrada.externalName?.trim() ?? ''
+  const email = entrada.externalEmail?.trim() ?? ''
+  const telefono = entrada.externalPhone?.trim() ?? ''
 
-  if (enlazado !== '' && nombre !== '') throw new VendorRefAmbiguaError()
+  if (enlazado !== '' && (nombre !== '' || email !== '' || telefono !== '')) {
+    throw new VendorRefAmbiguaError()
+  }
   if (enlazado === '' && nombre === '') throw new VendorRefVaciaError()
 
   if (enlazado !== '') return { kind: 'linked', vendorProfileId: enlazado }
@@ -54,7 +70,7 @@ export function parseVendorRef(entrada: EntradaVendorRef): VendorRef {
   return {
     kind: 'external',
     name: nombre,
-    email: entrada.externalEmail?.trim() ?? null,
-    phone: entrada.externalPhone?.trim() ?? null,
+    email: email === '' ? null : email,
+    phone: telefono === '' ? null : telefono,
   }
 }

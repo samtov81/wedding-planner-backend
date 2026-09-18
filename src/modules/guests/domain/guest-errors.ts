@@ -1,4 +1,4 @@
-import { ConflictError, NotFoundError } from '@/shared/domain'
+import { ConflictError, NotFoundError, UnprocessableError } from '@/shared/domain'
 
 /**
  * Cubre dos casos que el cliente no necesita distinguir: el `guestId` no
@@ -25,5 +25,18 @@ export class InvitadoNoEncontradoError extends NotFoundError {
 export class EmailDuplicadoError extends ConflictError {
   constructor() {
     super('Ya hay un invitado con ese correo en este evento', 'GUEST_EMAIL_DUPLICATED')
+  }
+}
+
+/**
+ * Enviar una invitación a alguien sin correo es imposible, no prohibido ni
+ * inexistente: 422. La petición está bien formada y el invitado existe; lo que
+ * falta es el dato que hace posible la operación. En el envío MASIVO este mismo
+ * caso no lanza — aparece en `skipped` con motivo `NO_EMAIL`—, porque un
+ * invitado sin correo no puede abortar el envío a los otros 149.
+ */
+export class GuestHasNoEmailError extends UnprocessableError {
+  constructor() {
+    super('El invitado no tiene correo al que enviar la invitación', 'GUEST_HAS_NO_EMAIL')
   }
 }

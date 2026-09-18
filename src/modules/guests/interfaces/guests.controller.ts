@@ -1,4 +1,16 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common'
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common'
 
 import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
 import { EventAccessGuard } from '@/modules/events/interfaces/event-access.guard'
@@ -12,6 +24,11 @@ import { GetGuestUseCase } from '../application/get-guest.use-case'
 import type { GuestFilters } from '../application/guest.repository'
 import { GuestSummaryUseCase } from '../application/guest-summary.use-case'
 import { ListGuestsUseCase } from '../application/list-guests.use-case'
+import {
+  SendInvitationsUseCase,
+  type ResultadoEnvio,
+} from '../application/send-invitations.use-case'
+import { SendSingleInvitationUseCase } from '../application/send-single-invitation.use-case'
 import { UpdateGuestUseCase } from '../application/update-guest.use-case'
 import type { Guest, GuestSummary } from '../domain/guest'
 import {
@@ -31,13 +48,18 @@ interface InvitadoRespuesta {
   createdAt: Date
 }
 
+/** Lo que pone `RequestIdMiddleware` en la petición. */
+interface PeticionConId {
+  requestId?: string
+}
+
 interface PaginaRespuesta {
   items: InvitadoRespuesta[]
   nextCursor: string | null
 }
 
 /**
- * Las seis rutas exigen `COUPLE` o `PLANNER`, y eso excluye a `VENDOR` de TODO
+ * Las ocho rutas exigen `COUPLE` o `PLANNER`, y eso excluye a `VENDOR` de TODO
  * el controlador: un catering contratado no necesita los datos personales de
  * 150 personas. Si algún día hace falta (restricciones alimentarias), será un
  * endpoint agregado y anonimizado, no acceso a la tabla.
@@ -61,6 +83,8 @@ export class GuestsController {
     private readonly crear: CreateGuestUseCase,
     private readonly actualizar: UpdateGuestUseCase,
     private readonly eliminar: DeleteGuestUseCase,
+    private readonly enviarInvitaciones: SendInvitationsUseCase,
+    private readonly enviarInvitacion: SendSingleInvitationUseCase,
   ) {}
 
   @RequireEventAccess('COUPLE', 'PLANNER')
@@ -114,6 +138,36 @@ export class GuestsController {
     })
 
     return aRespuesta(invitado)
+  }
+
+  /**
+   * DECLARADA ANTES que `POST /:guestId/invitation` no hace falta —no colisionan—,
+   * pero sí ANTES de cualquier futuro `POST /:guestId`: `invitations` casaría
+   * con el parámetro y el envío masivo respondería 404.
+   *
+   * 202 y no 201: la petición ACEPTA el trabajo, no lo termina. Los correos los
+   * manda el worker; devolver 201 prometería un recurso que aún no existe.
+   */
+  @RequireEventAccess('COUPLE', 'PLANNER')
+  @Post('invitations')
+  @HttpCode(202)
+  async enviarTodas(
+    @Param('eventId') eventId: string,
+    @Req() peticion: PeticionConId,
+  ): Promise<ResultadoEnvio> {
+    return await this.enviarInvitaciones.ejecutar(eventId, peticion.requestId ?? '')
+  }
+
+  /** 202, o 422 `GUEST_HAS_NO_EMAIL` si a ese invitado no hay a dónde escribirle. */
+  @RequireEventAccess('COUPLE', 'PLANNER')
+  @Post(':guestId/invitation')
+  @HttpCode(202)
+  async enviarUna(
+    @Param('eventId') eventId: string,
+    @Param('guestId') guestId: string,
+    @Req() peticion: PeticionConId,
+  ): Promise<{ guestId: string; invitationId: string }> {
+    return await this.enviarInvitacion.ejecutar(eventId, guestId, peticion.requestId ?? '')
   }
 
   @RequireEventAccess('COUPLE', 'PLANNER')

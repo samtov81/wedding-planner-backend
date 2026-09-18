@@ -32,6 +32,11 @@ interface CuerpoPagina {
   nextCursor: string | null
 }
 
+interface CuerpoEnvio {
+  queued: Array<{ guestId: string; invitationId: string }>
+  skipped: Array<{ guestId: string; reason: 'NO_EMAIL' | 'ALREADY_RESPONDED' }>
+}
+
 interface CuerpoResumen {
   total: number
   confirmed: number
@@ -378,7 +383,106 @@ describe('Invitados e2e', () => {
     expect((respuesta.body as CuerpoError).code).toBe('GUEST_NOT_FOUND')
   })
 
-  it('un vendor contratado NO puede tocar NINGUNA de las seis rutas: 403', async () => {
+  it('el envío masivo devuelve 202 y REPORTA a quién no se le manda nada', async () => {
+    // Boda aparte, con los tres casos exactos: con correo, sin correo y con
+    // respuesta ya dada. Así el recuento no depende de lo que hicieron los
+    // tests anteriores.
+    const boda = await crearEvento(ana.accessToken, 'Boda del envío')
+
+    const conCorreo = (
+      await request(server)
+        .post(`/events/${boda}/guests`)
+        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .send({ name: 'Con correo', email: 'con-correo@test.com', group: 'Friends' })
+        .expect(201)
+    ).body as CuerpoInvitado
+
+    const sinCorreo = (
+      await request(server)
+        .post(`/events/${boda}/guests`)
+        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .send({ name: 'Sin correo', group: 'Family' })
+        .expect(201)
+    ).body as CuerpoInvitado
+
+    const yaRespondio = (
+      await request(server)
+        .post(`/events/${boda}/guests`)
+        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .send({ name: 'Ya respondió', email: 'respondio@test.com', group: 'Work' })
+        .expect(201)
+    ).body as CuerpoInvitado
+    await request(server)
+      .patch(`/events/${boda}/guests/${yaRespondio.id}`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ rsvp: 'CONFIRMED' })
+      .expect(200)
+
+    const respuesta = await request(server)
+      .post(`/events/${boda}/guests/invitations`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(202)
+
+    const resultado = respuesta.body as CuerpoEnvio
+    expect(resultado.queued.map((q) => q.guestId)).toEqual([conCorreo.id])
+    expect(resultado.skipped).toEqual(
+      expect.arrayContaining([
+        { guestId: sinCorreo.id, reason: 'NO_EMAIL' },
+        { guestId: yaRespondio.id, reason: 'ALREADY_RESPONDED' },
+      ]),
+    )
+    expect(resultado.skipped).toHaveLength(2)
+
+    // La fila existe y guarda un HASH, no el token: el enlace no es
+    // reconstruible desde la base de datos.
+    const filas = await prisma.guestInvitation.findMany({ where: { guestId: conCorreo.id } })
+    expect(filas).toHaveLength(1)
+    expect(filas[0]?.tokenHash).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('invitar a UNO sin correo es 422 con código, no un 202 silencioso', async () => {
+    const boda = await crearEvento(ana.accessToken, 'Boda del envío individual')
+
+    const mudo = (
+      await request(server)
+        .post(`/events/${boda}/guests`)
+        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .send({ name: 'Sin correo', group: 'Family' })
+        .expect(201)
+    ).body as CuerpoInvitado
+
+    const respuesta = await request(server)
+      .post(`/events/${boda}/guests/${mudo.id}/invitation`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(422)
+
+    expect((respuesta.body as CuerpoError).code).toBe('GUEST_HAS_NO_EMAIL')
+    expect(await prisma.guestInvitation.count({ where: { guestId: mudo.id } })).toBe(0)
+  })
+
+  it('invitar a UNO con correo es 202 y deja la invitación encolada', async () => {
+    const boda = await crearEvento(ana.accessToken, 'Boda del envío individual 2')
+
+    const invitado = (
+      await request(server)
+        .post(`/events/${boda}/guests`)
+        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .send({ name: 'Uno', email: 'uno@test.com', group: 'Friends' })
+        .expect(201)
+    ).body as CuerpoInvitado
+
+    const respuesta = await request(server)
+      .post(`/events/${boda}/guests/${invitado.id}/invitation`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(202)
+
+    const cuerpo = respuesta.body as { guestId: string; invitationId: string }
+    expect(cuerpo.guestId).toBe(invitado.id)
+    const fila = await prisma.guestInvitation.findUnique({ where: { id: cuerpo.invitationId } })
+    expect(fila?.guestId).toBe(invitado.id)
+  })
+
+  it('un vendor contratado NO puede tocar NINGUNA de las ocho rutas: 403', async () => {
     // `@RequireEventAccess` es inerte si falta en un método (el guard sólo mira
     // el handler), y un decorador que falta se ve igual que uno que está. Por
     // eso se comprueban las SEIS rutas, no sólo el listado: con una sola, el
@@ -414,6 +518,12 @@ describe('Invitados e2e', () => {
     // construir la petición, y seis a la vez se pisan el puerto (ECONNREFUSED).
     const negados = [
       () => request(server).get(`/events/${bodaDeAna}/guests`).set('Authorization', token),
+      () =>
+        request(server).post(`/events/${bodaDeAna}/guests/invitations`).set('Authorization', token),
+      () =>
+        request(server)
+          .post(`/events/${bodaDeAna}/guests/${victima.id}/invitation`)
+          .set('Authorization', token),
       () => request(server).get(`/events/${bodaDeAna}/guests/summary`).set('Authorization', token),
       () =>
         request(server)
@@ -445,5 +555,7 @@ describe('Invitados e2e', () => {
     expect(sigueIgual).not.toBeNull()
     expect(sigueIgual?.rsvp).toBe(victima.rsvp)
     expect(await prisma.guest.count({ where: { eventId: bodaDeAna, name: 'Colado' } })).toBe(0)
+    // Y que el vendor no haya conseguido encolar ni una invitación.
+    expect(await prisma.guestInvitation.count({ where: { guest: { eventId: bodaDeAna } } })).toBe(0)
   })
 })

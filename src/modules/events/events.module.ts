@@ -21,6 +21,11 @@ import { EventsController } from './interfaces/events.controller'
  * `EventAccessService` y `EVENT_REPOSITORY` se exportan porque las Tareas 10,
  * 11 y 14 (invitados, RSVP y el gateway de sockets) autorizan a través de
  * ellos: ése es justamente el punto de tener un único sitio donde se decide.
+ *
+ * `EventAccessGuard` se exporta también (Tarea 10): un módulo que usa
+ * `@UseGuards(EventAccessGuard)` necesita poder resolverlo en su propio
+ * injector, y el guard no tiene sentido reconstruido en otro módulo — es el
+ * mismo punto único de autorización, no una copia.
  */
 @Module({
   imports: [AuthModule, UsersModule],
@@ -37,6 +42,6 @@ import { EventsController } from './interfaces/events.controller'
     ListEventsUseCase,
     InviteMemberUseCase,
   ],
-  exports: [EventAccessService, EVENT_REPOSITORY],
+  exports: [EventAccessService, EVENT_REPOSITORY, EventAccessGuard],
 })
 export class EventsModule {}

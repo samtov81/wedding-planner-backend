@@ -7,6 +7,7 @@ import { EventsModule } from '@/modules/events/events.module'
 import { MailModule } from '@/modules/mail/mail.module'
 import { QueueModule } from '@/modules/queue/queue.module'
 import { UsersModule } from '@/modules/users/users.module'
+import { VendorsModule } from '@/modules/vendors/vendors.module'
 import { RequestIdMiddleware } from '@/shared/http/request-id.middleware'
 
 @Module({
@@ -18,6 +19,7 @@ import { RequestIdMiddleware } from '@/shared/http/request-id.middleware'
     UsersModule,
     AuthModule,
     EventsModule,
+    VendorsModule,
   ],
 })
 export class AppModule implements NestModule {

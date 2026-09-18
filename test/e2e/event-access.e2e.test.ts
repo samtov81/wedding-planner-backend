@@ -66,6 +66,14 @@ describe('Acceso a eventos e2e', () => {
     return (respuesta.body as CuerpoEvento).id
   }
 
+  async function listarEventos(accessToken: string): Promise<string[]> {
+    const respuesta = await request(server)
+      .get('/events')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200)
+    return (respuesta.body as CuerpoEvento[]).map((e) => e.id).sort()
+  }
+
   beforeAll(async () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
@@ -161,6 +169,11 @@ describe('Acceso a eventos e2e', () => {
       .set('Authorization', `Bearer ${pedro.accessToken}`)
       .expect(404)
 
+    // Y tampoco asoma en el listado: `GET /events` vuelve a expresar la regla
+    // de acceso por su cuenta (un WHERE de Postgres, no el servicio), así que
+    // hay que fijar aquí que INVITED queda fuera también por ese camino.
+    expect(await listarEventos(pedro.accessToken)).toEqual([eventoDePedro])
+
     // Y quedó rastro de quién invitó a quién.
     const auditoria = await prisma.auditLog.findMany({ where: { eventId: eventoDeAna } })
     expect(auditoria).toHaveLength(1)
@@ -232,6 +245,7 @@ describe('Acceso a eventos e2e', () => {
       .get(`/events/${eventoDeAna}`)
       .set('Authorization', `Bearer ${extrano.accessToken}`)
       .expect(404)
+    expect(await listarEventos(extrano.accessToken)).toEqual([])
 
     await prisma.eventVendor.update({
       where: { id: contratacion.id },
@@ -245,6 +259,9 @@ describe('Acceso a eventos e2e', () => {
     expect(respuesta.body).toMatchObject({
       access: { kind: 'vendor', eventVendorId: contratacion.id },
     })
+    // Y ahora SÍ aparece en su listado: si la lista y el acceso a un evento
+    // suelto divergieran, un vendor vería un evento que al abrirlo da 404.
+    expect(await listarEventos(extrano.accessToken)).toEqual([eventoDeAna])
 
     // Pero un vendor no invita a nadie: tiene acceso, no mando.
     await request(server)
@@ -252,5 +269,24 @@ describe('Acceso a eventos e2e', () => {
       .set('Authorization', `Bearer ${extrano.accessToken}`)
       .send({ email: 'pedro@test.com', role: 'PLANNER' })
       .expect(403)
+  })
+
+  /**
+   * DEBE SER EL ÚLTIMO: revoca la membresía de Pedro, y este fichero comparte
+   * estado entre tests en el orden en que están escritos.
+   */
+  it('revocar cierra las dos puertas: el evento suelto y el listado', async () => {
+    expect(await listarEventos(pedro.accessToken)).toEqual([eventoDeAna, eventoDePedro].sort())
+
+    await prisma.eventMembership.update({
+      where: { eventId_userId: { eventId: eventoDeAna, userId: pedro.id } },
+      data: { status: 'REVOKED' },
+    })
+
+    await request(server)
+      .get(`/events/${eventoDeAna}`)
+      .set('Authorization', `Bearer ${pedro.accessToken}`)
+      .expect(404)
+    expect(await listarEventos(pedro.accessToken)).toEqual([eventoDePedro])
   })
 })

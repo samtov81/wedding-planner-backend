@@ -1,20 +1,9 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Get,
-  HttpCode,
-  Inject,
-  Post,
-  Req,
-  Res,
-  UseGuards,
-} from '@nestjs/common'
+import { Body, Controller, Get, HttpCode, Inject, Post, Req, Res, UseGuards } from '@nestjs/common'
 import type { Request, Response } from 'express'
-import { ZodError } from 'zod'
 
 import { ENV } from '@/config/config.module'
 import type { Env } from '@/config/env.schema'
+import { validarCon } from '@/shared/http/validar-con'
 
 import { LoginUseCase } from '../application/login.use-case'
 import { LogoutUseCase } from '../application/logout.use-case'
@@ -52,7 +41,7 @@ export class AuthController {
    */
   @Post('register')
   async register(@Body() body: unknown): Promise<{ id: string; email: string; fullName: string }> {
-    const datos = this.validar(registerSchema, body)
+    const datos = validarCon(registerSchema, body)
     const usuario = await this.registerUseCase.ejecutar(datos)
     return { id: usuario.id, email: usuario.email, fullName: usuario.fullName }
   }
@@ -64,7 +53,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ accessToken: string }> {
-    const datos = this.validar(loginSchema, body)
+    const datos = validarCon(loginSchema, body)
     // El origen se captura aquí, que es el único sitio que lo conoce, y se
     // guarda con la sesión: cuando salte la detección de reuso hay que poder
     // decir desde qué IP y qué dispositivo nació esa familia.
@@ -105,17 +94,6 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() usuario: UsuarioAutenticado | undefined): UsuarioAutenticado | undefined {
     return usuario
-  }
-
-  private validar<T>(schema: { parse: (valor: unknown) => T }, body: unknown): T {
-    try {
-      return schema.parse(body)
-    } catch (error) {
-      if (error instanceof ZodError) {
-        throw new BadRequestException(error.issues.map((i) => i.message).join('; '))
-      }
-      throw error
-    }
   }
 
   private leerCookieRefresh(req: Request): string {

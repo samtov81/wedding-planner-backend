@@ -7,7 +7,12 @@ import type {
   MembresiaPersistida,
 } from '../application/event.repository'
 import type { Event } from '../domain/event'
-import type { EventRole, MembershipStatus } from '../domain/event-access'
+import {
+  CONTRATACION_CON_ACCESO,
+  MEMBRESIA_CON_ACCESO,
+  type EventRole,
+  type MembershipStatus,
+} from '../domain/event-access'
 
 /**
  * Un evento tal como lo siembra un test: basta `id` y `ownerId`. El resto de
@@ -66,7 +71,7 @@ export class EventRepositoryEnMemoria implements EventRepository {
 
   buscarMembresiaActiva(eventId: string, userId: string): Promise<{ role: EventRole } | null> {
     const membresia = this.membresias.find(
-      (m) => m.eventId === eventId && m.userId === userId && m.status === 'ACTIVE',
+      (m) => m.eventId === eventId && m.userId === userId && m.status === MEMBRESIA_CON_ACCESO,
     )
     return Promise.resolve(membresia === undefined ? null : { role: membresia.role })
   }
@@ -76,7 +81,10 @@ export class EventRepositoryEnMemoria implements EventRepository {
     if (perfil === undefined) return Promise.resolve(null)
 
     const contratacion = this.eventVendors.find(
-      (v) => v.eventId === eventId && v.vendorProfileId === perfil.id && v.status === 'BOOKED',
+      (v) =>
+        v.eventId === eventId &&
+        v.vendorProfileId === perfil.id &&
+        v.status === CONTRATACION_CON_ACCESO,
     )
     return Promise.resolve(contratacion === undefined ? null : { id: contratacion.id })
   }
@@ -94,14 +102,14 @@ export class EventRepositoryEnMemoria implements EventRepository {
       eventId: evento.id,
       userId: datos.ownerId,
       role: 'COUPLE',
-      status: 'ACTIVE',
+      status: MEMBRESIA_CON_ACCESO,
     })
     return Promise.resolve(this.materializar(evento))
   }
 
   listarAccesiblesPor(userId: string): Promise<Event[]> {
     const porMembresia = this.membresias
-      .filter((m) => m.userId === userId && m.status === 'ACTIVE')
+      .filter((m) => m.userId === userId && m.status === MEMBRESIA_CON_ACCESO)
       .map((m) => m.eventId)
 
     const perfil = this.perfiles.find((p) => p.userId === userId)
@@ -109,7 +117,7 @@ export class EventRepositoryEnMemoria implements EventRepository {
       perfil === undefined
         ? []
         : this.eventVendors
-            .filter((v) => v.vendorProfileId === perfil.id && v.status === 'BOOKED')
+            .filter((v) => v.vendorProfileId === perfil.id && v.status === CONTRATACION_CON_ACCESO)
             .map((v) => v.eventId)
 
     const ids = new Set([...porMembresia, ...porContratacion])

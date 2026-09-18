@@ -10,7 +10,11 @@ import type {
   MembresiaPersistida,
 } from '../application/event.repository'
 import type { Event } from '../domain/event'
-import type { EventRole } from '../domain/event-access'
+import {
+  CONTRATACION_CON_ACCESO,
+  MEMBRESIA_CON_ACCESO,
+  type EventRole,
+} from '../domain/event-access'
 
 @Injectable()
 export class PrismaEventRepository implements EventRepository {
@@ -23,7 +27,7 @@ export class PrismaEventRepository implements EventRepository {
     // El estado se filtra en el WHERE, no después: así no existe la ventana en
     // la que alguien lea la fila y se olvide de mirar el `status`.
     const fila = await this.prisma.eventMembership.findFirst({
-      where: { eventId, userId, status: 'ACTIVE' },
+      where: { eventId, userId, status: MEMBRESIA_CON_ACCESO },
       select: { role: true },
     })
     return fila === null ? null : { role: fila.role }
@@ -36,7 +40,7 @@ export class PrismaEventRepository implements EventRepository {
     // `vendorProfile: { userId }` exige que la ficha exista: un EventVendor
     // externo tiene `vendorProfileId = null` y nunca casa con este WHERE.
     const fila = await this.prisma.eventVendor.findFirst({
-      where: { eventId, status: 'BOOKED', vendorProfile: { userId } },
+      where: { eventId, status: CONTRATACION_CON_ACCESO, vendorProfile: { userId } },
       select: { id: true },
     })
     return fila === null ? null : { id: fila.id }
@@ -48,7 +52,14 @@ export class PrismaEventRepository implements EventRepository {
         data: { name: datos.name, weddingDate: datos.weddingDate, ownerId: datos.ownerId },
       })
       await tx.eventMembership.create({
-        data: { eventId: evento.id, userId: datos.ownerId, role: 'COUPLE', status: 'ACTIVE' },
+        // Con el MISMO estado que concede acceso: si mañana cambiara cuál es,
+        // el creador no puede quedarse fuera de su propio evento.
+        data: {
+          eventId: evento.id,
+          userId: datos.ownerId,
+          role: 'COUPLE',
+          status: MEMBRESIA_CON_ACCESO,
+        },
       })
       return this.aDominio(evento)
     })
@@ -58,8 +69,8 @@ export class PrismaEventRepository implements EventRepository {
     const filas = await this.prisma.event.findMany({
       where: {
         OR: [
-          { memberships: { some: { userId, status: 'ACTIVE' } } },
-          { vendors: { some: { status: 'BOOKED', vendorProfile: { userId } } } },
+          { memberships: { some: { userId, status: MEMBRESIA_CON_ACCESO } } },
+          { vendors: { some: { status: CONTRATACION_CON_ACCESO, vendorProfile: { userId } } } },
         ],
       },
       orderBy: [{ weddingDate: 'asc' }, { id: 'asc' }],

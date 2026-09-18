@@ -1,5 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common'
-import { ZodError } from 'zod'
+import { Body, Controller, Get, Inject, Param, Post, UseGuards } from '@nestjs/common'
 
 import {
   CurrentUser,
@@ -7,6 +6,7 @@ import {
 } from '@/modules/auth/interfaces/current-user.decorator'
 import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
 import { UnauthorizedError } from '@/shared/domain'
+import { validarCon } from '@/shared/http/validar-con'
 
 import { CreateEventUseCase } from '../application/create-event.use-case'
 import { EVENT_REPOSITORY, type EventRepository } from '../application/event.repository'
@@ -18,7 +18,6 @@ import { EventAccessOf } from './event-access-of.decorator'
 import { EventAccessGuard } from './event-access.guard'
 import { createEventSchema, inviteMemberSchema } from './events.dto'
 import { RequireEventAccess } from './require-event-access.decorator'
-import { Inject } from '@nestjs/common'
 
 interface EventoRespuesta {
   id: string
@@ -45,7 +44,7 @@ export class EventsController {
     @Body() body: unknown,
   ): Promise<EventoRespuesta> {
     const yo = this.exigirUsuario(usuario)
-    const datos = this.validar(createEventSchema, body)
+    const datos = validarCon(createEventSchema, body)
     const evento = await this.crear.ejecutar({ ...datos, ownerId: yo.id })
     return this.aRespuesta(evento)
   }
@@ -87,7 +86,7 @@ export class EventsController {
     @Body() body: unknown,
   ): Promise<{ id: string; status: 'INVITED' }> {
     const yo = this.exigirUsuario(usuario)
-    const datos = this.validar(inviteMemberSchema, body)
+    const datos = validarCon(inviteMemberSchema, body)
     return await this.invitar.ejecutar({ ...datos, eventId, invitedById: yo.id })
   }
 
@@ -97,17 +96,6 @@ export class EventsController {
     // un `!` que mentiría.
     if (usuario === undefined) throw new UnauthorizedError('Falta el token de acceso')
     return usuario
-  }
-
-  private validar<T>(schema: { parse: (valor: unknown) => T }, body: unknown): T {
-    try {
-      return schema.parse(body)
-    } catch (error) {
-      if (error instanceof ZodError) {
-        throw new BadRequestException(error.issues.map((i) => i.message).join('; '))
-      }
-      throw error
-    }
   }
 
   private aRespuesta(evento: {

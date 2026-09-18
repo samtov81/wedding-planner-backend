@@ -4,6 +4,19 @@ export type EventRole = 'COUPLE' | 'PLANNER'
 export type MembershipStatus = 'INVITED' | 'ACTIVE' | 'REVOKED'
 
 /**
+ * Los DOS estados que conceden acceso a un evento, nombrados UNA sola vez.
+ * La regla se consulta desde tres sitios —el acceso a un evento suelto, el
+ * listado en SQL y el doble en memoria— y ninguno de los tres puede compartir
+ * un predicado de verdad: uno es un `WHERE` que ejecuta Postgres y otro es un
+ * `filter` sobre un array. Compartir al menos los literales quita la copia
+ * más fácil de que derive: cambiar `ACTIVE` aquí rompe la compilación de todo
+ * lo que no se haya actualizado. Lo que sujeta la FORMA de cada consulta son
+ * los tests e2e de `GET /events` con INVITED, REVOKED y SHORTLISTED.
+ */
+export const MEMBRESIA_CON_ACCESO = 'ACTIVE' satisfies MembershipStatus
+export const CONTRATACION_CON_ACCESO = 'BOOKED'
+
+/**
  * Acceso EFECTIVO de un usuario a un evento, resuelto sobre las dos fuentes
  * que existen: la membresía (quien planifica) y la contratación (quien trabaja).
  * Es una unión discriminada a propósito: obliga a quien lo consume a decidir

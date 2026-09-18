@@ -70,6 +70,8 @@ describe('build compilado', () => {
         REDIS_URL: redis.getConnectionUrl(),
         JWT_ACCESS_SECRET: 's'.repeat(48),
         MAIL_DRIVER: 'resend',
+        // En producción el remitente por defecto (`.test`) se rechaza al arrancar.
+        MAIL_FROM: 'no-reply@weddingplanner.app',
         RESEND_API_KEY: 're_humo_no_se_usa',
         RESEND_WEBHOOK_SECRET: `whsec_${Buffer.from('secreto-del-test-de-humo').toString('base64')}`,
         APP_URL: 'http://localhost:5173',

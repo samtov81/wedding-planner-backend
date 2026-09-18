@@ -64,6 +64,55 @@ describe('loadEnv', () => {
     })
   })
 
+  describe('NODE_ENV=production', () => {
+    // Un entorno de producción por lo demás VÁLIDO: el `superRefine` no corre si
+    // otra variable ya falla, así que cada test cambia exactamente una cosa.
+    const produccion: NodeJS.ProcessEnv = {
+      ...valido,
+      NODE_ENV: 'production',
+      MAIL_DRIVER: 'resend',
+      MAIL_FROM: 'no-reply@weddingplanner.app',
+      RESEND_API_KEY: 're_x',
+      RESEND_WEBHOOK_SECRET: `whsec_${Buffer.from('s'.repeat(32)).toString('base64')}`,
+    }
+
+    it('un entorno de producción completo arranca', () => {
+      expect(loadEnv(produccion).MAIL_DRIVER).toBe('resend')
+    })
+
+    it('exige MAIL_DRIVER=resend: el fake marcaría como enviados correos que nadie recibe', () => {
+      const { MAIL_DRIVER: _omitido, ...sinDriver } = produccion
+
+      expect(() => loadEnv(sinDriver)).toThrow(/MAIL_DRIVER/)
+      expect(() => loadEnv({ ...produccion, MAIL_DRIVER: 'fake' })).toThrow(/MAIL_DRIVER/)
+    })
+
+    it('rechaza el MAIL_FROM por defecto y cualquier dominio reservado que no recibe correo', () => {
+      const { MAIL_FROM: _omitido, ...sinRemitente } = produccion
+
+      expect(() => loadEnv(sinRemitente)).toThrow(/MAIL_FROM/)
+      for (const reservado of ['a@b.example', 'a@b.invalid', 'a@b.localhost', 'a@B.TEST']) {
+        expect(() => loadEnv({ ...produccion, MAIL_FROM: reservado })).toThrow(/MAIL_FROM/)
+      }
+    })
+
+    it('rechaza el secreto JWT de ejemplo de .env.example', () => {
+      const ejemplo = parseEnv(readFileSync('.env.example', 'utf8'))
+
+      expect(() =>
+        loadEnv({ ...produccion, JWT_ACCESS_SECRET: ejemplo.JWT_ACCESS_SECRET }),
+      ).toThrow(/JWT_ACCESS_SECRET/)
+    })
+
+    it('fuera de producción, esas mismas reglas no aplican (local y test usan el fake)', () => {
+      const ejemplo = parseEnv(readFileSync('.env.example', 'utf8'))
+
+      expect(loadEnv({ ...valido, JWT_ACCESS_SECRET: ejemplo.JWT_ACCESS_SECRET }).MAIL_FROM).toBe(
+        'no-reply@weddingplanner.test',
+      )
+    })
+  })
+
   describe('CORS_ORIGINS', () => {
     it('sin variable, la allowlist es sólo el origen del frontend (APP_URL)', () => {
       expect(origenesPermitidos(loadEnv(valido))).toEqual(['http://localhost:5173'])

@@ -93,6 +93,20 @@ const trustProxySchema = z
   })
 
 /**
+ * El secreto de ejemplo de `.env.example`. Es público (está en el repo): un
+ * despliegue que lo copie firma tokens que cualquiera puede falsificar. Un test
+ * lee `.env.example` para que esta constante no se desincronice.
+ */
+const JWT_SECRET_DE_EJEMPLO = 'cambia-esto-por-32-caracteres-o-mas'
+
+/**
+ * TLDs reservados (RFC 2606 / RFC 6761): ningún correo sale ni llega de ellos.
+ * El `MAIL_FROM` por defecto usa `.test` para que local y test no puedan mandar
+ * nada real; en producción ese remitente sólo produciría rebotes.
+ */
+const TLD_RESERVADO = /\.(test|example|invalid|localhost)$/i
+
+/**
  * Entorno del backend. Cada variable se valida al arrancar: un secreto ausente
  * tiene que romper el arranque, no la primera petición que lo necesite.
  */
@@ -109,7 +123,11 @@ export const envSchema = z
     JWT_ACCESS_TTL: z.string().default('15m'),
     REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
-    /** `fake` escribe los correos a disco; en producción el arranque exige `resend`. */
+    /**
+     * `fake` guarda los correos EN MEMORIA (con el enlace del RSVP en claro) y no
+     * envía nada: sólo sirve para local y test. En producción el `superRefine`
+     * de abajo exige `resend`.
+     */
     MAIL_DRIVER: z.enum(['fake', 'resend']).default('fake'),
     MAIL_FROM: z.email().default('no-reply@weddingplanner.test'),
     RESEND_API_KEY: opcional(z.string().min(1)),
@@ -144,12 +162,40 @@ export const envSchema = z
     LOG_LEVEL: opcional(z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])),
   })
   /**
+   * En producción, el fake de correo marcaría cada invitación como SENT sin que
+   * nadie reciba nada (y guardaría cada token vivo en el heap): el arranque falla
+   * aquí. Lo mismo con el remitente por defecto y con el secreto JWT de ejemplo,
+   * que sólo existen para que local arranque sin configurar nada.
+   *
    * Con `MAIL_DRIVER=resend` salen correos reales y Resend llamará al webhook:
    * sin secreto, el arranque falla aquí y no en el primer webhook. Con `fake`
    * no hay correos reales que casar, así que el secreto es opcional y la ruta
    * rechaza todo (ver `SvixSignatureVerifier`).
    */
   .superRefine((env, ctx) => {
+    if (env.NODE_ENV === 'production') {
+      if (env.MAIL_DRIVER !== 'resend') {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MAIL_DRIVER'],
+          message: 'En producción debe ser `resend`: `fake` no envía ningún correo',
+        })
+      }
+      if (TLD_RESERVADO.test(env.MAIL_FROM)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['MAIL_FROM'],
+          message: 'En producción no puede ser un dominio reservado (.test, .example…)',
+        })
+      }
+      if (env.JWT_ACCESS_SECRET === JWT_SECRET_DE_EJEMPLO) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['JWT_ACCESS_SECRET'],
+          message: 'En producción no puede ser el valor de ejemplo de .env.example',
+        })
+      }
+    }
     if (env.MAIL_DRIVER === 'resend' && env.RESEND_WEBHOOK_SECRET === undefined) {
       ctx.addIssue({
         code: 'custom',

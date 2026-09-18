@@ -1,0 +1,131 @@
+import { decodeCursor } from '@/shared/domain'
+
+import { GuestRepositoryEnMemoria } from '../infrastructure/guest.repository.fake'
+import { InvitadoNoEncontradoError } from '../domain/guest-errors'
+import { CreateGuestUseCase } from './create-guest.use-case'
+import { DeleteGuestUseCase } from './delete-guest.use-case'
+import { ListGuestsUseCase } from './list-guests.use-case'
+import { UpdateGuestUseCase } from './update-guest.use-case'
+
+const EVENTO_A = '11111111-1111-4111-8111-111111111111'
+const EVENTO_B = '22222222-2222-4222-8222-222222222222'
+
+function repoSembrado(): GuestRepositoryEnMemoria {
+  const repo = new GuestRepositoryEnMemoria()
+  const base = new Date('2026-01-01T00:00:00.000Z')
+
+  for (let i = 0; i < 6; i += 1) {
+    repo.sembrar({
+      id: `a${i}`,
+      eventId: EVENTO_A,
+      name: `G0${i}`,
+      email: `g0${i}@boda.test`,
+      group: i < 3 ? 'Family' : 'Friends',
+      rsvp: i < 3 ? 'CONFIRMED' : 'PENDING',
+      dietary: null,
+      createdAt: new Date(base.getTime() + i * 1000),
+    })
+  }
+  repo.sembrar({
+    id: 'b0',
+    eventId: EVENTO_B,
+    name: 'De otra boda',
+    email: null,
+    group: 'Family',
+    rsvp: 'CONFIRMED',
+    dietary: null,
+    createdAt: base,
+  })
+
+  return repo
+}
+
+describe('ListGuestsUseCase', () => {
+  it('pagina con cursor y acaba con nextCursor null', async () => {
+    const repo = repoSembrado()
+    const caso = new ListGuestsUseCase(repo)
+
+    const primera = await caso.ejecutar(EVENTO_A, {}, null, 4)
+    expect(primera.items.map((g) => g.name)).toEqual(['G00', 'G01', 'G02', 'G03'])
+    expect(primera.nextCursor).not.toBeNull()
+
+    const segunda = await caso.ejecutar(EVENTO_A, {}, decodeCursor(primera.nextCursor ?? ''), 4)
+    expect(segunda.items.map((g) => g.name)).toEqual(['G04', 'G05'])
+    expect(segunda.nextCursor).toBeNull()
+  })
+
+  it('nunca devuelve invitados de otro evento', async () => {
+    const repo = repoSembrado()
+    const caso = new ListGuestsUseCase(repo)
+
+    const pagina = await caso.ejecutar(EVENTO_A, {}, null, 50)
+
+    expect(pagina.items.every((g) => g.eventId === EVENTO_A)).toBe(true)
+    expect(pagina.items.map((g) => g.name)).not.toContain('De otra boda')
+  })
+
+  it('combina filtros de estado y grupo', async () => {
+    const repo = repoSembrado()
+    const caso = new ListGuestsUseCase(repo)
+
+    const pagina = await caso.ejecutar(EVENTO_A, { rsvp: 'CONFIRMED', group: 'Family' }, null, 50)
+
+    expect(pagina.items.map((g) => g.name)).toEqual(['G00', 'G01', 'G02'])
+  })
+})
+
+describe('CreateGuestUseCase', () => {
+  it('crea un invitado sin email y lo deja en PENDING', async () => {
+    const repo = new GuestRepositoryEnMemoria()
+    const caso = new CreateGuestUseCase(repo)
+
+    const invitado = await caso.ejecutar(EVENTO_A, {
+      name: 'Tía Carmen',
+      email: null,
+      group: 'Family',
+      dietary: null,
+    })
+
+    expect(invitado.email).toBeNull()
+    expect(invitado.rsvp).toBe('PENDING')
+  })
+})
+
+describe('UpdateGuestUseCase', () => {
+  it('actualiza el RSVP de un invitado del evento', async () => {
+    const repo = repoSembrado()
+    const caso = new UpdateGuestUseCase(repo)
+
+    const actualizado = await caso.ejecutar(EVENTO_A, 'a0', { rsvp: 'DECLINED' })
+
+    expect(actualizado.rsvp).toBe('DECLINED')
+  })
+
+  it('un invitado de OTRO evento se comporta como inexistente', async () => {
+    const repo = repoSembrado()
+    const caso = new UpdateGuestUseCase(repo)
+
+    await expect(caso.ejecutar(EVENTO_A, 'b0', { rsvp: 'DECLINED' })).rejects.toBeInstanceOf(
+      InvitadoNoEncontradoError,
+    )
+  })
+})
+
+describe('DeleteGuestUseCase', () => {
+  it('borra un invitado del evento', async () => {
+    const repo = repoSembrado()
+    const caso = new DeleteGuestUseCase(repo)
+
+    await caso.ejecutar(EVENTO_A, 'a0')
+
+    expect(await repo.buscar(EVENTO_A, 'a0')).toBeNull()
+  })
+
+  it('borrar un invitado de otro evento es 404, no un borrado silencioso', async () => {
+    const repo = repoSembrado()
+    const caso = new DeleteGuestUseCase(repo)
+
+    await expect(caso.ejecutar(EVENTO_A, 'b0')).rejects.toBeInstanceOf(InvitadoNoEncontradoError)
+    expect(await repo.buscar(EVENTO_B, 'b0')).not.toBeNull()
+  })
+})

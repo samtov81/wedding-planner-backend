@@ -124,6 +124,19 @@ describe('SendInvitationsUseCase', () => {
     expect(invitaciones.todas()).toHaveLength(1)
   })
 
+  it('un segundo envío caduca la invitación anterior: el invitado sólo tiene UN token vivo (C24)', async () => {
+    sembrar('g1', 'a@test.com', 'PENDING')
+
+    const primero = await caso.ejecutar('ev-1')
+    const segundo = await caso.ejecutar('ev-1')
+
+    const ahora = new Date()
+    const vieja = invitaciones.buscar(primero.queued[0]?.invitationId ?? '')
+    const nueva = invitaciones.buscar(segundo.queued[0]?.invitationId ?? '')
+    expect(vieja?.expiresAt.getTime()).toBeLessThanOrEqual(ahora.getTime())
+    expect(nueva?.expiresAt.getTime()).toBeGreaterThan(ahora.getTime())
+  })
+
   it('un evento sin invitados devuelve listas vacías, no un error', async () => {
     expect(await caso.ejecutar('ev-vacio')).toEqual({ queued: [], skipped: [] })
   })

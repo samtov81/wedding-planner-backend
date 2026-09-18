@@ -59,6 +59,19 @@ describe('SendSingleInvitationUseCase', () => {
     expect(cola.encolados).toHaveLength(0)
   })
 
+  it('reenviar ("se perdió el correo") caduca el enlace anterior (C24)', async () => {
+    sembrar('g1', 'a@test.com')
+
+    const primero = await caso.ejecutar('ev-1', 'g1')
+    const segundo = await caso.ejecutar('ev-1', 'g1')
+
+    const ahora = Date.now()
+    expect(invitaciones.buscar(primero.invitationId)?.expiresAt.getTime()).toBeLessThanOrEqual(
+      ahora,
+    )
+    expect(invitaciones.buscar(segundo.invitationId)?.expiresAt.getTime()).toBeGreaterThan(ahora)
+  })
+
   it('reenviar a quien ya respondió SÍ se permite: es un acto deliberado', async () => {
     sembrar('g1', 'a@test.com', 'CONFIRMED')
 

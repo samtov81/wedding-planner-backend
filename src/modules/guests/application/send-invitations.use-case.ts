@@ -57,8 +57,9 @@ export const RETENCION_FALLIDOS_MS = 7 * 86_400_000
  * invitaciones con ids nuevos.
  *
  * HUECO CONOCIDO (ruling C16): dos envíos masivos seguidos (un doble clic)
- * crean dos invitaciones por invitado y encolan dos jobs, y el invitado recibe
- * dos correos. Cerrarlo exige decidir qué identifica a una invitación en el
+ * crean dos invitaciones por invitado y encolan dos jobs, y el invitado puede
+ * recibir dos correos. Desde el ruling C24 sólo el último enlace funciona: el
+ * segundo envío caduca el primero, y el worker no manda uno ya caducado. Cerrarlo exige decidir qué identifica a una invitación en el
  * tiempo (¿una por invitado y evento? ¿una por campaña?), diseño de dominio que
  * el plan no fijó y que la Tarea 14 puede condicionar. Hoy lo único que evita
  * duplicados es la guarda de estado del worker, que sólo cubre la REENTREGA del
@@ -165,6 +166,14 @@ export async function encolarInvitacion(
   requestId: string,
 ): Promise<string> {
   const { token, hash } = generarTokenInvitacion()
+
+  // Ruling C24: los enlaces anteriores del invitado mueren ANTES de nacer el
+  // nuevo. Sin esto, cada reenvío dejaba otro token vivo 90 días, y el enlace
+  // que recibió una dirección mal tecleada podía sobrescribir el RSVP incluso
+  // después de que el invitado real respondiera con el suyo. Si `crear` falla
+  // después, el invitado se queda sin token vivo (falla cerrado) y el lote lo
+  // reporta como ENQUEUE_FAILED: reintentar lo arregla.
+  await invitaciones.caducarVigentesDe(guestId, new Date())
 
   const invitacion = await invitaciones.crear({
     guestId,

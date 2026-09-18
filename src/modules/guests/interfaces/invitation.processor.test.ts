@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common'
 import { UnrecoverableError, type Job } from 'bullmq'
 
 import type { InvitationRenderer } from '@/modules/mail/application/invitation-renderer.port'
@@ -73,6 +74,23 @@ describe('InvitationProcessor', () => {
     await procesador.process(jobFalso({ invitationId: 'inv-1' }))
 
     expect(mail.enviados).toHaveLength(0)
+  })
+
+  it('no manda un enlace muerto: un job cuya invitación ya caducó no envía nada (C24)', async () => {
+    // Un reenvío o un cambio de email caducó esta invitación mientras su job
+    // esperaba en la cola: mandarla sería mandar un enlace que ya da 404.
+    invitaciones.añadir({ id: 'inv-1', status: 'QUEUED', expiresAt: new Date(Date.now() - 1) })
+    const aviso = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+
+    await procesador.process(jobFalso({ invitationId: 'inv-1', token: 'token-muerto' }))
+
+    expect(mail.enviados).toHaveLength(0)
+    expect(invitaciones.buscar('inv-1')?.status).toBe('QUEUED')
+    // Y dice por qué, con el invitationId y SIN el token.
+    const registrado = aviso.mock.calls.map((llamada) => String(llamada[0])).join('\n')
+    expect(registrado).toContain('invitationId=inv-1')
+    expect(registrado).not.toContain('token-muerto')
+    aviso.mockRestore()
   })
 
   it('no intenta escribir a un invitado que se quedó sin correo', async () => {

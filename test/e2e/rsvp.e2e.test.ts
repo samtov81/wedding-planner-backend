@@ -14,6 +14,8 @@ import { AppModule } from '@/app.module'
 import { ENV } from '@/config/config.module'
 import type { Env } from '@/config/env.schema'
 import { configurarApp, OPCIONES_DE_FABRICA } from '@/configurar-app'
+import { SendSingleInvitationUseCase } from '@/modules/guests/application/send-single-invitation.use-case'
+import { UpdateGuestUseCase } from '@/modules/guests/application/update-guest.use-case'
 import { generarTokenInvitacion } from '@/modules/guests/domain/invitation'
 import { NOTIFICATION_PORT } from '@/modules/notifications/application/notification.port'
 import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
@@ -338,6 +340,69 @@ describe('RSVP público e2e', () => {
       expect(invitado.rsvp).toBe(ganadora)
       // Un solo juego de notificaciones: la perdedora no llegó a escribir nada.
       expect(notificaciones.creadas.length - creadasAntes).toBe(2)
+    })
+  })
+
+  describe('reinvitar o cambiar el email mata los tokens viejos (ruling C24)', () => {
+    /**
+     * Envía una invitación por el camino REAL (caso de uso → Postgres → BullMQ)
+     * y devuelve el token en claro que viaja en el payload del job: la única
+     * copia que existe, la misma que el worker mete en el correo.
+     */
+    async function enviarA(guestId: string): Promise<string> {
+      const espia = espiarCola()
+      try {
+        await app.get(SendSingleInvitationUseCase).ejecutar(eventId, guestId)
+        const payload = espia.mock.calls.at(-1)?.[2] as { token: string }
+        tokensUsados.add(payload.token)
+        return payload.token
+      } finally {
+        espia.mockRestore()
+      }
+    }
+
+    async function invitadoPendiente(): Promise<string> {
+      const { hash } = generarTokenInvitacion()
+      return (
+        await prisma.guest.create({
+          data: {
+            eventId,
+            name: 'Ana Invitada',
+            email: `c24-${hash.slice(0, 8)}@test.com`,
+            group: 'Family',
+          },
+        })
+      ).id
+    }
+
+    it('un segundo envío caduca el primer token: GET y POST con el viejo son 404', async () => {
+      const guestId = await invitadoPendiente()
+      const viejo = await enviarA(guestId)
+      await request(server).get(`/rsvp/${viejo}`).expect(200)
+
+      const nuevo = await enviarA(guestId)
+
+      await request(server).get(`/rsvp/${viejo}`).expect(404)
+      await request(server).post(`/rsvp/${viejo}`).send({ rsvp: 'DECLINED' }).expect(404)
+      expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
+        'PENDING',
+      )
+      await request(server).post(`/rsvp/${nuevo}`).send({ rsvp: 'CONFIRMED' }).expect(204)
+    })
+
+    it('corregir un email mal tecleado caduca el enlace que recibió la dirección equivocada', async () => {
+      const guestId = await invitadoPendiente()
+      const delDesconocido = await enviarA(guestId)
+
+      await app.get(UpdateGuestUseCase).ejecutar(eventId, guestId, {
+        email: `corregido-${guestId}@test.com`,
+      })
+
+      await request(server).get(`/rsvp/${delDesconocido}`).expect(404)
+      await request(server).post(`/rsvp/${delDesconocido}`).send({ rsvp: 'DECLINED' }).expect(404)
+      expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
+        'PENDING',
+      )
     })
   })
 

@@ -42,9 +42,11 @@ const payloadInvitacionSchema = z.object({
  *    proveedor (`invitation-<id>`), que hace del reenvío un no-op. Resend la
  *    recuerda 24 h; un reintento fuera de esa ventana SÍ mandaría otro correo
  *    (con el backoff actual, 5 intentos desde 2 s, no se llega).
- *  - NO cubre dos envíos masivos seguidos: crean invitaciones distintas, con
- *    ids, jobIds y claves distintos (hueco conocido, ruling C16; ver
- *    `jobIdDeInvitacion`).
+ *  - Dos envíos seguidos crean invitaciones distintas, con ids, jobIds y claves
+ *    distintos (ruling C16; ver `jobIdDeInvitacion`). Desde el ruling C24 el
+ *    segundo CADUCA la primera, y esta guarda de `expiresAt` impide mandarla si
+ *    su job aún no había corrido; si ya había salido, llegan dos correos y sólo
+ *    el último enlace funciona.
  *
  * Escucha su cola PROPIA, `invitations` (ruling C17): por eso no filtra por
  * nombre de job. Sobre la cola `email` compartida, retornar ante un job ajeno
@@ -122,6 +124,18 @@ export class InvitationProcessor extends WorkerHost {
     // Ya enviada: esto es una reentrega tardía del mismo job. Salir aquí es lo
     // que impide el segundo correo.
     if (invitacion.status !== 'QUEUED') return
+
+    // Caducada mientras el job esperaba: un reenvío o un cambio de email la
+    // sustituyó (ruling C24), o agotó intentos antes. Mandarla sería mandar un
+    // enlace que ya da 404, quizá a la dirección equivocada. Se descarta sin
+    // reintentar (ningún reintento la revive) y se dice por qué: id, NUNCA token.
+    if (invitacion.expiresAt.getTime() <= Date.now()) {
+      this.registro.warn(
+        `Invitación caducada antes de enviarse, no se manda invitationId=${invitacion.id} ` +
+          `requestId=${datos.requestId}`,
+      )
+      return
+    }
 
     // El correo pudo borrarse del invitado después de encolar. Lanzar sería
     // reintentar cinco veces algo que ningún reintento arregla; el envío

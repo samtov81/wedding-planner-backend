@@ -149,6 +149,20 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
     return Promise.resolve()
   }
 
+  /** La MISMA regla que el `WHERE` del adaptador de Prisma (ruling H1). */
+  caducarVigentesDe(guestId: string, ahora: Date): Promise<void> {
+    for (const fila of this.filas) {
+      if (
+        fila.guest.id === guestId &&
+        fila.expiresAt.getTime() > ahora.getTime() &&
+        fila.status !== 'RESPONDED'
+      ) {
+        fila.expiresAt = ahora
+      }
+    }
+    return Promise.resolve()
+  }
+
   /**
    * La MISMA regla que el `WHERE` del adaptador de Prisma: sólo se avanza desde
    * un estado de rango menor. Un doble que sobrescribiera sin mirar daría verde

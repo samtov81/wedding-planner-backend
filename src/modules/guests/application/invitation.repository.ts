@@ -72,6 +72,22 @@ export interface InvitationRepository {
   caducar(id: string): Promise<void>
 
   /**
+   * `expiresAt = ahora` en TODAS las invitaciones del invitado que siguen
+   * vigentes (`expiresAt > ahora`) y no están RESPONDED (ruling C24). Se llama
+   * antes de crear una invitación nueva y cuando cambia el email del invitado:
+   * así un invitado tiene como mucho UN token vivo, y el enlace que recibió una
+   * dirección equivocada deja de abrir su RSVP.
+   *
+   * Se excluye RESPONDED a propósito: ese token ya no admite respuesta
+   * (`admiteRespuesta`), así que caducarlo no cierra nada y sólo reescribiría
+   * la historia de una fila terminada. Las ya caducadas tampoco se tocan: su
+   * `expiresAt` dice cuándo murieron.
+   *
+   * Escribe con el cliente de la transacción en curso, si la hay.
+   */
+  caducarVigentesDe(guestId: string, ahora: Date): Promise<void>
+
+  /**
    * Lo usa el webhook del proveedor (Tarea 13), que casa por `resendMessageId`.
    *
    * Contrato: sólo AVANZA. Escribe `estado` únicamente en las filas cuyo estado

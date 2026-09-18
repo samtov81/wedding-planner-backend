@@ -32,6 +32,8 @@ describe('Guardas de escritura de la invitación', () => {
   let prisma: PrismaClient
   let guestId: string
   let eventId: string
+  /** Otro invitado del mismo evento: `caducarVigentesDe` no puede tocar lo suyo. */
+  let otroGuestId: string
 
   beforeAll(async () => {
     pg = await startPostgres()
@@ -46,8 +48,12 @@ describe('Guardas de escritura de la invitación', () => {
     const invitado = await prisma.guest.create({
       data: { eventId: evento.id, name: 'Invitada', email: 'i@test.com', group: 'Family' },
     })
+    const otro = await prisma.guest.create({
+      data: { eventId: evento.id, name: 'Otra', email: 'o@test.com', group: 'Family' },
+    })
     eventId = evento.id
     guestId = invitado.id
+    otroGuestId = otro.id
   }, 240_000)
 
   afterAll(async () => {
@@ -61,8 +67,10 @@ describe('Guardas de escritura de la invitación', () => {
       status: InvitationStatus
       expiresAt: Date
       resendMessageId?: string
+      guestId?: string
     }) => Promise<string>
     estado: (id: string) => Promise<{ status: string; resendMessageId: string | null } | null>
+    caducidad: (id: string) => Promise<Date | undefined>
   }
 
   const implementaciones: Array<[string, () => Implementacion]> = [
@@ -70,11 +78,11 @@ describe('Guardas de escritura de la invitación', () => {
       'Prisma',
       () => ({
         repo: new PrismaInvitationRepository(prisma as unknown as PrismaService),
-        sembrar: async ({ status, expiresAt, resendMessageId }) =>
+        sembrar: async ({ status, expiresAt, resendMessageId, guestId: deQuien }) =>
           (
             await prisma.guestInvitation.create({
               data: {
-                guestId,
+                guestId: deQuien ?? guestId,
                 tokenHash: randomUUID(),
                 status,
                 expiresAt,
@@ -87,6 +95,8 @@ describe('Guardas de escritura de la invitación', () => {
             where: { id },
             select: { status: true, resendMessageId: true },
           }),
+        caducidad: async (id) =>
+          (await prisma.guestInvitation.findUnique({ where: { id } }))?.expiresAt,
       }),
     ],
     [
@@ -95,14 +105,14 @@ describe('Guardas de escritura de la invitación', () => {
         const repo = new InvitationRepositoryEnMemoria()
         return {
           repo,
-          sembrar: ({ status, expiresAt, resendMessageId }) =>
+          sembrar: ({ status, expiresAt, resendMessageId, guestId: deQuien }) =>
             Promise.resolve(
               repo.añadir({
                 id: randomUUID(),
                 status,
                 expiresAt,
                 resendMessageId: resendMessageId ?? null,
-                guest: { id: guestId, eventId },
+                guest: { id: deQuien ?? guestId, eventId },
               }).id,
             ),
           estado: (id) => {
@@ -113,6 +123,7 @@ describe('Guardas de escritura de la invitación', () => {
                 : { status: fila.status, resendMessageId: fila.resendMessageId },
             )
           },
+          caducidad: (id) => Promise.resolve(repo.buscar(id)?.expiresAt),
         }
       },
     ],
@@ -229,6 +240,39 @@ describe('Guardas de escritura de la invitación', () => {
         expect(await impl.repo.marcarRespondida(id, new Date(Date.now() + 1))).toBe(false)
       })
     })
+
+    describe('caducarVigentesDe (ruling C24: reinvitar o cambiar el email mata los tokens viejos)', () => {
+      it.each(TODOS.filter((s) => s !== 'RESPONDED'))(
+        'caduca a `ahora` una invitación %s vigente del invitado: su token deja de servir',
+        async (status) => {
+          const id = await impl.sembrar({ status, expiresAt: MAÑANA() })
+          const ahora = new Date()
+
+          await impl.repo.caducarVigentesDe(guestId, ahora)
+
+          expect(await impl.caducidad(id)).toEqual(ahora)
+          expect(await impl.repo.marcarRespondida(id, new Date(ahora.getTime() + 1))).toBe(false)
+        },
+      )
+
+      it('no toca una RESPONDED (ya gastada), una ya caducada ni las de otro invitado', async () => {
+        const manana = MAÑANA()
+        const ayer = new Date(Date.now() - 86_400_000)
+        const respondida = await impl.sembrar({ status: 'RESPONDED', expiresAt: manana })
+        const caducada = await impl.sembrar({ status: 'SENT', expiresAt: ayer })
+        const ajena = await impl.sembrar({
+          status: 'SENT',
+          expiresAt: manana,
+          guestId: otroGuestId,
+        })
+
+        await impl.repo.caducarVigentesDe(guestId, new Date())
+
+        expect(await impl.caducidad(respondida)).toEqual(manana)
+        expect(await impl.caducidad(caducada)).toEqual(ayer)
+        expect(await impl.caducidad(ajena)).toEqual(manana)
+      })
+    })
   })
 
   describe('dentro de una unidad de trabajo de Prisma', () => {
@@ -280,6 +324,31 @@ describe('Guardas de escritura de la invitación', () => {
         'DECLINED',
       )
       await prisma.guest.update({ where: { id: guestId }, data: { rsvp: 'PENDING' } })
+    })
+
+    it('caducarVigentesDe escribe con la transacción en curso: un rollback deja vivo el token', async () => {
+      // Lo llama `UpdateGuestUseCase` dentro de una unidad de trabajo junto con
+      // el cambio de email: si una de las dos escrituras no se confirma, la
+      // otra tampoco.
+      const invitaciones = new PrismaInvitationRepository(prisma as unknown as PrismaService)
+      const unidad = new PrismaUnidadDeTrabajo(prisma as unknown as PrismaService)
+      const caducidad = MAÑANA()
+      const id = (
+        await prisma.guestInvitation.create({
+          data: { guestId: otroGuestId, tokenHash: randomUUID(), expiresAt: caducidad },
+        })
+      ).id
+
+      await expect(
+        unidad.ejecutar(async () => {
+          await invitaciones.caducarVigentesDe(otroGuestId, new Date())
+          throw new Error('falla el cambio de email')
+        }),
+      ).rejects.toThrow('falla el cambio de email')
+
+      expect((await prisma.guestInvitation.findUniqueOrThrow({ where: { id } })).expiresAt).toEqual(
+        caducidad,
+      )
     })
   })
 })

@@ -97,6 +97,15 @@ export class PrismaInvitationRepository implements InvitationRepository {
     })
   }
 
+  async caducarVigentesDe(guestId: string, ahora: Date): Promise<void> {
+    // `clienteDe`: `UpdateGuestUseCase` lo llama dentro de la unidad de trabajo
+    // del cambio de email.
+    await clienteDe(this.prisma).guestInvitation.updateMany({
+      where: { guestId, expiresAt: { gt: ahora }, status: { not: 'RESPONDED' } },
+      data: { expiresAt: ahora },
+    })
+  }
+
   async actualizarEstadoPorMessageId(
     messageId: string,
     estado: InvitationStatus,

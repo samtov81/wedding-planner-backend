@@ -1,8 +1,8 @@
 /**
  * Notificaciones PERSISTIDAS para quienes planifican un evento. Definido en la
  * Tarea 14, que es la primera que las necesita (el RSVP público); el adaptador
- * de Prisma llega en la Tarea 15. Hasta entonces se cablea el doble en memoria
- * (ver `NotificationsModule`).
+ * es `PrismaNotificationRepository` (Tarea 15). El doble en memoria queda sólo
+ * para tests.
  *
  * Contrato del adaptador real:
  *  - crea UNA `Notification` por cada miembro con membresía ACTIVA del evento

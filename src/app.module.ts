@@ -10,6 +10,7 @@ import { DatabaseModule } from '@/modules/database/database.module'
 import { EventsModule } from '@/modules/events/events.module'
 import { GuestsModule } from '@/modules/guests/guests.module'
 import { MailModule } from '@/modules/mail/mail.module'
+import { NotificationsModule } from '@/modules/notifications/notifications.module'
 import { QueueModule } from '@/modules/queue/queue.module'
 import { UsersModule } from '@/modules/users/users.module'
 import { VendorsModule } from '@/modules/vendors/vendors.module'
@@ -49,6 +50,7 @@ import { RequestIdMiddleware } from '@/shared/http/request-id.middleware'
     EventsModule,
     VendorsModule,
     GuestsModule,
+    NotificationsModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

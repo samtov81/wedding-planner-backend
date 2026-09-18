@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 
 import type {
   DatosCrearInvitacion,
+  InvitacionAvanzada,
   InvitacionCompleta,
   InvitationRepository,
 } from '../application/invitation.repository'
@@ -153,11 +154,22 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
    * un estado de rango menor. Un doble que sobrescribiera sin mirar daría verde
    * a un caso de uso que, contra Postgres, se comporta distinto (ruling H1).
    */
-  actualizarEstadoPorMessageId(messageId: string, estado: InvitationStatus): Promise<void> {
+  actualizarEstadoPorMessageId(
+    messageId: string,
+    estado: InvitationStatus,
+  ): Promise<InvitacionAvanzada[]> {
     const desde = estadosQuePuedenAvanzarA(estado)
+    const avanzadas: InvitacionAvanzada[] = []
     for (const fila of this.filas) {
-      if (fila.resendMessageId === messageId && desde.includes(fila.status)) fila.status = estado
+      if (fila.resendMessageId === messageId && desde.includes(fila.status)) {
+        fila.status = estado
+        avanzadas.push({
+          invitationId: fila.id,
+          guestId: fila.guest.id,
+          eventId: fila.guest.eventId,
+        })
+      }
     }
-    return Promise.resolve()
+    return Promise.resolve(avanzadas)
   }
 }

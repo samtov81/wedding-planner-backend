@@ -6,6 +6,7 @@ import cookieParser from 'cookie-parser'
 import { AppModule } from './app.module'
 import { ENV } from './config/config.module'
 import type { Env } from './config/env.schema'
+import { RedisIoAdapter } from './modules/notifications/infrastructure/redis-io.adapter'
 import { DomainExceptionFilter } from './shared/http/domain-exception.filter'
 
 async function bootstrap(): Promise<void> {
@@ -22,6 +23,16 @@ async function bootstrap(): Promise<void> {
   // localStorage): necesita el parser para que `req.cookies` exista.
   app.use(cookieParser())
   app.useGlobalFilters(new DomainExceptionFilter())
+
+  // Socket.IO sobre Redis. Sin este adapter, un usuario conectado a la
+  // instancia B nunca recibe lo que emite la instancia A, y quien emite es el
+  // WORKER de `notifications`, que puede ser otro proceso: sin Redis, el
+  // fan-out no sale de su propio proceso. Va antes de `listen` (los gateways
+  // se montan al arrancar) y no toca nada de lo anterior: `rawBody`, cookies y
+  // filtro son del lado HTTP.
+  const socketsSobreRedis = new RedisIoAdapter(app)
+  await socketsSobreRedis.conectar(env.REDIS_URL)
+  app.useWebSocketAdapter(socketsSobreRedis)
 
   await app.listen(env.PORT)
 }

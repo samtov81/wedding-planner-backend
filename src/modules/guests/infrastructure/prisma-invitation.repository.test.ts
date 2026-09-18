@@ -57,7 +57,11 @@ describe('Guardas de escritura de la invitación', () => {
 
   interface Implementacion {
     repo: InvitationRepository
-    sembrar: (datos: { status: InvitationStatus; expiresAt: Date }) => Promise<string>
+    sembrar: (datos: {
+      status: InvitationStatus
+      expiresAt: Date
+      resendMessageId?: string
+    }) => Promise<string>
     estado: (id: string) => Promise<{ status: string; resendMessageId: string | null } | null>
   }
 
@@ -66,10 +70,16 @@ describe('Guardas de escritura de la invitación', () => {
       'Prisma',
       () => ({
         repo: new PrismaInvitationRepository(prisma as unknown as PrismaService),
-        sembrar: async ({ status, expiresAt }) =>
+        sembrar: async ({ status, expiresAt, resendMessageId }) =>
           (
             await prisma.guestInvitation.create({
-              data: { guestId, tokenHash: randomUUID(), status, expiresAt },
+              data: {
+                guestId,
+                tokenHash: randomUUID(),
+                status,
+                expiresAt,
+                resendMessageId: resendMessageId ?? null,
+              },
             })
           ).id,
         estado: (id) =>
@@ -85,8 +95,16 @@ describe('Guardas de escritura de la invitación', () => {
         const repo = new InvitationRepositoryEnMemoria()
         return {
           repo,
-          sembrar: ({ status, expiresAt }) =>
-            Promise.resolve(repo.añadir({ id: randomUUID(), status, expiresAt }).id),
+          sembrar: ({ status, expiresAt, resendMessageId }) =>
+            Promise.resolve(
+              repo.añadir({
+                id: randomUUID(),
+                status,
+                expiresAt,
+                resendMessageId: resendMessageId ?? null,
+                guest: { id: guestId, eventId },
+              }).id,
+            ),
           estado: (id) => {
             const fila = repo.buscar(id)
             return Promise.resolve(
@@ -137,6 +155,45 @@ describe('Guardas de escritura de la invitación', () => {
 
       it('una invitación que ya no existe no lanza', async () => {
         await expect(impl.repo.marcarEnviada(randomUUID(), 're_1')).resolves.toBeUndefined()
+      })
+    })
+
+    describe('actualizarEstadoPorMessageId (Tarea 15: devuelve lo que avanzó)', () => {
+      it('devuelve la invitación que avanzó, con su invitado y su evento', async () => {
+        const messageId = `re_${randomUUID()}`
+        const id = await impl.sembrar({
+          status: 'SENT',
+          expiresAt: MAÑANA(),
+          resendMessageId: messageId,
+        })
+
+        const avanzadas = await impl.repo.actualizarEstadoPorMessageId(messageId, 'BOUNCED')
+
+        expect(avanzadas).toEqual([{ invitationId: id, guestId, eventId }])
+        expect((await impl.estado(id))?.status).toBe('BOUNCED')
+      })
+
+      it('lo que no avanza (igual, más adelante o ajeno) no se devuelve', async () => {
+        const messageId = `re_${randomUUID()}`
+        const id = await impl.sembrar({
+          status: 'RESPONDED',
+          expiresAt: MAÑANA(),
+          resendMessageId: messageId,
+        })
+
+        expect(await impl.repo.actualizarEstadoPorMessageId(messageId, 'DELIVERED')).toEqual([])
+        expect(
+          await impl.repo.actualizarEstadoPorMessageId(`re_${randomUUID()}`, 'DELIVERED'),
+        ).toEqual([])
+        expect((await impl.estado(id))?.status).toBe('RESPONDED')
+      })
+
+      it('el mismo webhook dos veces: sólo la primera avanza', async () => {
+        const messageId = `re_${randomUUID()}`
+        await impl.sembrar({ status: 'SENT', expiresAt: MAÑANA(), resendMessageId: messageId })
+
+        expect(await impl.repo.actualizarEstadoPorMessageId(messageId, 'DELIVERED')).toHaveLength(1)
+        expect(await impl.repo.actualizarEstadoPorMessageId(messageId, 'DELIVERED')).toEqual([])
       })
     })
 

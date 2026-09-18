@@ -1,7 +1,8 @@
 /**
- * Emisión en tiempo real (Socket.IO sobre Redis en la Tarea 15). Definido en la
- * Tarea 14 con la firma que la Tarea 15 declara, para que ésta sólo aporte el
- * adaptador.
+ * Emisión en tiempo real. Definido en la Tarea 14; el adaptador es
+ * `SocketIoRealtimeAdapter` (Tarea 15, Socket.IO sobre Redis). Las salas a las
+ * que emite cada método están en `salas.ts`: `emitirAEvento` llega a quien
+ * PLANIFICA el evento (COUPLE, PLANNER, ADMIN), no a los vendors.
  *
  * Quien lo usa es el WORKER de la cola `notifications` (Tarea 15), no la
  * petición HTTP (ruling C23): el RSVP público persiste y ENCOLA el aviso

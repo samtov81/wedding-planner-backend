@@ -1,13 +1,17 @@
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/in-memory-queue.adapter'
+
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
 import { HandleDeliveryEventUseCase, mapearEstadoResend } from './handle-delivery-event.use-case'
 
 describe('HandleDeliveryEventUseCase', () => {
   let invitaciones: InvitationRepositoryEnMemoria
+  let cola: InMemoryQueueAdapter
   let caso: HandleDeliveryEventUseCase
 
   beforeEach(() => {
     invitaciones = new InvitationRepositoryEnMemoria()
-    caso = new HandleDeliveryEventUseCase(invitaciones)
+    cola = new InMemoryQueueAdapter()
+    caso = new HandleDeliveryEventUseCase(invitaciones, cola)
   })
 
   it('marca DELIVERED cuando el correo se entrega', async () => {
@@ -93,6 +97,62 @@ describe('HandleDeliveryEventUseCase', () => {
     await caso.ejecutar({ type: 'email.bounced', messageId: 'msg-1' })
 
     expect(invitaciones.buscar('inv-2')?.status).toBe('SENT')
+  })
+})
+
+describe('HandleDeliveryEventUseCase — aviso en tiempo real (guest.invitation.status)', () => {
+  let invitaciones: InvitationRepositoryEnMemoria
+  let cola: InMemoryQueueAdapter
+  let caso: HandleDeliveryEventUseCase
+
+  beforeEach(() => {
+    invitaciones = new InvitationRepositoryEnMemoria()
+    cola = new InMemoryQueueAdapter()
+    caso = new HandleDeliveryEventUseCase(invitaciones, cola)
+    invitaciones.añadir({
+      id: 'inv-1',
+      resendMessageId: 'msg-1',
+      status: 'SENT',
+      guest: { id: 'g-1', eventId: 'ev-1' },
+    })
+  })
+
+  it('un estado que AVANZA encola el aviso en `notifications`, con jobId determinista', async () => {
+    await caso.ejecutar({ type: 'email.bounced', messageId: 'msg-1' })
+
+    expect(cola.encolados).toEqual([
+      {
+        cola: 'notifications',
+        nombre: 'guest.invitation.status',
+        datos: {
+          eventId: 'ev-1',
+          payload: { guestId: 'g-1', invitationId: 'inv-1', status: 'BOUNCED' },
+        },
+        jobId: 'invitation-status-inv-1-BOUNCED',
+        opciones: { jobId: 'invitation-status-inv-1-BOUNCED' },
+      },
+    ])
+  })
+
+  it('un webhook que no avanza nada (repetido, tardío o ajeno) no encola nada', async () => {
+    await caso.ejecutar({ type: 'email.delivered', messageId: 'msg-1' })
+    await caso.ejecutar({ type: 'email.delivered', messageId: 'msg-1' })
+    await caso.ejecutar({ type: 'email.opened', messageId: 'msg-1' })
+    await caso.ejecutar({ type: 'email.delivered', messageId: 'ajeno' })
+
+    expect(cola.encolados.map((e) => e.jobId)).toEqual(['invitation-status-inv-1-DELIVERED'])
+  })
+
+  it('si encolar falla, el estado ya está escrito y el webhook no falla', async () => {
+    // Fallar haría que Resend reintentara; el reintento ya no avanza nada (el
+    // estado está escrito), así que tampoco encolaría: fallar no recupera el aviso.
+    vi.spyOn(cola, 'enqueue').mockRejectedValueOnce(new Error('redis caído'))
+
+    await expect(
+      caso.ejecutar({ type: 'email.bounced', messageId: 'msg-1' }),
+    ).resolves.toBeUndefined()
+
+    expect(invitaciones.buscar('inv-1')?.status).toBe('BOUNCED')
   })
 })
 

@@ -1,18 +1,13 @@
 import { createParamDecorator, type ExecutionContext } from '@nestjs/common'
 
-import type { SystemRole } from '@/modules/users/domain/user'
+import type { UsuarioAutenticado } from '../application/autenticar-access-token'
 
 /**
- * Lo que `JwtAuthGuard` deja en `req.user`: el usuario RECARGADO de la base de
- * datos, no lo que venía firmado en el token. Lleva email y nombre porque
- * `GET /auth/me` con sólo `{ id, systemRole }` no le sirve de nada al frontend.
+ * Lo que `JwtAuthGuard` deja en `req.user`. Se define junto a
+ * `autenticarAccessToken` (application/), que es quien lo produce; se
+ * re-exporta aquí porque los controladores lo importan de este fichero.
  */
-export interface UsuarioAutenticado {
-  id: string
-  email: string
-  fullName: string
-  systemRole: SystemRole
-}
+export type { UsuarioAutenticado }
 
 interface RequestConUsuario {
   user?: UsuarioAutenticado

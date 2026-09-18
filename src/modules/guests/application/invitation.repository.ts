@@ -78,8 +78,23 @@ export interface InvitationRepository {
    * actual está en `estadosQuePuedenAvanzarA(estado)`, y lo comprueba en la
    * MISMA escritura (nada de leer y luego escribir). Un id que no casa, o una
    * fila que ya está igual o más adelante, afecta a 0 filas y NO lanza.
+   *
+   * Devuelve las filas que AVANZARON de verdad —las que cumplieron el `WHERE`
+   * en esa misma escritura—, para que quien llama avise sólo de cambios reales
+   * (Tarea 15: `guest.invitation.status`). Una lectura aparte, antes o
+   * después, no sabría cuáles fueron con dos webhooks concurrentes.
    */
-  actualizarEstadoPorMessageId(messageId: string, estado: InvitationStatus): Promise<void>
+  actualizarEstadoPorMessageId(
+    messageId: string,
+    estado: InvitationStatus,
+  ): Promise<InvitacionAvanzada[]>
+}
+
+/** Una invitación cuyo estado acaba de avanzar, con lo necesario para avisar a su evento. */
+export interface InvitacionAvanzada {
+  invitationId: string
+  guestId: string
+  eventId: string
 }
 
 export const INVITATION_REPOSITORY = Symbol('INVITATION_REPOSITORY')

@@ -6,6 +6,7 @@ import { clienteDe } from '@/modules/database/transaccion'
 
 import type {
   DatosCrearInvitacion,
+  InvitacionAvanzada,
   InvitacionCompleta,
   InvitationRepository,
 } from '../application/invitation.repository'
@@ -96,22 +97,38 @@ export class PrismaInvitationRepository implements InvitationRepository {
     })
   }
 
-  async actualizarEstadoPorMessageId(messageId: string, estado: InvitationStatus): Promise<void> {
-    // `updateMany`: un webhook puede llegar para un id que ya no existe, y eso
-    // afecta a 0 filas en vez de lanzar. No es un error que el proveedor nos
-    // cuente algo de una invitación borrada.
+  async actualizarEstadoPorMessageId(
+    messageId: string,
+    estado: InvitationStatus,
+  ): Promise<InvitacionAvanzada[]> {
+    // Un webhook puede llegar para un id que ya no existe, y eso afecta a 0
+    // filas en vez de lanzar. No es un error que el proveedor nos cuente algo
+    // de una invitación borrada.
     //
     // La monotonía va en el `WHERE`, no en una lectura previa: es UN solo
-    // `UPDATE ... WHERE status IN (...)`. Si dos webhooks del mismo correo
+    // `UPDATE ... WHERE status = ANY(...)`. Si dos webhooks del mismo correo
     // llegan a la vez, Postgres serializa las dos escrituras sobre la fila y
     // reevalúa el `WHERE` de la segunda contra el valor ya escrito por la
     // primera (READ COMMITTED), así que un `delivered` rezagado encuentra
     // BOUNCED y afecta a 0 filas. Un "leer y comparar" en el caso de uso no
     // tendría esa garantía.
-    await this.prisma.guestInvitation.updateMany({
-      where: { resendMessageId: messageId, status: { in: estadosQuePuedenAvanzarA(estado) } },
-      data: { status: estado },
-    })
+    //
+    // SQL y no `updateMany` (Tarea 15): el aviso en tiempo real necesita saber
+    // QUÉ filas avanzaron, y `updateMany` sólo devuelve cuántas. `RETURNING`
+    // devuelve exactamente las que cumplieron el `WHERE` en esta escritura.
+    // `$queryRaw` con template tag: todo valor va como parámetro, nada se
+    // concatena.
+    const desde = estadosQuePuedenAvanzarA(estado)
+    return await this.prisma.$queryRaw<InvitacionAvanzada[]>`
+      UPDATE guest_invitations AS gi
+      SET status = ${estado}::"InvitationStatus"
+      FROM guests AS g
+      WHERE g.id = gi."guestId"
+        AND gi."resendMessageId" = ${messageId}
+        AND gi.status = ANY(${desde}::"InvitationStatus"[])
+      RETURNING gi.id::text AS "invitationId", gi."guestId"::text AS "guestId",
+        g."eventId"::text AS "eventId"
+    `
   }
 }
 

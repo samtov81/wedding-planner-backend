@@ -74,10 +74,10 @@ describe('RSVP público e2e', () => {
   const otrasApps: INestApplication[] = []
 
   /**
-   * La app real con el puerto de notificaciones sustituido por su doble: es el
-   * que el `NotificationsModule` cablea hoy, pero aquí se inyecta la instancia
-   * del test para poder registrar miembros y provocar fallos. La cola es la
-   * REAL (BullMQ sobre el Redis del test).
+   * La app real con el puerto de notificaciones sustituido por su doble, para
+   * poder registrar miembros y provocar fallos. Desde la Tarea 15 el módulo
+   * cablea el adaptador de Prisma: el rollback con el adaptador REAL está en
+   * `realtime.e2e.test.ts`. La cola es la REAL (BullMQ sobre el Redis del test).
    */
   async function crearApp(): Promise<INestApplication> {
     const modulo = await Test.createTestingModule({ imports: [AppModule] })

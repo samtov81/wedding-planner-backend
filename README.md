@@ -41,14 +41,14 @@ comprueba).
 |---|---|---|
 | `DATABASE_URL` | sí | `postgresql://…` |
 | `REDIS_URL` | sí | `redis://…` o `rediss://…` |
-| `JWT_ACCESS_SECRET` | sí | Firma de los access tokens, 32 caracteres o más. |
+| `JWT_ACCESS_SECRET` | sí | Firma de los access tokens, 32 caracteres o más. En producción se rechaza el valor de `.env.example`. |
 | `APP_URL` | sí | Origen del frontend: base de los enlaces del RSVP y siempre dentro de la allowlist de CORS. |
 | `NODE_ENV` | no | `development` (defecto), `test` o `production`. |
 | `PORT` | no | 3000 por defecto. |
 | `JWT_ACCESS_TTL` | no | `15m` por defecto. |
 | `REFRESH_TTL_DAYS` | no | 30 por defecto. |
-| `MAIL_DRIVER` | no | `fake` (defecto: escribe en `.mail-outbox/`) o `resend`. |
-| `MAIL_FROM` | no | Remitente de los correos. |
+| `MAIL_DRIVER` | en producción | `fake` (defecto: no envía nada, guarda en memoria; sólo local y test) o `resend`. En producción el arranque exige `resend`. |
+| `MAIL_FROM` | en producción | Remitente de los correos. El defecto (`.test`) se rechaza en producción. |
 | `RESEND_API_KEY` | con `resend` | Clave de la API de Resend. |
 | `RESEND_WEBHOOK_SECRET` | con `resend` | Secreto de firma del webhook (`whsec_<base64>`). |
 | `CORS_ORIGINS` | no | Orígenes adicionales a `APP_URL`, separados por comas. Nunca `*`. La misma lista vale para HTTP y Socket.IO. |

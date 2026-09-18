@@ -50,7 +50,14 @@ export interface InvitationRepository {
    */
   caducar(id: string): Promise<void>
 
-  /** Lo usa el webhook del proveedor (Tarea 13), que casa por `resendMessageId`. */
+  /**
+   * Lo usa el webhook del proveedor (Tarea 13), que casa por `resendMessageId`.
+   *
+   * Contrato: sólo AVANZA. Escribe `estado` únicamente en las filas cuyo estado
+   * actual está en `estadosQuePuedenAvanzarA(estado)`, y lo comprueba en la
+   * MISMA escritura (nada de leer y luego escribir). Un id que no casa, o una
+   * fila que ya está igual o más adelante, afecta a 0 filas y NO lanza.
+   */
   actualizarEstadoPorMessageId(messageId: string, estado: InvitationStatus): Promise<void>
 }
 

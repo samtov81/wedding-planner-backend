@@ -33,4 +33,30 @@ describe('loadEnv', () => {
 
     expect(() => loadEnv(roto)).toThrow(/DATABASE_URL[\s\S]*REDIS_URL/)
   })
+
+  describe('RESEND_WEBHOOK_SECRET', () => {
+    const secretoValido = `whsec_${Buffer.from('s'.repeat(32)).toString('base64')}`
+
+    it('con MAIL_DRIVER=resend es obligatorio: sin él, el webhook no puede verificar nada', () => {
+      const conResend = { ...valido, MAIL_DRIVER: 'resend', RESEND_API_KEY: 're_x' }
+
+      expect(() => loadEnv(conResend)).toThrow(/RESEND_WEBHOOK_SECRET/)
+      expect(loadEnv({ ...conResend, RESEND_WEBHOOK_SECRET: secretoValido }).MAIL_DRIVER).toBe(
+        'resend',
+      )
+    })
+
+    it('con MAIL_DRIVER=fake es opcional', () => {
+      expect(loadEnv(valido).RESEND_WEBHOOK_SECRET).toBeUndefined()
+    })
+
+    it('rechaza al arrancar un secreto que no tiene forma de secreto de Svix', () => {
+      expect(() => loadEnv({ ...valido, RESEND_WEBHOOK_SECRET: 'mi-secreto' })).toThrow(
+        /RESEND_WEBHOOK_SECRET/,
+      )
+      expect(() => loadEnv({ ...valido, RESEND_WEBHOOK_SECRET: 'whsec_!!no-base64!!' })).toThrow(
+        /RESEND_WEBHOOK_SECRET/,
+      )
+    })
+  })
 })

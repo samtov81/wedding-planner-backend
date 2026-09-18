@@ -12,15 +12,19 @@ import { DeleteGuestUseCase } from './application/delete-guest.use-case'
 import { GetGuestUseCase } from './application/get-guest.use-case'
 import { GUEST_REPOSITORY } from './application/guest.repository'
 import { GuestSummaryUseCase } from './application/guest-summary.use-case'
+import { HandleDeliveryEventUseCase } from './application/handle-delivery-event.use-case'
 import { INVITATION_REPOSITORY } from './application/invitation.repository'
 import { ListGuestsUseCase } from './application/list-guests.use-case'
 import { COLA_INVITACIONES, SendInvitationsUseCase } from './application/send-invitations.use-case'
 import { SendSingleInvitationUseCase } from './application/send-single-invitation.use-case'
 import { UpdateGuestUseCase } from './application/update-guest.use-case'
+import { WEBHOOK_SIGNATURE_VERIFIER } from './application/webhook-signature.verifier'
 import { PrismaGuestRepository } from './infrastructure/prisma-guest.repository'
 import { PrismaInvitationRepository } from './infrastructure/prisma-invitation.repository'
+import { SvixSignatureVerifier } from './infrastructure/svix-signature.verifier'
 import { GuestsController } from './interfaces/guests.controller'
 import { InvitationProcessor } from './interfaces/invitation.processor'
+import { ResendWebhookController } from './interfaces/resend-webhook.controller'
 
 /**
  * `EventsModule` se IMPORTA para consumir `EventAccessGuard` tal cual: es el
@@ -45,7 +49,9 @@ import { InvitationProcessor } from './interfaces/invitation.processor'
     // Su cola PROPIA, no `email` (ruling C17; ver `COLA_INVITACIONES`).
     BullModule.registerQueue({ name: COLA_INVITACIONES }),
   ],
-  controllers: [GuestsController],
+  // `ResendWebhookController` NO lleva guards de usuario: su autenticación es
+  // la firma Svix (ver el docblock del controlador).
+  controllers: [GuestsController, ResendWebhookController],
   providers: [
     {
       provide: GUEST_REPOSITORY,
@@ -66,6 +72,8 @@ import { InvitationProcessor } from './interfaces/invitation.processor'
     SendInvitationsUseCase,
     SendSingleInvitationUseCase,
     InvitationProcessor,
+    HandleDeliveryEventUseCase,
+    { provide: WEBHOOK_SIGNATURE_VERIFIER, useClass: SvixSignatureVerifier },
   ],
   exports: [GUEST_REPOSITORY, INVITATION_REPOSITORY],
 })

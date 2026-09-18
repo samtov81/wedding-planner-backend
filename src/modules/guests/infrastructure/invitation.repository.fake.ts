@@ -5,7 +5,7 @@ import type {
   InvitacionCompleta,
   InvitationRepository,
 } from '../application/invitation.repository'
-import type { InvitationStatus } from '../domain/invitation'
+import { estadosQuePuedenAvanzarA, type InvitationStatus } from '../domain/invitation'
 
 /**
  * Doble en memoria del puerto (ruling H1). No es más permisivo que el
@@ -135,9 +135,15 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
     return Promise.resolve()
   }
 
+  /**
+   * La MISMA regla que el `WHERE` del adaptador de Prisma: sólo se avanza desde
+   * un estado de rango menor. Un doble que sobrescribiera sin mirar daría verde
+   * a un caso de uso que, contra Postgres, se comporta distinto (ruling H1).
+   */
   actualizarEstadoPorMessageId(messageId: string, estado: InvitationStatus): Promise<void> {
+    const desde = estadosQuePuedenAvanzarA(estado)
     for (const fila of this.filas) {
-      if (fila.resendMessageId === messageId) fila.status = estado
+      if (fila.resendMessageId === messageId && desde.includes(fila.status)) fila.status = estado
     }
     return Promise.resolve()
   }

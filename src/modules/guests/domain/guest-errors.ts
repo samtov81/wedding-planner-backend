@@ -1,4 +1,9 @@
-import { ConflictError, NotFoundError, UnprocessableError } from '@/shared/domain'
+import {
+  ConflictError,
+  NotFoundError,
+  UnauthorizedError,
+  UnprocessableError,
+} from '@/shared/domain'
 
 /**
  * Cubre dos casos que el cliente no necesita distinguir: el `guestId` no
@@ -38,5 +43,21 @@ export class EmailDuplicadoError extends ConflictError {
 export class GuestHasNoEmailError extends UnprocessableError {
   constructor() {
     super('El invitado no tiene correo al que enviar la invitación', 'GUEST_HAS_NO_EMAIL')
+  }
+}
+
+/**
+ * La firma del webhook del proveedor no casa, falta o ha caducado. En una ruta
+ * pública la firma ES la autenticación, así que es un 401 como el de un token
+ * inválido.
+ *
+ * DESIGN-GAP: el brief la declara `extends DomainError` con `httpStatus = 401`.
+ * Aquí extiende `UnauthorizedError`, que ya es exactamente eso: mismo status y
+ * mismo mapeo en `DomainExceptionFilter`, sin repetir el 401 a mano, y queda
+ * agrupada con los demás "identidad rechazada" si alguien filtra por clase.
+ */
+export class FirmaInvalidaError extends UnauthorizedError {
+  constructor() {
+    super('La firma del webhook no es válida', 'INVALID_SIGNATURE')
   }
 }

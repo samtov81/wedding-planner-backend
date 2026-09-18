@@ -29,3 +29,41 @@ export function hashDeToken(token: string): string {
 export function caducidadInvitacion(desde = new Date()): Date {
   return new Date(desde.getTime() + DIAS_DE_VALIDEZ * 86_400_000)
 }
+
+/**
+ * Rango de cada estado. Los webhooks llegan desordenados y se reentregan, así
+ * que el estado sólo AVANZA: un `delivered` que llega tarde no puede pisar un
+ * `BOUNCED`, y nada del proveedor pisa un `RESPONDED` (el invitado ya contestó).
+ *
+ * `BOUNCED` y `COMPLAINED` comparten rango: son dos finales distintos del mismo
+ * correo y ninguno "supera" al otro, así que el primero que llega se queda.
+ * Mismo rango tampoco avanza: por eso reentregar un evento es un no-op.
+ */
+const ORDEN = {
+  QUEUED: 0,
+  SENT: 1,
+  DELIVERED: 2,
+  BOUNCED: 3,
+  COMPLAINED: 3,
+  RESPONDED: 4,
+} as const satisfies Record<InvitationStatus, number>
+
+/**
+ * `satisfies Record<...>` obliga a dar rango a TODO estado (uno nuevo en el
+ * tipo no compila hasta que se ordene). El `Map` es sólo para leerlo sin
+ * indexar un objeto con una clave variable.
+ */
+const RANGO = new Map(Object.entries(ORDEN) as Array<[InvitationStatus, number]>)
+
+/**
+ * Los estados DESDE los que se puede pasar a `destino`: los de rango
+ * estrictamente menor. Se devuelve la lista y no un booleano para que el
+ * adaptador de Prisma la meta en el `WHERE` del UPDATE: la regla se cumple en
+ * la MISMA sentencia que escribe, sin una lectura previa que una carrera pueda
+ * dejar obsoleta.
+ */
+export function estadosQuePuedenAvanzarA(destino: InvitationStatus): InvitationStatus[] {
+  // `?? 0` nunca actúa (el mapa es exhaustivo); si actuara, falla cerrado: nada avanza.
+  const tope = RANGO.get(destino) ?? 0
+  return [...RANGO].filter(([, rango]) => rango < tope).map(([estado]) => estado)
+}

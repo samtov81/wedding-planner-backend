@@ -9,7 +9,7 @@ import type {
   InvitationRepository,
 } from '../application/invitation.repository'
 import { InvitadoNoEncontradoError } from '../domain/guest-errors'
-import type { InvitationStatus } from '../domain/invitation'
+import { estadosQuePuedenAvanzarA, type InvitationStatus } from '../domain/invitation'
 
 /** El `include` es el mismo para las dos lecturas: una sola forma de fila. */
 const CON_INVITADO_Y_EVENTO = {
@@ -83,8 +83,16 @@ export class PrismaInvitationRepository implements InvitationRepository {
     // `updateMany`: un webhook puede llegar para un id que ya no existe, y eso
     // afecta a 0 filas en vez de lanzar. No es un error que el proveedor nos
     // cuente algo de una invitación borrada.
+    //
+    // La monotonía va en el `WHERE`, no en una lectura previa: es UN solo
+    // `UPDATE ... WHERE status IN (...)`. Si dos webhooks del mismo correo
+    // llegan a la vez, Postgres serializa las dos escrituras sobre la fila y
+    // reevalúa el `WHERE` de la segunda contra el valor ya escrito por la
+    // primera (READ COMMITTED), así que un `delivered` rezagado encuentra
+    // BOUNCED y afecta a 0 filas. Un "leer y comparar" en el caso de uso no
+    // tendría esa garantía.
     await this.prisma.guestInvitation.updateMany({
-      where: { resendMessageId: messageId },
+      where: { resendMessageId: messageId, status: { in: estadosQuePuedenAvanzarA(estado) } },
       data: { status: estado },
     })
   }

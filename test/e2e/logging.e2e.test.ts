@@ -79,6 +79,22 @@ describe('Logs de peticiones (pino-http) e2e', () => {
     expect(todo).toContain('/RSVP/[REDACTADO]?x=1')
   })
 
+  it('el token del RSVP en la cabecera Referer tampoco llega al log', async () => {
+    // Mismo origen (API tras `/api` en el host del frontend): cada llamada que
+    // hace la página `${APP_URL}/rsvp/<token>` lleva ese Referer.
+    const { token } = generarTokenInvitacion()
+
+    await request(server)
+      .get('/auth/me')
+      .set('Referer', `https://app.example.com/rsvp/${token}?utm=x`)
+      .expect(401)
+
+    const todo = logs.todo()
+    expect(todo).not.toContain(token)
+    // Se registra, tachado: la cabecera sigue sirviendo para depurar.
+    expect(todo).toContain('"referer":"https://app.example.com/rsvp/[REDACTADO]?utm=x"')
+  })
+
   it('las credenciales de las cabeceras no llegan al log', async () => {
     await request(server)
       .get('/auth/me')

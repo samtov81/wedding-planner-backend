@@ -34,7 +34,7 @@ export class DomainExceptionFilter implements ExceptionFilter {
 
     if (status >= 500) {
       this.logger.error(
-        { err: exception, url: req.url, requestId: req.requestId },
+        { err: exception, url: urlParaRegistro(req.url), requestId: req.requestId },
         'Error no controlado',
       )
     }
@@ -71,4 +71,19 @@ export class DomainExceptionFilter implements ExceptionFilter {
       cuerpo: { code: 'INTERNAL_ERROR', message: 'Ha ocurrido un error interno' },
     }
   }
+}
+
+/**
+ * Segmentos de ruta que SON una credencial: el token del RSVP público
+ * (`/rsvp/:token`) es lo único que hace falta para responder por alguien.
+ * La URL se registra para poder depurar un 500; el token, nunca.
+ *
+ * `i` porque Express casa las rutas sin distinguir mayúsculas: `/RSVP/<token>`
+ * llega al mismo controlador y tiene que tacharse igual. Sin anclar al
+ * principio por el mismo motivo (`//rsvp/<token>` también casa).
+ */
+const TOKEN_EN_RUTA = /(\/rsvp\/)[^/?#]+/gi
+
+function urlParaRegistro(url: string | undefined): string | undefined {
+  return url?.replace(TOKEN_EN_RUTA, '$1[REDACTADO]')
 }

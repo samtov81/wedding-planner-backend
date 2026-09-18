@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 import { Prisma, type Guest as GuestFila } from '@prisma/client'
 
 import { PrismaService } from '@/modules/database/prisma.service'
+import { clienteDe } from '@/modules/database/transaccion'
 
 import type {
   CambiosInvitado,
@@ -122,8 +123,13 @@ export class PrismaGuestRepository implements GuestRepository {
     // y con sólo `id` no se comprueba que la fila sea de ESTE evento. El caso
     // de uso ya lo comprobó, pero repetir el filtro evita que una llamada
     // futura directa al repositorio se lo salte.
+    //
+    // `clienteDe`: el RSVP público lo llama dentro de una unidad de trabajo, y
+    // la escritura Y la relectura tienen que ir por la conexión de esa
+    // transacción (ver `UnidadDeTrabajo`).
+    const cliente = clienteDe(this.prisma)
     try {
-      await this.prisma.guest.updateMany({
+      await cliente.guest.updateMany({
         where: { id: guestId, eventId },
         data: {
           ...(cambios.name !== undefined ? { name: cambios.name } : {}),
@@ -137,7 +143,7 @@ export class PrismaGuestRepository implements GuestRepository {
       throw traducir(error)
     }
 
-    const fila = await this.prisma.guest.findFirstOrThrow({ where: { id: guestId, eventId } })
+    const fila = await cliente.guest.findFirstOrThrow({ where: { id: guestId, eventId } })
     return aInvitado(fila)
   }
 

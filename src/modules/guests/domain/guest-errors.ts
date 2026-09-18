@@ -61,3 +61,21 @@ export class FirmaInvalidaError extends UnauthorizedError {
     super('La firma del webhook no es válida', 'INVALID_SIGNATURE')
   }
 }
+
+/**
+ * El RSVP público no acepta este token. Es el MISMO error, con el mismo status,
+ * `code` y mensaje, para el token que no existe, el caducado (incluido el que
+ * el worker caducó al agotar reintentos, ruling C18), el ya usado y el mal
+ * formado. Distinguirlos le diría a quien prueba tokens al azar cuándo ha
+ * acertado uno real; con un solo error no aprende nada.
+ *
+ * Es un 404 y no un 401/410: para quien no tiene un token válido, esa
+ * invitación no existe — el mismo criterio que el 404 único del
+ * `EventAccessGuard`. Por eso el mensaje no nombra ninguna de las causas, y
+ * NUNCA incluye el token: los mensajes de error acaban en logs y en pantallas.
+ */
+export class InvitacionNoValidaError extends NotFoundError {
+  constructor() {
+    super('La invitación no es válida', 'INVITATION_INVALID')
+  }
+}

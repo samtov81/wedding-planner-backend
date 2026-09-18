@@ -34,13 +34,34 @@ export interface InvitationRepository {
 
   buscarConInvitadoYEvento(id: string): Promise<InvitacionCompleta | null>
 
-  /** SENT + `sentAt` + el id del proveedor, en UNA escritura (ver el worker). */
+  /**
+   * SENT + `sentAt` + el id del proveedor, en UNA escritura (ver el worker).
+   *
+   * Sólo AVANZA (ruling C21): escribe únicamente si el estado actual está en
+   * `estadosQuePuedenAvanzarA('SENT')`, comprobado en la MISMA escritura. Un
+   * reintento del job que llega cuando el invitado ya respondió (o el webhook
+   * ya dijo DELIVERED/BOUNCED) afecta a 0 filas y NO lanza: pisar `RESPONDED`
+   * con `SENT` borraría la respuesta del invitado de la vista de la pareja.
+   */
   marcarEnviada(id: string, providerMessageId: string): Promise<void>
 
   /** Entrada del RSVP público (Tarea 14): se busca por hash, nunca por token. */
   buscarPorHash(tokenHash: string): Promise<InvitacionCompleta | null>
 
-  marcarRespondida(id: string): Promise<void>
+  /**
+   * RESPONDED + `respondedAt = ahora`, SÓLO si la invitación sigue admitiendo
+   * respuesta (`admiteRespuesta`: sin caducar a `ahora` y en un estado que puede
+   * avanzar a RESPONDED), comprobado en la MISMA escritura. Devuelve si la
+   * reclamó.
+   *
+   * Es la guarda de verdad del token de un solo uso: el caso de uso ya leyó la
+   * invitación válida, pero dos respuestas simultáneas con el mismo token leen
+   * las dos "válida"; sólo una de las dos escrituras afecta a la fila.
+   *
+   * Se llama dentro de una `UnidadDeTrabajo`: el adaptador escribe con el
+   * cliente de la transacción en curso.
+   */
+  marcarRespondida(id: string, ahora: Date): Promise<boolean>
 
   /**
    * `expiresAt = ahora`: el token deja de servir aunque siga en algún sitio (el

@@ -67,3 +67,27 @@ export function estadosQuePuedenAvanzarA(destino: InvitationStatus): InvitationS
   const tope = RANGO.get(destino) ?? 0
   return [...RANGO].filter(([, rango]) => rango < tope).map(([estado]) => estado)
 }
+
+/**
+ * ¿Sirve todavía esta invitación para responder? Es la ÚNICA definición de
+ * "token válido" del RSVP público; la lectura (GET) y la respuesta (POST) la
+ * comparten, y el adaptador de Prisma la repite en el `WHERE` de la escritura.
+ *
+ * Dos condiciones, y las dos cuentan:
+ *  - `expiresAt` en el futuro. No es sólo la caducidad natural de 90 días: el
+ *    worker caduca la invitación (`expiresAt = ahora`) cuando agota reintentos
+ *    (ruling C18), para que la copia del token que queda en Redis no sirva.
+ *    Si esta comprobación se saltara, C18 no protegería nada.
+ *  - que el estado pueda avanzar a `RESPONDED`: el token es de UN solo uso.
+ *    Se deriva de `estadosQuePuedenAvanzarA` en vez de escribir
+ *    `status !== 'RESPONDED'` para que la regla de orden siga siendo una sola.
+ */
+export function admiteRespuesta(
+  invitacion: { status: InvitationStatus; expiresAt: Date },
+  ahora: Date,
+): boolean {
+  return (
+    invitacion.expiresAt.getTime() > ahora.getTime() &&
+    estadosQuePuedenAvanzarA('RESPONDED').includes(invitacion.status)
+  )
+}

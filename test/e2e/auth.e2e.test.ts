@@ -183,4 +183,33 @@ describe('Auth e2e', () => {
       .send({ email: 'duplicado@test.com', password: 'otra-contraseña-larga', fullName: 'D2' })
       .expect(409)
   })
+
+  describe('límite de intentos de login', () => {
+    function intentar(email: string): request.Test {
+      return request(server).post('/auth/login').send({ email, password: 'no-es-esta' })
+    }
+
+    it('corta el sexto intento en 15 minutos contra la MISMA cuenta desde la misma IP', async () => {
+      for (let i = 0; i < 5; i += 1) await intentar('victima@test.com').expect(401)
+
+      const cortado = await intentar('victima@test.com').expect(429)
+
+      expect(cortado.headers['retry-after-login']).toBeDefined()
+    })
+
+    it('la clave es IP + correo: otra cuenta desde la misma IP no hereda el bloqueo', async () => {
+      // Limitar sólo por IP dejaría que un atacante bloqueara el login de toda
+      // una oficina detrás de una misma IP. Otra cuenta cuenta desde cero.
+      for (let i = 0; i < 5; i += 1) await intentar('bloqueada@test.com').expect(401)
+      await intentar('bloqueada@test.com').expect(429)
+
+      await intentar('otra-cuenta@test.com').expect(401)
+    })
+
+    it('el correo cuenta sin distinguir mayúsculas: variarlas no da intentos nuevos', async () => {
+      for (let i = 0; i < 5; i += 1) await intentar('mayus@test.com').expect(401)
+
+      await intentar('MAYUS@test.com').expect(429)
+    })
+  })
 })

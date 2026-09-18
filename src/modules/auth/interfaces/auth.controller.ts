@@ -1,8 +1,10 @@
 import { Body, Controller, Get, HttpCode, Inject, Post, Req, Res, UseGuards } from '@nestjs/common'
+import { SkipThrottle, Throttle, ThrottlerGuard } from '@nestjs/throttler'
 import type { Request, Response } from 'express'
 
 import { ENV } from '@/config/config.module'
 import type { Env } from '@/config/env.schema'
+import { LIMITADOR_LOGIN, LIMITADOR_RSVP } from '@/shared/http/limitadores'
 import { validarCon } from '@/shared/http/validar-con'
 
 import { LoginUseCase } from '../application/login.use-case'
@@ -46,8 +48,25 @@ export class AuthController {
     return { id: usuario.id, email: usuario.email, fullName: usuario.fullName }
   }
 
+  /**
+   * Límite: 5 intentos cada 15 minutos por IP + correo, contados en Redis.
+   *
+   * La clave es la PAREJA (IP, correo), no una de las dos: sólo por IP, quien
+   * comparte IP con una oficina entera bloquearía el login de todos; sólo por
+   * correo, cualquiera podría bloquear a propósito a un usuario legítimo.
+   *
+   * DESIGN-GAP: el brief argumenta además que limitar sólo por IP "deja pasar
+   * el ataque distribuido contra una cuenta concreta". La clave compuesta
+   * tampoco lo para — cada IP del atacante estrena sus 5 intentos contra esa
+   * cuenta. Pararlo exige un segundo límite por cuenta, más alto, que vuelve a
+   * abrir el bloqueo a propósito. Es una decisión de producto que no se toma
+   * aquí; lo que queda es el límite que el brief pide.
+   */
   @Post('login')
   @HttpCode(200)
+  @UseGuards(ThrottlerGuard)
+  @SkipThrottle({ [LIMITADOR_RSVP]: true })
+  @Throttle({ [LIMITADOR_LOGIN]: { limit: 5, ttl: 900_000, getTracker: rastreoPorIpYCorreo } })
   async login(
     @Body() body: unknown,
     @Req() req: Request,
@@ -126,4 +145,20 @@ export class AuthController {
       maxAge: this.env.REFRESH_TTL_DAYS * 86_400_000,
     })
   }
+}
+
+/**
+ * Clave del límite de login. El correo se normaliza (minúsculas, sin espacios)
+ * para que variar las mayúsculas no dé intentos nuevos contra la misma cuenta.
+ * No hace falta ocultarlo: `ThrottlerGuard` guarda en Redis el SHA-256 de la
+ * clave, no la clave.
+ *
+ * Corre ANTES de validar el cuerpo (los guards van antes que el handler), así
+ * que no se fía de su forma: un cuerpo sin `email` de texto cuenta con la IP
+ * sola.
+ */
+function rastreoPorIpYCorreo(req: Record<string, unknown>): string {
+  const cuerpo = req.body as { email?: unknown } | undefined
+  const email = typeof cuerpo?.email === 'string' ? cuerpo.email.trim().toLowerCase() : ''
+  return `${typeof req.ip === 'string' ? req.ip : ''}|${email}`
 }

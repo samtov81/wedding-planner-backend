@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
 
 import { PrismaService } from '@/modules/database/prisma.service'
+import { clienteDe } from '@/modules/database/transaccion'
 
 import type {
   DatosCrearInvitacion,
@@ -50,8 +51,13 @@ export class PrismaInvitationRepository implements InvitationRepository {
     // Estado e id del proveedor en la MISMA escritura: dos updates dejarían una
     // ventana en la que el webhook llega a una invitación sin `resendMessageId`
     // y no sabe a quién pertenece.
-    await this.prisma.guestInvitation.update({
-      where: { id },
+    //
+    // `updateMany` con la guarda de estado en el `WHERE` (ruling C21): sólo
+    // avanza desde QUEUED. Un reintento que llega tarde —el invitado ya
+    // respondió, o el webhook ya escribió DELIVERED— afecta a 0 filas en vez de
+    // pisar el estado. Misma regla y mismo motivo que `actualizarEstadoPorMessageId`.
+    await this.prisma.guestInvitation.updateMany({
+      where: { id, status: { in: estadosQuePuedenAvanzarA('SENT') } },
       data: { status: 'SENT', sentAt: new Date(), resendMessageId: providerMessageId },
     })
   }
@@ -64,11 +70,22 @@ export class PrismaInvitationRepository implements InvitationRepository {
     return fila === null ? null : aInvitacion(fila)
   }
 
-  async marcarRespondida(id: string): Promise<void> {
-    await this.prisma.guestInvitation.update({
-      where: { id },
-      data: { status: 'RESPONDED', respondedAt: new Date() },
+  async marcarRespondida(id: string, ahora: Date): Promise<boolean> {
+    // `admiteRespuesta` traducida al `WHERE`: sin caducar a `ahora` y en un
+    // estado que puede avanzar a RESPONDED. Un solo UPDATE condicionado, así
+    // que de dos respuestas simultáneas Postgres deja pasar una: la segunda
+    // reevalúa el `WHERE` contra la fila ya RESPONDED y afecta a 0 filas.
+    //
+    // `clienteDe`: se llama dentro de la unidad de trabajo del RSVP.
+    const { count } = await clienteDe(this.prisma).guestInvitation.updateMany({
+      where: {
+        id,
+        expiresAt: { gt: ahora },
+        status: { in: estadosQuePuedenAvanzarA('RESPONDED') },
+      },
+      data: { status: 'RESPONDED', respondedAt: ahora },
     })
+    return count === 1
   }
 
   async caducar(id: string): Promise<void> {

@@ -5,7 +5,11 @@ import type {
   InvitacionCompleta,
   InvitationRepository,
 } from '../application/invitation.repository'
-import { estadosQuePuedenAvanzarA, type InvitationStatus } from '../domain/invitation'
+import {
+  admiteRespuesta,
+  estadosQuePuedenAvanzarA,
+  type InvitationStatus,
+} from '../domain/invitation'
 
 /**
  * Doble en memoria del puerto (ruling H1). No es más permisivo que el
@@ -19,15 +23,23 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
   /**
    * Siembra una invitación ya existente. Los campos que el test no nombra se
    * rellenan con valores coherentes: sembrar una fila a medias sería una fila
-   * que la base de datos no puede tener.
+   * que la base de datos no puede tener. Con `tokenHash`, la fila se encuentra
+   * por `buscarPorHash` (el RSVP público); sin él, sólo por id.
    */
   añadir(
     parcial: Partial<Omit<InvitacionCompleta, 'guest' | 'event'>> & {
       id: string
+      tokenHash?: string
       guest?: Partial<InvitacionCompleta['guest']>
       event?: Partial<InvitacionCompleta['event']>
     },
   ): InvitacionCompleta {
+    if (parcial.tokenHash !== undefined) {
+      // El `@unique` de `tokenHash`, también al sembrar.
+      if (this.idsPorHash.has(parcial.tokenHash)) throw new Error('tokenHash duplicado')
+      this.idsPorHash.set(parcial.tokenHash, parcial.id)
+    }
+
     const fila: InvitacionCompleta = {
       id: parcial.id,
       status: parcial.status ?? 'QUEUED',
@@ -107,8 +119,9 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
       this.falloAlMarcar = null
       return Promise.reject(error)
     }
+    // La MISMA guarda que el `WHERE` del adaptador de Prisma (ruling C21).
     const fila = this.buscar(id)
-    if (fila !== undefined) {
+    if (fila !== undefined && estadosQuePuedenAvanzarA('SENT').includes(fila.status)) {
       fila.status = 'SENT'
       fila.resendMessageId = providerMessageId
     }
@@ -120,13 +133,13 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
     return id === undefined ? Promise.resolve(null) : this.buscarConInvitadoYEvento(id)
   }
 
-  marcarRespondida(id: string): Promise<void> {
+  /** La MISMA regla que el `WHERE` del adaptador de Prisma: `admiteRespuesta`. */
+  marcarRespondida(id: string, ahora: Date): Promise<boolean> {
     const fila = this.buscar(id)
-    if (fila !== undefined) {
-      fila.status = 'RESPONDED'
-      fila.respondedAt = new Date()
-    }
-    return Promise.resolve()
+    if (fila === undefined || !admiteRespuesta(fila, ahora)) return Promise.resolve(false)
+    fila.status = 'RESPONDED'
+    fila.respondedAt = ahora
+    return Promise.resolve(true)
   }
 
   caducar(id: string): Promise<void> {

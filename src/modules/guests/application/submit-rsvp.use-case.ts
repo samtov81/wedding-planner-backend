@@ -8,15 +8,36 @@ import {
   NOTIFICATION_PORT,
   type NotificationPort,
 } from '@/modules/notifications/application/notification.port'
-import { REALTIME_PORT, type RealtimePort } from '@/modules/notifications/application/realtime.port'
+import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
 
 import { InvitacionNoValidaError } from '../domain/guest-errors'
 import { GUEST_REPOSITORY, type GuestRepository } from './guest.repository'
 import { buscarInvitacionValida } from './invitacion-valida'
 import { INVITATION_REPOSITORY, type InvitationRepository } from './invitation.repository'
 
-/** Tipo de la notificación y del evento de socket. La Tarea 15 lo escucha por este nombre. */
+/**
+ * Tipo de la notificación, nombre del job en la cola `notifications` y evento
+ * de socket que emitirá el worker. La Tarea 15 lo escucha por este nombre.
+ */
 export const TIPO_RSVP_ACTUALIZADO = 'guest.rsvp.updated'
+
+/**
+ * Lo que el worker de `notifications` (Tarea 15) recibe: a qué sala emitir y
+ * qué. Sin token ni correos: el payload se guarda en Redis.
+ */
+export interface JobAvisoRsvp {
+  eventId: string
+  payload: { guestId: string; guestName: string; rsvp: 'CONFIRMED' | 'DECLINED' }
+}
+
+/**
+ * Una invitación sólo se responde una vez, así que su id basta para que un
+ * reintento de la petición no encole dos avisos. Con `-`, nunca `:` (BullMQ lo
+ * rechaza; ver `EnqueueOptions.jobId`).
+ */
+export function jobIdDeAvisoRsvp(invitationId: string): string {
+  return `rsvp-${invitationId}`
+}
 
 /**
  * La respuesta del invitado. `dietary` ausente = no se toca la que hubiera;
@@ -36,12 +57,12 @@ export class SubmitRsvpUseCase {
     @Inject(INVITATION_REPOSITORY) private readonly invitaciones: InvitationRepository,
     @Inject(GUEST_REPOSITORY) private readonly invitados: GuestRepository,
     @Inject(NOTIFICATION_PORT) private readonly notificaciones: NotificationPort,
-    @Inject(REALTIME_PORT) private readonly tiempoReal: RealtimePort,
+    @Inject(QUEUE_PORT) private readonly cola: QueuePort,
     @Inject(UNIDAD_DE_TRABAJO) private readonly unidadDeTrabajo: UnidadDeTrabajo,
   ) {}
 
   /**
-   * Orden no negociable: validar → persistir TODO en una transacción → emitir.
+   * Orden no negociable: validar → persistir TODO en una transacción → encolar.
    *
    * Dentro de la transacción: reclamar la invitación (RESPONDED), actualizar el
    * invitado y crear las notificaciones. O las tres o ninguna: una respuesta sin
@@ -49,10 +70,13 @@ export class SubmitRsvpUseCase {
    * conectada, y una invitación RESPONDED con el invitado aún PENDING dejaría
    * al invitado sin forma de contestar (su token ya no vale).
    *
-   * La emisión en tiempo real va FUERA y DESPUÉS del commit. Si fuera dentro,
-   * una caída de Redis desharía la respuesta del invitado; si fuera antes, la
-   * pareja podría ver un cambio que luego no se confirma. Su fallo se registra
-   * y se traga: el estado ya está persistido y se recupera por REST.
+   * El aviso en tiempo real NO se emite desde aquí (ruling C23): tras el commit
+   * se ENCOLA un job en `notifications`, y quien emite es el worker de la
+   * Tarea 15 — otro proceso, con reintentos que un emit dentro de la petición
+   * no tiene. Encolar va FUERA y DESPUÉS del commit: dentro, una caída de Redis
+   * desharía la respuesta del invitado; antes, la pareja podría ver un cambio
+   * que luego no se confirma. Si encolar falla, se registra y se traga: la
+   * respuesta y la `Notification` ya están persistidas y se recuperan por REST.
    *
    * El token NUNCA se registra: ni aquí ni en los errores. Los logs llevan
    * `eventId` y `guestId`, que bastan para seguir el caso y no dan acceso a nada.
@@ -76,11 +100,14 @@ export class SubmitRsvpUseCase {
       await this.notificaciones.crearParaMiembros(eventId, TIPO_RSVP_ACTUALIZADO, aviso)
     })
 
+    const job: JobAvisoRsvp = { eventId, payload: aviso }
     try {
-      await this.tiempoReal.emitirAEvento(eventId, TIPO_RSVP_ACTUALIZADO, aviso)
+      await this.cola.enqueue('notifications', TIPO_RSVP_ACTUALIZADO, job, {
+        jobId: jobIdDeAvisoRsvp(invitacion.id),
+      })
     } catch (error) {
       this.registro.warn(
-        `RSVP persistido pero no emitido en tiempo real eventId=${eventId} guestId=${guestId}: ` +
+        `RSVP persistido pero su aviso no se pudo encolar eventId=${eventId} guestId=${guestId}: ` +
           (error instanceof Error ? error.message : String(error)),
       )
     }

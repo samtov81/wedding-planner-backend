@@ -1,7 +1,8 @@
 import { UnidadDeTrabajoEnMemoria } from '@/modules/database/infrastructure/unidad-de-trabajo.fake'
 import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
-import { RealtimePortEnMemoria } from '@/modules/notifications/infrastructure/realtime.port.fake'
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/in-memory-queue.adapter'
 import type { DomainError } from '@/shared/domain'
+import { Logger } from '@nestjs/common'
 
 import type { Guest } from '../domain/guest'
 import { InvitacionNoValidaError } from '../domain/guest-errors'
@@ -14,7 +15,7 @@ describe('SubmitRsvpUseCase', () => {
   let invitados: GuestRepositoryEnMemoria
   let invitaciones: InvitationRepositoryEnMemoria
   let notificaciones: NotificationPortEnMemoria
-  let tiempoReal: RealtimePortEnMemoria
+  let cola: InMemoryQueueAdapter
   let unidadDeTrabajo: UnidadDeTrabajoEnMemoria
   let caso: SubmitRsvpUseCase
   let tokenCaducado: string
@@ -64,7 +65,7 @@ describe('SubmitRsvpUseCase', () => {
     invitados = new GuestRepositoryEnMemoria()
     invitaciones = new InvitationRepositoryEnMemoria()
     notificaciones = new NotificationPortEnMemoria()
-    tiempoReal = new RealtimePortEnMemoria()
+    cola = new InMemoryQueueAdapter()
     unidadDeTrabajo = new UnidadDeTrabajoEnMemoria()
 
     invitados.sembrar({
@@ -79,13 +80,7 @@ describe('SubmitRsvpUseCase', () => {
     })
     notificaciones.registrarMiembros('ev-1', ['user-pareja', 'user-planner'])
 
-    caso = new SubmitRsvpUseCase(
-      invitaciones,
-      invitados,
-      notificaciones,
-      tiempoReal,
-      unidadDeTrabajo,
-    )
+    caso = new SubmitRsvpUseCase(invitaciones, invitados, notificaciones, cola, unidadDeTrabajo)
 
     tokenCaducado = (await prepararInvitacion({ expiresAt: new Date(Date.now() - 1000) })).token
   })
@@ -210,7 +205,7 @@ describe('SubmitRsvpUseCase', () => {
       'crearParaMiembros',
       notificaciones.crearParaMiembros.bind(notificaciones),
     )
-    tiempoReal.emitirAEvento = anotar('emitirAEvento', tiempoReal.emitirAEvento.bind(tiempoReal))
+    cola.enqueue = anotar('enqueue', cola.enqueue.bind(cola))
     const { token } = await prepararInvitacionValida()
 
     await caso.ejecutar(token, { rsvp: 'CONFIRMED' })
@@ -219,44 +214,68 @@ describe('SubmitRsvpUseCase', () => {
       marcarRespondida: true,
       actualizar: true,
       crearParaMiembros: true,
-      // La emisión va FUERA y después: el socket no es parte de la verdad.
-      emitirAEvento: false,
+      // El aviso se encola FUERA y después: la cola no es parte de la verdad.
+      enqueue: false,
     })
     expect(unidadDeTrabajo.transacciones).toBe(1)
   })
 
-  it('emite el cambio en tiempo real a la sala del evento, después de persistir', async () => {
-    const { token } = await prepararInvitacionValida()
+  it('encola el aviso en la cola `notifications` con un jobId estable por invitación (C23)', async () => {
+    // Quien emite en tiempo real es el WORKER de la Tarea 15, no la petición
+    // HTTP: la cola le da reintentos que un emit directo no tiene.
+    const { token, id } = await prepararInvitacionValida()
 
     await caso.ejecutar(token, { rsvp: 'DECLINED' })
 
-    expect(tiempoReal.emitidas).toEqual([
+    expect(cola.encolados).toEqual([
       {
-        destino: { eventId: 'ev-1' },
-        tipo: TIPO_RSVP_ACTUALIZADO,
-        payload: { guestId: 'g1', guestName: 'Ana Invitada', rsvp: 'DECLINED' },
+        cola: 'notifications',
+        nombre: TIPO_RSVP_ACTUALIZADO,
+        datos: {
+          eventId: 'ev-1',
+          payload: { guestId: 'g1', guestName: 'Ana Invitada', rsvp: 'DECLINED' },
+        },
+        jobId: `rsvp-${id}`,
+        opciones: { jobId: `rsvp-${id}` },
       },
     ])
+    // BullMQ rechaza `:` en un jobId (costó un 500 en la Tarea 8).
+    expect(cola.encolados[0]?.jobId).not.toContain(':')
   })
 
-  it('persiste ANTES de emitir: el socket nunca es fuente de verdad', async () => {
+  it('el job no lleva el token: el payload vive en Redis', async () => {
     const { token } = await prepararInvitacionValida()
-    tiempoReal.fallarProximaEmision(new Error('redis caído'))
 
-    // Que el fan-out falle no puede perder la respuesta del invitado.
+    await caso.ejecutar(token, { rsvp: 'CONFIRMED' })
+
+    expect(JSON.stringify(cola.encolados)).not.toContain(token)
+  })
+
+  it('persiste ANTES de encolar: si encolar falla, la respuesta del invitado se conserva', async () => {
+    const { token, id } = await prepararInvitacionValida()
+    const aviso = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    cola.enqueue = () => Promise.reject(new Error('redis caído'))
+
+    // Que el aviso no se pueda encolar no puede perder la respuesta del invitado.
     await caso.ejecutar(token, { rsvp: 'CONFIRMED' })
 
     expect(invitado('g1')?.rsvp).toBe('CONFIRMED')
+    expect(invitaciones.buscar(id)?.status).toBe('RESPONDED')
     expect(notificaciones.creadas).toHaveLength(2)
+    expect(aviso).toHaveBeenCalledTimes(1)
+    const registrado = JSON.stringify(aviso.mock.calls)
+    expect(registrado).toContain('redis caído')
+    expect(registrado).not.toContain(token)
+    aviso.mockRestore()
   })
 
-  it('si la persistencia falla, no se emite nada y el error sale', async () => {
+  it('si la persistencia falla, no se encola nada y el error sale', async () => {
     const { token } = await prepararInvitacionValida()
     notificaciones.fallarProximaCreacion(new Error('postgres caído'))
 
     await expect(caso.ejecutar(token, { rsvp: 'CONFIRMED' })).rejects.toThrow('postgres caído')
 
-    expect(tiempoReal.emitidas).toEqual([])
+    expect(cola.encolados).toEqual([])
   })
 
   it('dos respuestas simultáneas con el mismo token: sólo una gana', async () => {

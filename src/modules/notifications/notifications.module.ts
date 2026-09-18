@@ -16,7 +16,9 @@ import { RealtimePortEnMemoria } from './infrastructure/realtime.port.fake'
  * build ni siquiera arranca hasta entonces, ruling C20):
  *  - `NotificationPortEnMemoria` no tiene miembros registrados, así que no crea
  *    ninguna notificación;
- *  - `RealtimePortEnMemoria` guarda cada emisión en un array que sólo crece.
+ *  - `RealtimePortEnMemoria` no lo usa nadie todavía: el RSVP encola el aviso
+ *    en `notifications` (C23) y el worker que lo consume llega en la Tarea 15;
+ *    hasta entonces los jobs esperan en `waiting`.
  * La Tarea 15 sustituye estos dos `useFactory` y nada más: los casos de uso ya
  * dependen sólo de los puertos.
  *

@@ -211,5 +211,23 @@ describe('Auth e2e', () => {
 
       await intentar('MAYUS@test.com').expect(429)
     })
+
+    it('una IP que prueba MUCHOS correos acaba en 429 por el límite global (C22)', async () => {
+      // La clave IP + correo da 5 intentos por correo. Sin el global por IP,
+      // una sola IP podría probar una contraseña contra cada cuenta sin tope
+      // (password spraying). Va el último: agota el global de esta ruta.
+      let estado = 401
+      let intentos = 0
+      let respuesta: Response | undefined
+      while (estado === 401 && intentos < 130) {
+        respuesta = await intentar(`spray-${intentos}@test.com`)
+        estado = respuesta.status
+        intentos += 1
+      }
+
+      expect(estado).toBe(429)
+      expect(intentos).toBeLessThanOrEqual(121)
+      expect(respuesta?.headers['retry-after-global']).toBeDefined()
+    })
   })
 })

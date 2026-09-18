@@ -1,7 +1,6 @@
-import { Body, Controller, Get, HttpCode, Param, Post, UseGuards } from '@nestjs/common'
-import { SkipThrottle, Throttle, ThrottlerGuard } from '@nestjs/throttler'
+import { Body, Controller, Get, HttpCode, Param, Post } from '@nestjs/common'
 
-import { LIMITADOR_LOGIN, LIMITADOR_RSVP } from '@/shared/http/limitadores'
+import { LIMITADOR_RSVP, LimiteDeRuta } from '@/shared/http/limitadores'
 import { validarCon } from '@/shared/http/validar-con'
 
 import { GetRsvpUseCase, type VistaPublicaRsvp } from '../application/get-rsvp.use-case'
@@ -23,19 +22,20 @@ import { responderRsvpSchema, tokenRsvpSchema } from './rsvp.dto'
  * adivinable en teoría: un token de 32 bytes no se acierta por fuerza bruta,
  * pero el límite corta el sondeo antes de que genere carga.
  *
- * DESIGN-GAP: el brief pone `@SkipThrottle(false)` suponiendo un
- * `ThrottlerGuard` GLOBAL. Aquí no hay guard global (ver `app.module.ts`), así
- * que el guard se aplica aquí con `@UseGuards` y ese `@SkipThrottle(false)` no
- * tendría efecto. Se salta, en cambio, el limitador de login: el guard aplica
- * todos los limitadores declarados (ver `limitadores.ts`).
+ * El límite propio se SUMA al global de 120/min por IP que lleva toda la API
+ * (`APP_GUARD`, ruling C22); ver `limitadores.ts`.
+ *
+ * DESIGN-GAP: el brief pone `@SkipThrottle(false)` y `@Throttle({ rsvp })`.
+ * Aquí es `@LimiteDeRuta(LIMITADOR_RSVP, ...)`: el limitador `rsvp` se salta en
+ * toda ruta que no lo pida con esa marca, para que su 5/min no caiga sobre el
+ * resto de la API. `@SkipThrottle(false)` no cambiaría nada: no hay nada que
+ * saltar.
  *
  * El token viaja en el path. Nunca se registra: no hay log de peticiones, el
  * `DomainExceptionFilter` lo tacha de la URL que registra en un 500, y ningún
  * mensaje de error lo incluye.
  */
 @Controller('rsvp')
-@UseGuards(ThrottlerGuard)
-@SkipThrottle({ [LIMITADOR_LOGIN]: true })
 export class RsvpController {
   constructor(
     private readonly obtenerRsvp: GetRsvpUseCase,
@@ -43,7 +43,7 @@ export class RsvpController {
   ) {}
 
   @Get(':token')
-  @Throttle({ [LIMITADOR_RSVP]: { limit: 20, ttl: 60_000 } })
+  @LimiteDeRuta(LIMITADOR_RSVP, { limit: 20, ttl: 60_000 })
   async obtener(@Param('token') token: string): Promise<VistaPublicaRsvp> {
     return await this.obtenerRsvp.ejecutar(tokenConForma(token))
   }
@@ -54,7 +54,7 @@ export class RsvpController {
    * invitado no acabe de enviar.
    */
   @Post(':token')
-  @Throttle({ [LIMITADOR_RSVP]: { limit: 5, ttl: 60_000 } })
+  @LimiteDeRuta(LIMITADOR_RSVP, { limit: 5, ttl: 60_000 })
   @HttpCode(204)
   async responder(@Param('token') token: string, @Body() body: unknown): Promise<void> {
     const respuesta = validarCon(responderRsvpSchema, body)

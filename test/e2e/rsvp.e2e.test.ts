@@ -5,6 +5,7 @@ import { type INestApplication, type LoggerService } from '@nestjs/common'
 import { Test } from '@nestjs/testing'
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
+import { Queue } from 'bullmq'
 import cookieParser from 'cookie-parser'
 import Redis from 'ioredis'
 import request from 'supertest'
@@ -12,9 +13,8 @@ import request from 'supertest'
 import { AppModule } from '@/app.module'
 import { generarTokenInvitacion } from '@/modules/guests/domain/invitation'
 import { NOTIFICATION_PORT } from '@/modules/notifications/application/notification.port'
-import { REALTIME_PORT } from '@/modules/notifications/application/realtime.port'
 import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
-import { RealtimePortEnMemoria } from '@/modules/notifications/infrastructure/realtime.port.fake'
+import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
 import { DomainExceptionFilter } from '@/shared/http/domain-exception.filter'
 
 import { startPostgres, type PostgresDeTest } from '../support/containers'
@@ -68,23 +68,21 @@ describe('RSVP público e2e', () => {
   let plannerId: string
 
   const notificaciones = new NotificationPortEnMemoria()
-  const tiempoReal = new RealtimePortEnMemoria()
   const registro = new RegistroCapturado()
   /** Cada token que el test ha usado: ninguno puede aparecer en el log. */
   const tokensUsados = new Set<string>()
   const otrasApps: INestApplication[] = []
 
   /**
-   * La app real con los puertos de la Tarea 15 sustituidos por sus dobles: son
-   * los que el `NotificationsModule` cablea hoy, pero aquí se inyectan las
-   * instancias del test para poder registrar miembros y provocar fallos.
+   * La app real con el puerto de notificaciones sustituido por su doble: es el
+   * que el `NotificationsModule` cablea hoy, pero aquí se inyecta la instancia
+   * del test para poder registrar miembros y provocar fallos. La cola es la
+   * REAL (BullMQ sobre el Redis del test).
    */
   async function crearApp(): Promise<INestApplication> {
     const modulo = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(NOTIFICATION_PORT)
       .useValue(notificaciones)
-      .overrideProvider(REALTIME_PORT)
-      .useValue(tiempoReal)
       .setLogger(registro)
       .compile()
     const nueva = modulo.createNestApplication({ rawBody: true, logger: registro })
@@ -132,12 +130,27 @@ describe('RSVP público e2e', () => {
 
   /**
    * Los contadores del límite viven en Redis y sobreviven entre tests. Se
-   * borran SÓLO los del RSVP (no un FLUSHDB, que se llevaría las colas de
-   * BullMQ del worker que está corriendo).
+   * borran SÓLO los de los limitadores (no un FLUSHDB, que se llevaría las
+   * colas de BullMQ del worker que está corriendo).
    */
   async function reiniciarLimites(): Promise<void> {
-    const claves = await redisCli.keys('*:rsvp}:*')
+    const claves = [...(await redisCli.keys('*:rsvp}:*')), ...(await redisCli.keys('*:global}:*'))]
     if (claves.length > 0) await redisCli.del(...claves)
+  }
+
+  /** El job que el caso de uso deja en la cola `notifications` para el worker de la Tarea 15. */
+  async function jobDeAviso(invitationId: string): Promise<unknown> {
+    const cola = new Queue('notifications', { connection: { url: redis.getConnectionUrl() } })
+    try {
+      const job = await cola.getJob(`rsvp-${invitationId}`)
+      return job === undefined ? undefined : { name: job.name, data: job.data as unknown }
+    } finally {
+      await cola.close()
+    }
+  }
+
+  function espiarCola() {
+    return vi.spyOn(app.get<QueuePort>(QUEUE_PORT), 'enqueue')
   }
 
   beforeAll(async () => {
@@ -237,10 +250,10 @@ describe('RSVP público e2e', () => {
           .map((n) => n.userId)
           .sort(),
       ).toEqual([parejaId, plannerId].sort())
-      expect(tiempoReal.emitidas.at(-1)).toEqual({
-        destino: { eventId },
-        tipo: 'guest.rsvp.updated',
-        payload: { guestId, guestName: 'Ana Invitada', rsvp: 'CONFIRMED' },
+      // El aviso en tiempo real se ENCOLA (C23): lo emite el worker de la Tarea 15.
+      expect(await jobDeAviso(invitationId)).toEqual({
+        name: 'guest.rsvp.updated',
+        data: { eventId, payload: { guestId, guestName: 'Ana Invitada', rsvp: 'CONFIRMED' } },
       })
     })
 
@@ -286,15 +299,19 @@ describe('RSVP público e2e', () => {
       await request(server).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' }).expect(204)
     })
 
-    it('si el tiempo real falla, la respuesta ya está persistida y el invitado ve 204', async () => {
-      const { token, guestId } = await invitacion()
-      tiempoReal.fallarProximaEmision(new Error('redis caído'))
+    it('si encolar el aviso falla, la respuesta ya está persistida y el invitado ve 204', async () => {
+      const { token, guestId, invitationId } = await invitacion()
+      const espia = espiarCola().mockRejectedValueOnce(new Error('redis caído'))
 
       await request(server).post(`/rsvp/${token}`).send({ rsvp: 'DECLINED' }).expect(204)
+      espia.mockRestore()
 
       expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
         'DECLINED',
       )
+      const fila = await prisma.guestInvitation.findUniqueOrThrow({ where: { id: invitationId } })
+      expect(fila.status).toBe('RESPONDED')
+      expect(await jobDeAviso(invitationId)).toBeUndefined()
     })
 
     it('dos respuestas simultáneas con el mismo token: Postgres deja pasar sólo una', async () => {
@@ -431,21 +448,39 @@ describe('RSVP público e2e', () => {
         .expect(429)
     })
 
-    it('sólo el limitador del RSVP: ni el de login cae sobre estas rutas, ni éste sobre otras', async () => {
-      const rsvp = await request(server).get(`/rsvp/${tokenInventado()}`).expect(404)
-      expect(rsvp.headers['x-ratelimit-limit-rsvp']).toBe('20')
-      expect(rsvp.headers['x-ratelimit-limit-login']).toBeUndefined()
+    it('el RSVP lleva su límite Y el global; el de login no cae sobre él (C22)', async () => {
+      const lectura = await request(server).get(`/rsvp/${tokenInventado()}`).expect(404)
+      expect(lectura.headers['x-ratelimit-limit-rsvp']).toBe('20')
+      expect(lectura.headers['x-ratelimit-limit-global']).toBe('120')
+      expect(lectura.headers['x-ratelimit-limit-login']).toBeUndefined()
 
-      const otraRuta = await request(server)
+      const respuesta = await request(server)
+        .post(`/rsvp/${tokenInventado()}`)
+        .send({ rsvp: 'CONFIRMED' })
+        .expect(404)
+      expect(respuesta.headers['x-ratelimit-limit-rsvp']).toBe('5')
+      expect(respuesta.headers['x-ratelimit-limit-global']).toBe('120')
+    })
+
+    it('las demás rutas sin sesión llevan el global, y no el límite del RSVP (C22)', async () => {
+      // `register` enumera cuentas vía 409 y `refresh` acepta un secreto: sin
+      // límite propio, el global es su único suelo.
+      const registro = await request(server)
         .post('/auth/register')
         .send({ email: 'alguien@test.com', password: 'una-contraseña-larga', fullName: 'Alguien' })
         .expect(201)
-      expect(otraRuta.headers['x-ratelimit-limit-rsvp']).toBeUndefined()
+      expect(registro.headers['x-ratelimit-limit-global']).toBe('120')
+      expect(registro.headers['x-ratelimit-limit-rsvp']).toBeUndefined()
+      expect(registro.headers['x-ratelimit-limit-login']).toBeUndefined()
+
+      const refresco = await request(server).post('/auth/refresh').expect(401)
+      expect(refresco.headers['x-ratelimit-limit-global']).toBe('120')
+      expect(refresco.headers['x-ratelimit-limit-rsvp']).toBeUndefined()
     })
   })
 
   describe('el token nunca llega al log', () => {
-    it('ni en un 404, ni en un 400, ni en un 500, ni en el aviso del tiempo real, ni en un 429', async () => {
+    it('ni en un 404, ni en un 400, ni en un 500, ni en el aviso de la cola, ni en un 429', async () => {
       const valido = await invitacion()
       const otro = await invitacion()
       registro.lineas.length = 0
@@ -454,8 +489,9 @@ describe('RSVP público e2e', () => {
       await request(server).post(`/rsvp/${valido.token}`).send({ rsvp: 'MAYBE' }).expect(400)
       notificaciones.fallarProximaCreacion(new Error('fallo al crear notificaciones'))
       await request(server).post(`/rsvp/${valido.token}`).send({ rsvp: 'CONFIRMED' }).expect(500)
-      tiempoReal.fallarProximaEmision(new Error('redis caído'))
+      const espia = espiarCola().mockRejectedValueOnce(new Error('redis caído'))
       await request(server).post(`/rsvp/${otro.token}`).send({ rsvp: 'CONFIRMED' }).expect(204)
+      espia.mockRestore()
       for (let i = 0; i < 3; i += 1) {
         await request(server).post(`/rsvp/${tokenInventado()}`).send({ rsvp: 'CONFIRMED' })
       }
@@ -466,10 +502,10 @@ describe('RSVP público e2e', () => {
 
       const todo = registro.lineas.join('\n')
       for (const token of tokensUsados) expect(todo).not.toContain(token)
-      // El test no puede ser verde por no registrar nada: el 500 y el aviso
-      // del tiempo real SÍ tienen que estar en el log, sin el token.
+      // El test no puede ser verde por no registrar nada: el 500 y el fallo
+      // al encolar SÍ tienen que estar en el log, sin el token.
       expect(todo).toContain('/rsvp/[REDACTADO]')
-      expect(todo).toContain('RSVP persistido pero no emitido')
+      expect(todo).toContain('RSVP persistido pero su aviso no se pudo encolar')
       // Ni el 429 lo devuelve al cliente.
       expect(JSON.stringify(cortado.body)).not.toContain(valido.token)
     })

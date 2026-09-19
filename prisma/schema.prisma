@@ -112,14 +112,15 @@ model VendorProfile {
 }
 
 model Event {
-  id            String   @id @default(uuid()) @db.Uuid
-  name          String
-  weddingDate   DateTime
-  timezone      String   @default("UTC")
-  venueLocation String?
-  ownerId       String   @db.Uuid
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id               String   @id @default(uuid()) @db.Uuid
+  name             String
+  weddingDate      DateTime
+  timezone         String   @default("UTC")
+  venueLocation    String?
+  rsvpDeadlineDays Int      @default(14)
+  ownerId          String   @db.Uuid
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   owner         User              @relation("EventOwner", fields: [ownerId], references: [id])
   memberships   EventMembership[]
@@ -167,7 +168,7 @@ model EventVendor {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
   /// `onDelete: Restrict`, no `SetNull`: si se pusiera a NULL al borrar la
   /// ficha, un EventVendor que apuntaba al marketplace se quedaría con
   /// `vendorProfileId = NULL` y `externalName = NULL` a la vez — el estado

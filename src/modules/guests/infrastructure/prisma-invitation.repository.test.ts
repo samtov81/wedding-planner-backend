@@ -71,6 +71,7 @@ describe('Guardas de escritura de la invitación', () => {
     }) => Promise<string>
     estado: (id: string) => Promise<{ status: string; resendMessageId: string | null } | null>
     caducidad: (id: string) => Promise<Date | undefined>
+    respondidaEn: (id: string) => Promise<Date | null | undefined>
   }
 
   const implementaciones: Array<[string, () => Implementacion]> = [
@@ -97,6 +98,8 @@ describe('Guardas de escritura de la invitación', () => {
           }),
         caducidad: async (id) =>
           (await prisma.guestInvitation.findUnique({ where: { id } }))?.expiresAt,
+        respondidaEn: async (id) =>
+          (await prisma.guestInvitation.findUnique({ where: { id } }))?.respondedAt,
       }),
     ],
     [
@@ -124,6 +127,7 @@ describe('Guardas de escritura de la invitación', () => {
             )
           },
           caducidad: (id) => Promise.resolve(repo.buscar(id)?.expiresAt),
+          respondidaEn: (id) => Promise.resolve(repo.buscar(id)?.respondedAt),
         }
       },
     ],
@@ -209,21 +213,24 @@ describe('Guardas de escritura de la invitación', () => {
     })
 
     describe('marcarRespondida', () => {
-      it.each(TODOS.filter((s) => s !== 'RESPONDED'))(
-        'reclama una invitación %s sin caducar',
-        async (status) => {
-          const id = await impl.sembrar({ status, expiresAt: MAÑANA() })
-
-          expect(await impl.repo.marcarRespondida(id, new Date())).toBe(true)
-          expect((await impl.estado(id))?.status).toBe('RESPONDED')
-        },
-      )
-
-      it('no reclama dos veces la misma invitación: el token es de un solo uso', async () => {
-        const id = await impl.sembrar({ status: 'DELIVERED', expiresAt: MAÑANA() })
+      it.each(TODOS)('marca una invitación %s sin caducar', async (status) => {
+        const id = await impl.sembrar({ status, expiresAt: MAÑANA() })
 
         expect(await impl.repo.marcarRespondida(id, new Date())).toBe(true)
-        expect(await impl.repo.marcarRespondida(id, new Date())).toBe(false)
+        expect((await impl.estado(id))?.status).toBe('RESPONDED')
+      })
+
+      it('sobre una RESPONDED devuelve true y actualiza `respondedAt`: el RSVP se puede cambiar', async () => {
+        // Bloque A §2: la única escritura que pone RESPONDED sobre RESPONDED.
+        const id = await impl.sembrar({ status: 'DELIVERED', expiresAt: MAÑANA() })
+        const primera = new Date(Date.now() - 60_000)
+        const segunda = new Date()
+
+        expect(await impl.repo.marcarRespondida(id, primera)).toBe(true)
+        expect(await impl.repo.marcarRespondida(id, segunda)).toBe(true)
+
+        expect((await impl.estado(id))?.status).toBe('RESPONDED')
+        expect(await impl.respondidaEn(id)).toEqual(segunda)
       })
 
       it('no reclama una invitación caducada, y la deja como estaba', async () => {
@@ -242,7 +249,7 @@ describe('Guardas de escritura de la invitación', () => {
     })
 
     describe('caducarVigentesDe (ruling C24: reinvitar o cambiar el email mata los tokens viejos)', () => {
-      it.each(TODOS.filter((s) => s !== 'RESPONDED'))(
+      it.each(TODOS)(
         'caduca a `ahora` una invitación %s vigente del invitado: su token deja de servir',
         async (status) => {
           const id = await impl.sembrar({ status, expiresAt: MAÑANA() })
@@ -255,23 +262,71 @@ describe('Guardas de escritura de la invitación', () => {
         },
       )
 
-      it('no toca una RESPONDED (ya gastada), una ya caducada ni las de otro invitado', async () => {
+      it('caduca también una RESPONDED vigente: con el RSVP modificable, su token aún escribe', async () => {
+        const respondida = await impl.sembrar({ status: 'RESPONDED', expiresAt: MAÑANA() })
+        const ahora = new Date()
+
+        await impl.repo.caducarVigentesDe(guestId, ahora)
+
+        expect(await impl.caducidad(respondida)).toEqual(ahora)
+        expect(await impl.repo.marcarRespondida(respondida, new Date(ahora.getTime() + 1))).toBe(
+          false,
+        )
+      })
+
+      it('no toca una ya caducada ni las de otro invitado', async () => {
         const manana = MAÑANA()
         const ayer = new Date(Date.now() - 86_400_000)
-        const respondida = await impl.sembrar({ status: 'RESPONDED', expiresAt: manana })
         const caducada = await impl.sembrar({ status: 'SENT', expiresAt: ayer })
         const ajena = await impl.sembrar({
-          status: 'SENT',
+          status: 'RESPONDED',
           expiresAt: manana,
           guestId: otroGuestId,
         })
 
         await impl.repo.caducarVigentesDe(guestId, new Date())
 
-        expect(await impl.caducidad(respondida)).toEqual(manana)
         expect(await impl.caducidad(caducada)).toEqual(ayer)
         expect(await impl.caducidad(ajena)).toEqual(manana)
       })
+    })
+  })
+
+  describe('el plazo del RSVP en Postgres (bloque A §2)', () => {
+    it('la lectura compuesta trae `rsvpDeadlineDays` del evento', async () => {
+      const owner = await prisma.user.findUniqueOrThrow({
+        where: { email: 'owner@invitations.test' },
+      })
+      const evento = await prisma.event.create({
+        data: {
+          name: 'Boda con plazo',
+          weddingDate: new Date('2027-06-12'),
+          ownerId: owner.id,
+          rsvpDeadlineDays: 30,
+        },
+      })
+      const invitado = await prisma.guest.create({
+        data: { eventId: evento.id, name: 'Con plazo', email: null, group: 'Family' },
+      })
+      const tokenHash = randomUUID()
+      await prisma.guestInvitation.create({
+        data: { guestId: invitado.id, tokenHash, expiresAt: MAÑANA() },
+      })
+      const repo = new PrismaInvitationRepository(prisma as unknown as PrismaService)
+
+      expect((await repo.buscarPorHash(tokenHash))?.event.rsvpDeadlineDays).toBe(30)
+    })
+
+    it('sin valor, la columna aplica 14 días', async () => {
+      const evento = await prisma.event.findUniqueOrThrow({ where: { id: eventId } })
+
+      expect(evento.rsvpDeadlineDays).toBe(14)
+    })
+
+    it.each([-1, 366])('el CHECK rechaza %i días', async (dias) => {
+      await expect(
+        prisma.event.update({ where: { id: eventId }, data: { rsvpDeadlineDays: dias } }),
+      ).rejects.toThrow(/events_rsvp_deadline_days_rango/)
     })
   })
 

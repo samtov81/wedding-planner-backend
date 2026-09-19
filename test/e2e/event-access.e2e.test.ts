@@ -144,6 +144,30 @@ describe('Acceso a eventos e2e', () => {
     })
   })
 
+  it('POST /events guarda el plazo del RSVP: por defecto 14, fuera de 0–365 es un 400', async () => {
+    // Bloque A §2. La respuesta no lo expone todavía; se lee de la fila.
+    const pareja = await registrarYEntrar(`plazo-${randomUUID()}@test.com`, 'Pareja con plazo')
+    const conPlazo = await request(url)
+      .post('/events')
+      .set('Authorization', `Bearer ${pareja.accessToken}`)
+      .send({ name: 'Con plazo', weddingDate: '2027-06-12T00:00:00.000Z', rsvpDeadlineDays: 0 })
+      .expect(201)
+    const sinPlazo = await crearEvento(pareja.accessToken, 'Sin plazo')
+
+    const plazoDe = async (id: string): Promise<number> =>
+      (await prisma.event.findUniqueOrThrow({ where: { id } })).rsvpDeadlineDays
+    expect(await plazoDe((conPlazo.body as CuerpoEvento).id)).toBe(0)
+    expect(await plazoDe(sinPlazo)).toBe(14)
+
+    for (const rsvpDeadlineDays of [-1, 366, 1.5]) {
+      await request(url)
+        .post('/events')
+        .set('Authorization', `Bearer ${pareja.accessToken}`)
+        .send({ name: 'Fuera de rango', weddingDate: '2027-06-12T00:00:00.000Z', rsvpDeadlineDays })
+        .expect(400)
+    }
+  })
+
   it('un usuario sin acceso recibe 404, no 403', async () => {
     // Usuario propio: `extrano` (compartido con el test de vendor BOOKED de
     // este mismo fichero) puede acabar con acceso a `eventoDeAna` bajo

@@ -8,6 +8,12 @@ export const createEventSchema = z.object({
    * tenga que acordarse de parsear.
    */
   weddingDate: z.coerce.date(),
+  /**
+   * Días antes de la boda en que se cierra el RSVP. Opcional: sin él, la
+   * columna aplica su default (14). El rango es el mismo que el CHECK de la
+   * migración, para que un valor fuera de rango sea un 400 y no un 500.
+   */
+  rsvpDeadlineDays: z.number().int().min(0).max(365).optional(),
 })
 export type CreateEventDto = z.infer<typeof createEventSchema>
 

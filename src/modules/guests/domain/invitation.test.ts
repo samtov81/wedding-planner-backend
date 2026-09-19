@@ -1,4 +1,4 @@
-import { admiteRespuesta, estadosQuePuedenAvanzarA } from './invitation'
+import { admiteLectura, admiteRespuesta, cierreRsvp, estadosQuePuedenAvanzarA } from './invitation'
 
 describe('estadosQuePuedenAvanzarA', () => {
   it('a RESPONDED se llega desde cualquier otro estado', () => {
@@ -22,26 +22,44 @@ describe('estadosQuePuedenAvanzarA', () => {
   })
 })
 
-describe('admiteRespuesta', () => {
-  const ahora = new Date(Date.UTC(2026, 8, 18, 12))
-  const mañana = new Date(ahora.getTime() + 86_400_000)
+describe('plazo del RSVP', () => {
+  const evento = { weddingDate: new Date('2027-06-20T00:00:00Z'), rsvpDeadlineDays: 14 }
 
-  it.each(['QUEUED', 'SENT', 'DELIVERED', 'BOUNCED', 'COMPLAINED'] as const)(
-    'una invitación %s y sin caducar admite respuesta',
-    (status) => {
-      expect(admiteRespuesta({ status, expiresAt: mañana }, ahora)).toBe(true)
-    },
-  )
-
-  it('una invitación ya RESPONDED no admite otra: el token es de un solo uso', () => {
-    expect(admiteRespuesta({ status: 'RESPONDED', expiresAt: mañana }, ahora)).toBe(false)
+  it('cierra rsvpDeadlineDays días antes de la boda', () => {
+    expect(cierreRsvp(evento).toISOString()).toBe('2027-06-06T00:00:00.000Z')
   })
 
-  it('una invitación caducada no admite respuesta aunque su estado sí la admitiera', () => {
+  it('con 0 días cierra el mismo día de la boda', () => {
+    expect(cierreRsvp({ ...evento, rsvpDeadlineDays: 0 }).toISOString()).toBe(
+      '2027-06-20T00:00:00.000Z',
+    )
+  })
+
+  it('admite respuesta antes del cierre, también si ya respondió', () => {
+    const inv = { expiresAt: new Date('2027-09-01T00:00:00Z') }
+    expect(admiteRespuesta(inv, evento, new Date('2027-06-05T23:59:59Z'))).toBe(true)
+  })
+
+  it('no admite respuesta desde el cierre', () => {
+    const inv = { expiresAt: new Date('2027-09-01T00:00:00Z') }
+    expect(admiteRespuesta(inv, evento, new Date('2027-06-06T00:00:00Z'))).toBe(false)
+  })
+
+  it('no admite respuesta ni lectura con el token caducado', () => {
+    const inv = { expiresAt: new Date('2027-01-01T00:00:00Z') }
+    const ahora = new Date('2027-01-02T00:00:00Z')
+    expect(admiteRespuesta(inv, evento, ahora)).toBe(false)
+    expect(admiteLectura(inv, ahora)).toBe(false)
+  })
+
+  it('admite lectura tras el cierre mientras el token no caduque', () => {
+    const inv = { expiresAt: new Date('2027-09-01T00:00:00Z') }
+    expect(admiteLectura(inv, new Date('2027-06-10T00:00:00Z'))).toBe(true)
+  })
+
+  it('una invitación caducada justo a `ahora` (C18) no admite lectura', () => {
     // Es lo que hace efectivo el ruling C18: caducar pone `expiresAt = ahora`.
-    expect(admiteRespuesta({ status: 'SENT', expiresAt: ahora }, ahora)).toBe(false)
-    expect(
-      admiteRespuesta({ status: 'SENT', expiresAt: new Date(ahora.getTime() - 1) }, ahora),
-    ).toBe(false)
+    const ahora = new Date('2027-01-02T00:00:00Z')
+    expect(admiteLectura({ expiresAt: ahora }, ahora)).toBe(false)
   })
 })

@@ -105,15 +105,23 @@ describe('RSVP público e2e', () => {
     return { app: nueva, url: suUrl }
   }
 
-  /** Un invitado nuevo con una invitación nueva: ningún test hereda estado de otro. */
+  /**
+   * Un invitado nuevo con una invitación nueva: ningún test hereda estado de
+   * otro. Por defecto, del evento compartido (boda 2027-06-12, cierre
+   * 2027-05-29); `eventId` para colgarlo de un evento propio.
+   */
   async function invitacion(
-    datos: { expiresAt?: Date; status?: 'SENT' | 'DELIVERED' | 'RESPONDED' } = {},
+    datos: {
+      expiresAt?: Date
+      status?: 'SENT' | 'DELIVERED' | 'RESPONDED'
+      eventId?: string
+    } = {},
   ): Promise<{ token: string; guestId: string; invitationId: string }> {
     const { token, hash } = generarTokenInvitacion()
     tokensUsados.add(token)
     const invitado = await prisma.guest.create({
       data: {
-        eventId,
+        eventId: datos.eventId ?? eventId,
         name: 'Ana Invitada',
         email: `ana-${hash.slice(0, 8)}@test.com`,
         group: 'Family',
@@ -141,15 +149,40 @@ describe('RSVP público e2e', () => {
     return { code: cuerpo.code, message: cuerpo.message }
   }
 
-  /** El job que el caso de uso deja en la cola `notifications` para el worker de la Tarea 15. */
-  async function jobDeAviso(invitationId: string): Promise<unknown> {
+  /**
+   * Los jobs que el caso de uso deja en la cola `notifications` para el worker
+   * de la Tarea 15, uno por respuesta: su id es `rsvp-<invitationId>-<epochMs>`
+   * (bloque A §2), así que se buscan por prefijo en todos los estados.
+   */
+  async function jobsDeAviso(invitationId: string): Promise<unknown[]> {
     const cola = new Queue('notifications', { connection: { url: redis.getConnectionUrl() } })
     try {
-      const job = await cola.getJob(`rsvp-${invitationId}`)
-      return job === undefined ? undefined : { name: job.name, data: job.data as unknown }
+      const jobs = await cola.getJobs([
+        'waiting',
+        'active',
+        'delayed',
+        'prioritized',
+        'completed',
+        'failed',
+      ])
+      return jobs
+        .filter((job) => job.id?.startsWith(`rsvp-${invitationId}-`) === true)
+        .map((job) => ({ name: job.name, data: job.data as unknown }))
     } finally {
       await cola.close()
     }
+  }
+
+  /** Un evento propio con la boda a `dias` días de hoy y el plazo por defecto (14). */
+  async function eventoConBodaEn(dias: number): Promise<string> {
+    const evento = await prisma.event.create({
+      data: {
+        name: 'Boda inminente',
+        weddingDate: new Date(Date.now() + dias * 86_400_000),
+        ownerId: parejaId,
+      },
+    })
+    return evento.id
   }
 
   function espiarCola() {
@@ -215,6 +248,23 @@ describe('RSVP público e2e', () => {
         weddingDate: '2027-06-12T00:00:00.000Z',
         rsvp: 'PENDING',
         dietary: null,
+        rsvpClosesAt: '2027-05-29T00:00:00.000Z',
+      })
+    })
+
+    it('tras responder, el mismo token sigue leyendo: la respuesta actual y el cierre', async () => {
+      const { token } = await invitacion()
+      await request(url)
+        .post(`/rsvp/${token}`)
+        .send({ rsvp: 'CONFIRMED', dietary: 'Vegan' })
+        .expect(204)
+
+      const respuesta = await request(url).get(`/rsvp/${token}`).expect(200)
+
+      expect(respuesta.body).toMatchObject({
+        rsvp: 'CONFIRMED',
+        dietary: 'Vegan',
+        rsvpClosesAt: '2027-05-29T00:00:00.000Z',
       })
     })
   })
@@ -242,21 +292,53 @@ describe('RSVP público e2e', () => {
           .sort(),
       ).toEqual([parejaId, plannerId].sort())
       // El aviso en tiempo real se ENCOLA (C23): lo emite el worker de la Tarea 15.
-      expect(await jobDeAviso(invitationId)).toEqual({
-        name: 'guest.rsvp.updated',
-        data: { eventId, payload: { guestId, guestName: 'Ana Invitada', rsvp: 'CONFIRMED' } },
-      })
+      expect(await jobsDeAviso(invitationId)).toEqual([
+        {
+          name: 'guest.rsvp.updated',
+          data: { eventId, payload: { guestId, guestName: 'Ana Invitada', rsvp: 'CONFIRMED' } },
+        },
+      ])
     })
 
-    it('el token es de un solo uso: la segunda respuesta no se escribe', async () => {
-      const { token, guestId } = await invitacion()
-      await request(url).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' }).expect(204)
+    it('se puede cambiar la respuesta antes del cierre, y cada cambio encola su aviso', async () => {
+      const { token, guestId, invitationId } = await invitacion()
 
-      await request(url).post(`/rsvp/${token}`).send({ rsvp: 'DECLINED' }).expect(404)
+      await request(url).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' }).expect(204)
+      await request(url).post(`/rsvp/${token}`).send({ rsvp: 'DECLINED' }).expect(204)
 
       expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
-        'CONFIRMED',
+        'DECLINED',
       )
+      // Con el jobId de antes (`rsvp-<invitationId>`) BullMQ descartaba el segundo.
+      const avisos = (await jobsDeAviso(invitationId)) as Array<{
+        name: string
+        data: { payload: { rsvp: string } }
+      }>
+      expect(avisos.map((a) => a.name)).toEqual(['guest.rsvp.updated', 'guest.rsvp.updated'])
+      expect(avisos.map((a) => a.data.payload.rsvp).sort()).toEqual(['CONFIRMED', 'DECLINED'])
+    })
+
+    it('pasado el cierre, POST es un 422 RSVP_CLOSED que no escribe; GET sigue dando 200', async () => {
+      // Boda a 3 días con el plazo por defecto de 14: el cierre fue hace 11.
+      const { token, guestId, invitationId } = await invitacion({
+        eventId: await eventoConBodaEn(3),
+      })
+
+      const rechazo = await request(url)
+        .post(`/rsvp/${token}`)
+        .send({ rsvp: 'CONFIRMED' })
+        .expect(422)
+
+      expect((rechazo.body as CuerpoError).code).toBe('RSVP_CLOSED')
+      expect(JSON.stringify(rechazo.body)).not.toContain(token)
+      expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
+        'PENDING',
+      )
+      expect(
+        (await prisma.guestInvitation.findUniqueOrThrow({ where: { id: invitationId } })).status,
+      ).toBe('DELIVERED')
+      const lectura = await request(url).get(`/rsvp/${token}`).expect(200)
+      expect((lectura.body as { rsvp: string }).rsvp).toBe('PENDING')
     })
 
     it('un cuerpo inválido es un 400 que no gasta el token', async () => {
@@ -273,7 +355,7 @@ describe('RSVP público e2e', () => {
     it('si falla una escritura, no se confirma NADA y el token sigue sirviendo', async () => {
       // Invitación, invitado y notificaciones en UNA transacción de Postgres:
       // si las notificaciones fallan, la invitación no puede quedar RESPONDED
-      // (el invitado ya no podría contestar) con el invitado aún PENDING.
+      // con el invitado aún PENDING (la pareja lo vería como contestado).
       const { token, guestId, invitationId } = await invitacion()
       notificaciones.fallarProximaCreacion(new Error('fallo al crear notificaciones'))
 
@@ -302,14 +384,12 @@ describe('RSVP público e2e', () => {
       )
       const fila = await prisma.guestInvitation.findUniqueOrThrow({ where: { id: invitationId } })
       expect(fila.status).toBe('RESPONDED')
-      expect(await jobDeAviso(invitationId)).toBeUndefined()
+      expect(await jobsDeAviso(invitationId)).toEqual([])
     })
 
-    it('dos respuestas simultáneas con el mismo token: Postgres deja pasar sólo una', async () => {
-      // Ambas leen la invitación válida; decide el UPDATE condicionado. Este
-      // test no puede forzar el entrelazado: con la guarda es siempre verde,
-      // sin ella es rojo casi siempre. La prueba determinista está en los
-      // tests del caso de uso y del repositorio.
+    it('dos respuestas simultáneas con el mismo token: las dos se escriben', async () => {
+      // Con el RSVP modificable (bloque A §2) ninguna de las dos es un error:
+      // cada una es una respuesta válida y la que confirma después queda.
       const { token, guestId } = await invitacion()
       const creadasAntes = notificaciones.creadas.length
       const intentos = ['CONFIRMED', 'DECLINED'] as const
@@ -318,12 +398,11 @@ describe('RSVP público e2e', () => {
         intentos.map((rsvp) => request(url).post(`/rsvp/${token}`).send({ rsvp })),
       )
 
-      expect(respuestas.map((r) => r.status).sort()).toEqual([204, 404])
-      const ganadora = intentos[respuestas.findIndex((r) => r.status === 204)]
+      expect(respuestas.map((r) => r.status)).toEqual([204, 204])
       const invitado = await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })
-      expect(invitado.rsvp).toBe(ganadora)
-      // Un solo juego de notificaciones: la perdedora no llegó a escribir nada.
-      expect(notificaciones.creadas.length - creadasAntes).toBe(2)
+      expect(intentos).toContain(invitado.rsvp)
+      // Un juego de notificaciones por respuesta.
+      expect(notificaciones.creadas.length - creadasAntes).toBe(4)
     })
   })
 
@@ -374,6 +453,23 @@ describe('RSVP público e2e', () => {
       await request(url).post(`/rsvp/${nuevo}`).send({ rsvp: 'CONFIRMED' }).expect(204)
     })
 
+    it('reenviar a quien YA respondió caduca también su token: GET y POST con el viejo son 404', async () => {
+      // Con el RSVP modificable el token respondido aún escribe; si el reenvío
+      // no lo matara, el enlace de un email mal tecleado seguiría pudiendo
+      // cambiar el RSVP del invitado real.
+      const guestId = await invitadoPendiente()
+      const viejo = await enviarA(guestId)
+      await request(url).post(`/rsvp/${viejo}`).send({ rsvp: 'CONFIRMED' }).expect(204)
+
+      await enviarA(guestId)
+
+      await request(url).get(`/rsvp/${viejo}`).expect(404)
+      await request(url).post(`/rsvp/${viejo}`).send({ rsvp: 'DECLINED' }).expect(404)
+      expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
+        'CONFIRMED',
+      )
+    })
+
     it('corregir un email mal tecleado caduca el enlace que recibió la dirección equivocada', async () => {
       const guestId = await invitadoPendiente()
       const delDesconocido = await enviarA(guestId)
@@ -392,8 +488,10 @@ describe('RSVP público e2e', () => {
 
   describe('todo fallo de token es indistinguible', () => {
     /**
-     * Inexistente, mal formado, caducado, caducado por el worker (C18) y ya
-     * usado: MISMO status, MISMO code, MISMO mensaje, en las dos rutas.
+     * Inexistente, mal formado, caducado, caducado por el worker (C18) y
+     * caducado por un reenvío (C24): MISMO status, MISMO code, MISMO mensaje,
+     * en las dos rutas. Un token ya usado ya no está aquí: sigue sirviendo
+     * (bloque A §2).
      */
     async function tokensQueFallan(): Promise<Array<[string, string]>> {
       const caducado = await invitacion({ expiresAt: new Date(Date.now() - 1000) })
@@ -402,14 +500,18 @@ describe('RSVP público e2e', () => {
         where: { id: caducadoPorElWorker.invitationId },
         data: { expiresAt: new Date() },
       })
-      const usado = await invitacion({ status: 'RESPONDED' })
+      const respondidoYReenviado = await invitacion({ status: 'RESPONDED' })
+      await prisma.guestInvitation.update({
+        where: { id: respondidoYReenviado.invitationId },
+        data: { expiresAt: new Date() },
+      })
 
       return [
         ['inexistente', tokenInventado()],
         ['mal formado', 'no-es-un-token'],
         ['caducado', caducado.token],
         ['caducado por el worker (C18)', caducadoPorElWorker.token],
-        ['ya usado', usado.token],
+        ['respondido y caducado por un reenvío (C24)', respondidoYReenviado.token],
       ]
     }
 

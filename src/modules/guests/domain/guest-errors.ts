@@ -65,8 +65,9 @@ export class FirmaInvalidaError extends UnauthorizedError {
 /**
  * El RSVP público no acepta este token. Es el MISMO error, con el mismo status,
  * `code` y mensaje, para el token que no existe, el caducado (incluido el que
- * el worker caducó al agotar reintentos, ruling C18), el ya usado y el mal
- * formado. Distinguirlos le diría a quien prueba tokens al azar cuándo ha
+ * el worker caducó al agotar reintentos, ruling C18, y el que un reenvío o un
+ * cambio de email caducó, ruling C24) y el mal formado. Un token YA USADO no
+ * está en la lista: desde el bloque A §2 sigue sirviendo hasta que caduca. Distinguirlos le diría a quien prueba tokens al azar cuándo ha
  * acertado uno real; con un solo error no aprende nada.
  *
  * Es un 404 y no un 401/410: para quien no tiene un token válido, esa
@@ -77,5 +78,12 @@ export class FirmaInvalidaError extends UnauthorizedError {
 export class InvitacionNoValidaError extends NotFoundError {
   constructor() {
     super('La invitación no es válida', 'INVITATION_INVALID')
+  }
+}
+
+/** Token válido pero fuera de plazo: verlo exige tener el token, así que no filtra nada. */
+export class RsvpCerradoError extends UnprocessableError {
+  constructor() {
+    super('El plazo para cambiar la respuesta ha terminado', 'RSVP_CLOSED')
   }
 }

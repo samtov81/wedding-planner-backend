@@ -49,7 +49,15 @@ export class PrismaEventRepository implements EventRepository {
   async crearConMembresia(datos: DatosNuevoEvento): Promise<Event> {
     return await this.prisma.$transaction(async (tx) => {
       const evento = await tx.event.create({
-        data: { name: datos.name, weddingDate: datos.weddingDate, ownerId: datos.ownerId },
+        data: {
+          name: datos.name,
+          weddingDate: datos.weddingDate,
+          ownerId: datos.ownerId,
+          // Ausente, no se manda: la columna aplica su `@default(14)`.
+          ...(datos.rsvpDeadlineDays !== undefined
+            ? { rsvpDeadlineDays: datos.rsvpDeadlineDays }
+            : {}),
+        },
       })
       await tx.eventMembership.create({
         // Con el MISMO estado que concede acceso: si mañana cambiara cuál es,
@@ -131,6 +139,7 @@ export class PrismaEventRepository implements EventRepository {
       weddingDate: fila.weddingDate,
       timezone: fila.timezone,
       venueLocation: fila.venueLocation,
+      rsvpDeadlineDays: fila.rsvpDeadlineDays,
       ownerId: fila.ownerId,
       createdAt: fila.createdAt,
       updatedAt: fila.updatedAt,

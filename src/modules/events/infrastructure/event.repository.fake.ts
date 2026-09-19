@@ -6,7 +6,7 @@ import type {
   EventRepository,
   MembresiaPersistida,
 } from '../application/event.repository'
-import type { Event } from '../domain/event'
+import { DIAS_DE_CIERRE_POR_DEFECTO, type Event } from '../domain/event'
 import {
   CONTRATACION_CON_ACCESO,
   MEMBRESIA_CON_ACCESO,
@@ -26,6 +26,7 @@ export interface EventoEnMemoria {
   weddingDate?: Date
   timezone?: string
   venueLocation?: string | null
+  rsvpDeadlineDays?: number
 }
 
 export interface MembresiaEnMemoria {
@@ -95,6 +96,8 @@ export class EventRepositoryEnMemoria implements EventRepository {
       ownerId: datos.ownerId,
       name: datos.name,
       weddingDate: datos.weddingDate,
+      // El `@default(14)` de la columna, aplicado igual que Postgres.
+      rsvpDeadlineDays: datos.rsvpDeadlineDays ?? DIAS_DE_CIERRE_POR_DEFECTO,
     }
     this.eventos.push(evento)
     this.membresias.push({
@@ -177,6 +180,7 @@ export class EventRepositoryEnMemoria implements EventRepository {
       weddingDate: evento.weddingDate ?? new Date('2027-06-12T00:00:00.000Z'),
       timezone: evento.timezone ?? 'UTC',
       venueLocation: evento.venueLocation ?? null,
+      rsvpDeadlineDays: evento.rsvpDeadlineDays ?? DIAS_DE_CIERRE_POR_DEFECTO,
       ownerId: evento.ownerId,
       createdAt: new Date('2026-01-01T00:00:00.000Z'),
       updatedAt: new Date('2026-01-01T00:00:00.000Z'),

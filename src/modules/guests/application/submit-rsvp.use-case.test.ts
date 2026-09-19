@@ -5,7 +5,7 @@ import type { DomainError } from '@/shared/domain'
 import { Logger } from '@nestjs/common'
 
 import type { Guest } from '../domain/guest'
-import { InvitacionNoValidaError } from '../domain/guest-errors'
+import { InvitacionNoValidaError, RsvpCerradoError } from '../domain/guest-errors'
 import { generarTokenInvitacion, type InvitationStatus } from '../domain/invitation'
 import { GuestRepositoryEnMemoria } from '../infrastructure/guest.repository.fake'
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
@@ -29,10 +29,21 @@ describe('SubmitRsvpUseCase', () => {
     return invitados.filas.find((g) => g.id === id)
   }
 
-  /** Invitación `inv-N` del invitado `g1`, con su token en claro para el test. */
+  /** El brief lo llama `guestId`: el único invitado sembrado. */
+  const guestId = 'g1'
+
+  function diasDesdeHoy(dias: number): Date {
+    return new Date(Date.now() + dias * 86_400_000)
+  }
+
+  /**
+   * Invitación `inv-N` del invitado `g1`, con su token en claro para el test.
+   * La boda, a 60 días por defecto (el cierre, con `rsvpDeadlineDays: 14`, a
+   * 46): relativa a hoy para que el test no caduque con el calendario.
+   */
   let secuencia = 0
   function prepararInvitacion(
-    parcial: { expiresAt?: Date; status?: InvitationStatus } = {},
+    parcial: { expiresAt?: Date; status?: InvitationStatus; weddingDate?: Date } = {},
   ): Promise<{ token: string; id: string }> {
     secuencia += 1
     const id = `inv-${secuencia}`
@@ -42,13 +53,16 @@ describe('SubmitRsvpUseCase', () => {
       tokenHash: hash,
       expiresAt: parcial.expiresAt ?? new Date(Date.now() + 86_400_000),
       status: parcial.status ?? 'DELIVERED',
-      guest: { id: 'g1', eventId: 'ev-1', name: 'Ana Invitada' },
+      guest: { id: guestId, eventId: 'ev-1', name: 'Ana Invitada' },
+      event: { weddingDate: parcial.weddingDate ?? diasDesdeHoy(60), rsvpDeadlineDays: 14 },
     })
     return Promise.resolve({ token, id })
   }
 
-  function prepararInvitacionValida(): Promise<{ token: string; id: string }> {
-    return prepararInvitacion()
+  function prepararInvitacionValida(
+    parcial: { weddingDate?: Date } = {},
+  ): Promise<{ token: string; id: string }> {
+    return prepararInvitacion(parcial)
   }
 
   async function capturarError(accion: () => Promise<unknown>): Promise<DomainError> {
@@ -117,15 +131,66 @@ describe('SubmitRsvpUseCase', () => {
     expect(invitado('g1')?.dietary).toBeNull()
   })
 
-  it('rechaza un token que ya se usó', async () => {
+  it('permite cambiar la respuesta ya dada antes del cierre', async () => {
     const { token } = await prepararInvitacionValida()
     await caso.ejecutar(token, { rsvp: 'CONFIRMED' })
 
-    await expect(caso.ejecutar(token, { rsvp: 'DECLINED' })).rejects.toThrow(
+    await caso.ejecutar(token, { rsvp: 'DECLINED' })
+
+    expect(invitado(guestId)?.rsvp).toBe('DECLINED')
+  })
+
+  it('tras el cierre responde RSVP_CLOSED y no toca nada', async () => {
+    const { token, id } = await prepararInvitacionValida({ weddingDate: diasDesdeHoy(10) })
+
+    await expect(caso.ejecutar(token, { rsvp: 'CONFIRMED' })).rejects.toBeInstanceOf(
+      RsvpCerradoError,
+    )
+    expect(invitado(guestId)?.rsvp).toBe('PENDING')
+    expect(invitaciones.buscar(id)?.status).toBe('DELIVERED')
+    expect(notificaciones.creadas).toHaveLength(0)
+    expect(cola.encolados).toHaveLength(0)
+  })
+
+  it('RSVP_CLOSED es un 422 distinto del 404 del token no válido', async () => {
+    // Distinguirlo no filtra nada: para verlo hay que tener un token válido.
+    const { token } = await prepararInvitacionValida({ weddingDate: diasDesdeHoy(10) })
+
+    const error = await capturarError(() => caso.ejecutar(token, { rsvp: 'CONFIRMED' }))
+
+    expect(error.code).toBe('RSVP_CLOSED')
+    expect(error.httpStatus).toBe(422)
+    expect(error.message).not.toContain(token)
+  })
+
+  it('un token caducado da el 404 de siempre aunque además esté fuera de plazo', async () => {
+    const { token } = await prepararInvitacion({
+      expiresAt: new Date(Date.now() - 1000),
+      weddingDate: diasDesdeHoy(10),
+    })
+
+    await expect(caso.ejecutar(token, { rsvp: 'CONFIRMED' })).rejects.toBeInstanceOf(
       InvitacionNoValidaError,
     )
-    // Y la segunda respuesta no llegó a escribirse.
-    expect(invitado('g1')?.rsvp).toBe('CONFIRMED')
+  })
+
+  it('cada respuesta encola su propio aviso', async () => {
+    // Dos respuestas en el mismo milisegundo darían el mismo jobId: el reloj se
+    // fija para que el test no dependa de lo rápido que corra la máquina.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date(Date.UTC(2026, 8, 18, 12)))
+      const { token } = await prepararInvitacionValida()
+      await caso.ejecutar(token, { rsvp: 'CONFIRMED' })
+      vi.setSystemTime(new Date(Date.UTC(2026, 8, 18, 12, 0, 1)))
+      await caso.ejecutar(token, { rsvp: 'DECLINED' })
+    } finally {
+      vi.useRealTimers()
+    }
+
+    const ids = cola.encolados.map((j) => j.opciones.jobId)
+    expect(new Set(ids).size).toBe(2)
+    expect(ids.every((id) => !id.includes(':'))).toBe(true)
   })
 
   it('rechaza un token caducado', async () => {
@@ -146,17 +211,17 @@ describe('SubmitRsvpUseCase', () => {
     )
   })
 
-  it('devuelve el MISMO error para token inexistente, usado y caducado', async () => {
+  it('devuelve el MISMO error para token inexistente, caducado y caducado por el worker', async () => {
     // Distinguirlos le dice a quien prueba tokens al azar cuándo ha acertado
     // uno real. Con un solo error, no aprende nada.
-    const { token: usado } = await prepararInvitacionValida()
-    await caso.ejecutar(usado, { rsvp: 'CONFIRMED' })
+    const { token: porElWorker, id } = await prepararInvitacionValida()
+    await invitaciones.caducar(id)
 
     const inexistente = await capturarError(() => caso.ejecutar('inventado', { rsvp: 'CONFIRMED' }))
     const caducado = await capturarError(() => caso.ejecutar(tokenCaducado, { rsvp: 'CONFIRMED' }))
-    const reutilizado = await capturarError(() => caso.ejecutar(usado, { rsvp: 'DECLINED' }))
+    const c18 = await capturarError(() => caso.ejecutar(porElWorker, { rsvp: 'DECLINED' }))
 
-    for (const error of [inexistente, caducado, reutilizado]) {
+    for (const error of [inexistente, caducado, c18]) {
       expect(error).toBeInstanceOf(InvitacionNoValidaError)
       expect(error.code).toBe('INVITATION_INVALID')
       expect(error.httpStatus).toBe(inexistente.httpStatus)
@@ -220,12 +285,17 @@ describe('SubmitRsvpUseCase', () => {
     expect(unidadDeTrabajo.transacciones).toBe(1)
   })
 
-  it('encola el aviso en la cola `notifications` con un jobId estable por invitación (C23)', async () => {
+  it('encola el aviso en la cola `notifications` con un jobId por respuesta (C23)', async () => {
     // Quien emite en tiempo real es el WORKER de la Tarea 15, no la petición
     // HTTP: la cola le da reintentos que un emit directo no tiene.
     const { token, id } = await prepararInvitacionValida()
-
-    await caso.ejecutar(token, { rsvp: 'DECLINED' })
+    const ahora = new Date(Date.UTC(2026, 8, 18, 12))
+    vi.useFakeTimers({ toFake: ['Date'], now: ahora })
+    try {
+      await caso.ejecutar(token, { rsvp: 'DECLINED' })
+    } finally {
+      vi.useRealTimers()
+    }
 
     expect(cola.encolados).toEqual([
       {
@@ -235,8 +305,8 @@ describe('SubmitRsvpUseCase', () => {
           eventId: 'ev-1',
           payload: { guestId: 'g1', guestName: 'Ana Invitada', rsvp: 'DECLINED' },
         },
-        jobId: `rsvp-${id}`,
-        opciones: { jobId: `rsvp-${id}` },
+        jobId: `rsvp-${id}-${ahora.getTime()}`,
+        opciones: { jobId: `rsvp-${id}-${ahora.getTime()}` },
       },
     ])
     // BullMQ rechaza `:` en un jobId (costó un 500 en la Tarea 8).
@@ -278,21 +348,21 @@ describe('SubmitRsvpUseCase', () => {
     expect(cola.encolados).toEqual([])
   })
 
-  it('dos respuestas simultáneas con el mismo token: sólo una gana', async () => {
-    // Ambas leen la invitación válida; la guarda de la ESCRITURA
-    // (`marcarRespondida` condicionado) es la que decide, no la lectura previa.
-    const { token } = await prepararInvitacionValida()
+  it('un token caducado entre la lectura y la escritura no escribe nada', async () => {
+    // La lectura lo vio vivo; un reenvío (C24) lo caduca antes de la escritura.
+    // La guarda de la ESCRITURA (`marcarRespondida` condicionado) es la que decide.
+    const { token, id } = await prepararInvitacionValida()
+    const original = invitaciones.marcarRespondida.bind(invitaciones)
+    invitaciones.marcarRespondida = async (suId, ahora) => {
+      await invitaciones.caducarVigentesDe(guestId, ahora)
+      return original(suId, ahora)
+    }
 
-    const resultados = await Promise.allSettled([
-      caso.ejecutar(token, { rsvp: 'CONFIRMED' }),
-      caso.ejecutar(token, { rsvp: 'DECLINED' }),
-    ])
-
-    expect(resultados.filter((r) => r.status === 'fulfilled')).toHaveLength(1)
-    const rechazo = resultados.find((r) => r.status === 'rejected')
-    expect(rechazo?.status === 'rejected' ? rechazo.reason : null).toBeInstanceOf(
+    await expect(caso.ejecutar(token, { rsvp: 'CONFIRMED' })).rejects.toBeInstanceOf(
       InvitacionNoValidaError,
     )
-    expect(notificaciones.creadas).toHaveLength(2)
+    expect(invitado(guestId)?.rsvp).toBe('PENDING')
+    expect(invitaciones.buscar(id)?.status).toBe('DELIVERED')
+    expect(notificaciones.creadas).toHaveLength(0)
   })
 })

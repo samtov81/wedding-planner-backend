@@ -16,7 +16,8 @@ export interface InvitacionCompleta {
   respondedAt: Date | null
   resendMessageId: string | null
   guest: { id: string; eventId: string; name: string; email: string | null }
-  event: { id: string; name: string; weddingDate: Date }
+  /** `rsvpDeadlineDays` fija el cierre del RSVP (`cierreRsvp`, bloque A §2). */
+  event: { id: string; name: string; weddingDate: Date; rsvpDeadlineDays: number }
 }
 
 export interface DatosCrearInvitacion {
@@ -49,14 +50,20 @@ export interface InvitationRepository {
   buscarPorHash(tokenHash: string): Promise<InvitacionCompleta | null>
 
   /**
-   * RESPONDED + `respondedAt = ahora`, SÓLO si la invitación sigue admitiendo
-   * respuesta (`admiteRespuesta`: sin caducar a `ahora` y en un estado que puede
-   * avanzar a RESPONDED), comprobado en la MISMA escritura. Devuelve si la
-   * reclamó.
+   * RESPONDED + `respondedAt = ahora`, SÓLO si el token sigue vivo
+   * (`expiresAt > ahora`), comprobado en la MISMA escritura, y en CUALQUIER
+   * estado: también sobre RESPONDED, porque el invitado puede cambiar su
+   * respuesta hasta el cierre (bloque A §2). Devuelve si escribió.
    *
-   * Es la guarda de verdad del token de un solo uso: el caso de uso ya leyó la
-   * invitación válida, pero dos respuestas simultáneas con el mismo token leen
-   * las dos "válida"; sólo una de las dos escrituras afecta a la fila.
+   * Es la única escritura que pone RESPONDED sobre RESPONDED; `marcarEnviada` y
+   * el webhook siguen sin poder pisarlo (monotonía, bloque A §2).
+   *
+   * La guarda de la caducidad va en la escritura porque la caducidad SÍ tiene
+   * escritores concurrentes: un reenvío o un cambio de email (`caducarVigentesDe`)
+   * pueden matar el token entre la lectura del caso de uso y esta escritura. El
+   * cierre, en cambio, se comprueba en la lectura (`admiteRespuesta`): sus dos
+   * datos (`weddingDate`, `rsvpDeadlineDays`) no los escribe el flujo del RSVP,
+   * así que no hay carrera propia que cerrar aquí.
    *
    * Se llama dentro de una `UnidadDeTrabajo`: el adaptador escribe con el
    * cliente de la transacción en curso.
@@ -73,15 +80,16 @@ export interface InvitationRepository {
 
   /**
    * `expiresAt = ahora` en TODAS las invitaciones del invitado que siguen
-   * vigentes (`expiresAt > ahora`) y no están RESPONDED (ruling C24). Se llama
+   * vigentes (`expiresAt > ahora`), en cualquier estado (ruling C24). Se llama
    * antes de crear una invitación nueva y cuando cambia el email del invitado:
    * así un invitado tiene como mucho UN token vivo, y el enlace que recibió una
    * dirección equivocada deja de abrir su RSVP.
    *
-   * Se excluye RESPONDED a propósito: ese token ya no admite respuesta
-   * (`admiteRespuesta`), así que caducarlo no cierra nada y sólo reescribiría
-   * la historia de una fila terminada. Las ya caducadas tampoco se tocan: su
-   * `expiresAt` dice cuándo murieron.
+   * RESPONDED incluida: con el RSVP modificable (bloque A §2) un token ya
+   * respondido sigue pudiendo cambiar la respuesta hasta el cierre, así que
+   * también hay que matarlo. Si no, el enlace enviado a un email mal tecleado
+   * seguiría pudiendo cambiar el RSVP del invitado real. Las ya caducadas no se
+   * tocan: su `expiresAt` dice cuándo murieron.
    *
    * Escribe con el cliente de la transacción en curso, si la hay.
    */

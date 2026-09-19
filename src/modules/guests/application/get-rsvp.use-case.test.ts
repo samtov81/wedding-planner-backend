@@ -1,10 +1,14 @@
+import { UnidadDeTrabajoEnMemoria } from '@/modules/database/infrastructure/unidad-de-trabajo.fake'
+import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/in-memory-queue.adapter'
 import type { DomainError } from '@/shared/domain'
 
 import { InvitacionNoValidaError } from '../domain/guest-errors'
-import { generarTokenInvitacion, type InvitationStatus } from '../domain/invitation'
+import { cierreRsvp, generarTokenInvitacion, type InvitationStatus } from '../domain/invitation'
 import { GuestRepositoryEnMemoria } from '../infrastructure/guest.repository.fake'
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
 import { GetRsvpUseCase } from './get-rsvp.use-case'
+import { SubmitRsvpUseCase, type RespuestaRsvp } from './submit-rsvp.use-case'
 
 describe('GetRsvpUseCase', () => {
   let invitados: GuestRepositoryEnMemoria
@@ -12,8 +16,35 @@ describe('GetRsvpUseCase', () => {
   let caso: GetRsvpUseCase
   let secuencia = 0
 
+  /**
+   * El evento de todas las invitaciones del test. La boda es fija (la vista la
+   * compara literal) y el cierre queda en 2027-05-29: los tests que responden
+   * de verdad dependen de que hoy sea anterior.
+   */
+  const evento = {
+    id: 'ev-1',
+    name: 'Boda de Ana',
+    weddingDate: new Date(Date.UTC(2027, 5, 12)),
+    rsvpDeadlineDays: 14,
+  }
+
+  /** Responde por el camino real (el caso de uso del POST) sobre los mismos dobles. */
+  async function responder(token: string, respuesta: RespuestaRsvp): Promise<void> {
+    await new SubmitRsvpUseCase(
+      invitaciones,
+      invitados,
+      new NotificationPortEnMemoria(),
+      new InMemoryQueueAdapter(),
+      new UnidadDeTrabajoEnMemoria(),
+    ).ejecutar(token, respuesta)
+  }
+
+  function prepararInvitacionValida(): Promise<{ token: string }> {
+    return Promise.resolve({ token: prepararInvitacion() })
+  }
+
   function prepararInvitacion(
-    parcial: { expiresAt?: Date; status?: InvitationStatus } = {},
+    parcial: { expiresAt?: Date; status?: InvitationStatus; weddingDate?: Date } = {},
   ): string {
     secuencia += 1
     const { token, hash } = generarTokenInvitacion()
@@ -23,7 +54,7 @@ describe('GetRsvpUseCase', () => {
       expiresAt: parcial.expiresAt ?? new Date(Date.now() + 86_400_000),
       status: parcial.status ?? 'DELIVERED',
       guest: { id: 'g1', eventId: 'ev-1', name: 'Ana Invitada', email: 'ana@test.com' },
-      event: { id: 'ev-1', name: 'Boda de Ana', weddingDate: new Date(Date.UTC(2027, 5, 12)) },
+      event: { ...evento, weddingDate: parcial.weddingDate ?? evento.weddingDate },
     })
     return token
   }
@@ -65,6 +96,7 @@ describe('GetRsvpUseCase', () => {
       weddingDate: '2027-06-12T00:00:00.000Z',
       rsvp: 'PENDING',
       dietary: 'Vegan',
+      rsvpClosesAt: '2027-05-29T00:00:00.000Z',
     })
   })
 
@@ -78,14 +110,38 @@ describe('GetRsvpUseCase', () => {
     expect(vista.dietary).toBeNull()
   })
 
-  it('devuelve el MISMO error para token inexistente, caducado y ya usado', async () => {
+  it('con el token ya usado devuelve la respuesta actual y el cierre', async () => {
+    const { token } = await prepararInvitacionValida()
+    await responder(token, { rsvp: 'CONFIRMED', dietary: 'Vegan' })
+
+    const vista = await caso.ejecutar(token)
+
+    expect(vista.rsvp).toBe('CONFIRMED')
+    expect(vista.dietary).toBe('Vegan')
+    expect(vista.rsvpClosesAt).toBe(cierreRsvp(evento).toISOString())
+  })
+
+  it('pasado el cierre se sigue pudiendo leer mientras el token no caduque', async () => {
+    const token = prepararInvitacion({
+      status: 'RESPONDED',
+      weddingDate: new Date(Date.now() + 3 * 86_400_000),
+    })
+
+    const vista = await caso.ejecutar(token)
+
+    expect(vista.rsvp).toBe('PENDING')
+    expect(Date.parse(vista.rsvpClosesAt)).toBeLessThan(Date.now())
+  })
+
+  it('devuelve el MISMO error para token inexistente, caducado y caducado por el worker', async () => {
     const caducado = prepararInvitacion({ expiresAt: new Date(Date.now() - 1000) })
-    const usado = prepararInvitacion({ status: 'RESPONDED' })
+    const porElWorker = prepararInvitacion({ status: 'RESPONDED' })
+    await invitaciones.caducar(`inv-${secuencia}`)
 
     const errores = [
       await capturarError(() => caso.ejecutar('inventado')),
       await capturarError(() => caso.ejecutar(caducado)),
-      await capturarError(() => caso.ejecutar(usado)),
+      await capturarError(() => caso.ejecutar(porElWorker)),
     ]
 
     for (const error of errores) {

@@ -5,6 +5,8 @@ export interface DatosNuevoEvento {
   name: string
   weddingDate: Date
   ownerId: string
+  /** Ausente = `DIAS_DE_CIERRE_POR_DEFECTO`, el default de la columna. */
+  rsvpDeadlineDays?: number | undefined
 }
 
 export interface DatosInvitacion {

@@ -7,6 +7,11 @@ export interface DatosCrearEvento {
   name: string
   weddingDate: Date
   ownerId: string
+  /**
+   * Ausente = default de la columna. Admite `undefined` explícito porque es lo
+   * que el `.optional()` de Zod entrega desde el borde HTTP.
+   */
+  rsvpDeadlineDays?: number | undefined
 }
 
 @Injectable()

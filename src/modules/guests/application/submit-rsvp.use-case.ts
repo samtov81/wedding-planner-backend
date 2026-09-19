@@ -12,7 +12,7 @@ import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.po
 
 import { InvitacionNoValidaError } from '../domain/guest-errors'
 import { GUEST_REPOSITORY, type GuestRepository } from './guest.repository'
-import { buscarInvitacionValida } from './invitacion-valida'
+import { buscarInvitacionRespondible } from './invitacion-valida'
 import { INVITATION_REPOSITORY, type InvitationRepository } from './invitation.repository'
 
 /**
@@ -31,12 +31,14 @@ export interface JobAvisoRsvp {
 }
 
 /**
- * Una invitación sólo se responde una vez, así que su id basta para que un
- * reintento de la petición no encole dos avisos. Con `-`, nunca `:` (BullMQ lo
- * rechaza; ver `EnqueueOptions.jobId`).
+ * Único por RESPUESTA, no por invitación: el invitado puede cambiar su RSVP
+ * (bloque A §2), y con `rsvp-<invitationId>` BullMQ descartaría el segundo
+ * cambio por jobId repetido. `respondidaEn` es el mismo `ahora` que se escribe
+ * en `respondedAt`. Con `-`, nunca `:` (BullMQ lo rechaza; ver
+ * `EnqueueOptions.jobId`).
  */
-export function jobIdDeAvisoRsvp(invitationId: string): string {
-  return `rsvp-${invitationId}`
+export function jobIdDeAvisoRsvp(invitationId: string, respondidaEn: Date): string {
+  return `rsvp-${invitationId}-${respondidaEn.getTime()}`
 }
 
 /**
@@ -64,11 +66,17 @@ export class SubmitRsvpUseCase {
   /**
    * Orden no negociable: validar → persistir TODO en una transacción → encolar.
    *
-   * Dentro de la transacción: reclamar la invitación (RESPONDED), actualizar el
+   * La validación distingue dos rechazos: token inexistente o caducado → el 404
+   * `INVITATION_INVALID` de siempre; token vivo pasado el cierre → 422
+   * `RSVP_CLOSED`. Un token ya respondido NO se rechaza: el invitado puede
+   * cambiar su respuesta hasta el cierre (bloque A §2).
+   *
+   * Dentro de la transacción: marcar la invitación (RESPONDED), actualizar el
    * invitado y crear las notificaciones. O las tres o ninguna: una respuesta sin
    * notificación sería un cambio que la pareja no ve nunca si no estaba
-   * conectada, y una invitación RESPONDED con el invitado aún PENDING dejaría
-   * al invitado sin forma de contestar (su token ya no vale).
+   * conectada, y una invitación RESPONDED con el invitado aún PENDING mentiría
+   * a la pareja sobre quién ha contestado. Cada respuesta, también cada cambio,
+   * crea sus notificaciones y encola su propio aviso.
    *
    * El aviso en tiempo real NO se emite desde aquí (ruling C23): tras el commit
    * se ENCOLA un job en `notifications`, y quien emite es el worker de la
@@ -83,15 +91,16 @@ export class SubmitRsvpUseCase {
    */
   async ejecutar(token: string, respuesta: RespuestaRsvp): Promise<void> {
     const ahora = new Date()
-    const invitacion = await buscarInvitacionValida(this.invitaciones, token, ahora)
+    const invitacion = await buscarInvitacionRespondible(this.invitaciones, token, ahora)
     const { eventId, id: guestId, name: guestName } = invitacion.guest
     const aviso = { guestId, guestName, rsvp: respuesta.rsvp }
 
     await this.unidadDeTrabajo.ejecutar(async () => {
-      // La lectura de arriba no basta: dos respuestas simultáneas la pasan las
-      // dos. La guarda de verdad es esta escritura condicionada.
-      const reclamada = await this.invitaciones.marcarRespondida(invitacion.id, ahora)
-      if (!reclamada) throw new InvitacionNoValidaError()
+      // La lectura de arriba no basta: un reenvío o un cambio de email (C24)
+      // puede caducar el token entre ella y aquí. La guarda de verdad de la
+      // caducidad es esta escritura condicionada.
+      const escrita = await this.invitaciones.marcarRespondida(invitacion.id, ahora)
+      if (!escrita) throw new InvitacionNoValidaError()
 
       await this.invitados.actualizar(eventId, guestId, {
         rsvp: respuesta.rsvp,
@@ -103,7 +112,7 @@ export class SubmitRsvpUseCase {
     const job: JobAvisoRsvp = { eventId, payload: aviso }
     try {
       await this.cola.enqueue('notifications', TIPO_RSVP_ACTUALIZADO, job, {
-        jobId: jobIdDeAvisoRsvp(invitacion.id),
+        jobId: jobIdDeAvisoRsvp(invitacion.id, ahora),
       })
     } catch (error) {
       this.registro.warn(

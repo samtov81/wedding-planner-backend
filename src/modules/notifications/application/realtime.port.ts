@@ -6,7 +6,7 @@
  *
  * Quien lo usa es el WORKER de la cola `notifications` (Tarea 15), no la
  * petición HTTP (ruling C23): el RSVP público persiste y ENCOLA el aviso
- * (`JobAvisoRsvp`, jobId `rsvp-<invitationId>`), y el worker emite. El socket
+ * (`JobAvisoRsvp`, jobId `rsvp-<invitationId>-<epochMs>`), y el worker emite. El socket
  * es una optimización de LATENCIA sobre un estado que ya existe, no un canal
  * de verdad.
  */

@@ -7,7 +7,7 @@ import type {
   InvitationRepository,
 } from '../application/invitation.repository'
 import {
-  admiteRespuesta,
+  admiteLectura,
   estadosQuePuedenAvanzarA,
   type InvitationStatus,
 } from '../domain/invitation'
@@ -57,6 +57,9 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
         id: parcial.event?.id ?? 'ev-1',
         name: parcial.event?.name ?? 'Boda de Ana',
         weddingDate: parcial.event?.weddingDate ?? new Date(Date.UTC(2027, 5, 12)),
+        // El `@default(14)` de la columna. Literal y no la constante de
+        // `events/domain`: un módulo no importa el dominio de otro.
+        rsvpDeadlineDays: parcial.event?.rsvpDeadlineDays ?? 14,
       },
     }
     this.filas.push(fila)
@@ -134,10 +137,13 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
     return id === undefined ? Promise.resolve(null) : this.buscarConInvitadoYEvento(id)
   }
 
-  /** La MISMA regla que el `WHERE` del adaptador de Prisma: `admiteRespuesta`. */
+  /**
+   * La MISMA regla que el `WHERE` del adaptador de Prisma: token vivo a `ahora`,
+   * en cualquier estado. El cierre NO se mira aquí, tampoco en Prisma.
+   */
   marcarRespondida(id: string, ahora: Date): Promise<boolean> {
     const fila = this.buscar(id)
-    if (fila === undefined || !admiteRespuesta(fila, ahora)) return Promise.resolve(false)
+    if (fila === undefined || !admiteLectura(fila, ahora)) return Promise.resolve(false)
     fila.status = 'RESPONDED'
     fila.respondedAt = ahora
     return Promise.resolve(true)
@@ -152,11 +158,7 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
   /** La MISMA regla que el `WHERE` del adaptador de Prisma (ruling H1). */
   caducarVigentesDe(guestId: string, ahora: Date): Promise<void> {
     for (const fila of this.filas) {
-      if (
-        fila.guest.id === guestId &&
-        fila.expiresAt.getTime() > ahora.getTime() &&
-        fila.status !== 'RESPONDED'
-      ) {
+      if (fila.guest.id === guestId && fila.expiresAt.getTime() > ahora.getTime()) {
         fila.expiresAt = ahora
       }
     }

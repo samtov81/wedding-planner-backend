@@ -68,26 +68,30 @@ export function estadosQuePuedenAvanzarA(destino: InvitationStatus): InvitationS
   return [...RANGO].filter(([, rango]) => rango < tope).map(([estado]) => estado)
 }
 
+/** Momento a partir del cual el invitado ya no puede cambiar su respuesta. */
+export function cierreRsvp(evento: { weddingDate: Date; rsvpDeadlineDays: number }): Date {
+  return new Date(evento.weddingDate.getTime() - evento.rsvpDeadlineDays * 86_400_000)
+}
+
 /**
- * ¿Sirve todavía esta invitación para responder? Es la ÚNICA definición de
- * "token válido" del RSVP público; la lectura (GET) y la respuesta (POST) la
- * comparten, y el adaptador de Prisma la repite en el `WHERE` de la escritura.
- *
- * Dos condiciones, y las dos cuentan:
- *  - `expiresAt` en el futuro. No es sólo la caducidad natural de 90 días: el
- *    worker caduca la invitación (`expiresAt = ahora`) cuando agota reintentos
- *    (ruling C18), para que la copia del token que queda en Redis no sirva.
- *    Si esta comprobación se saltara, C18 no protegería nada.
- *  - que el estado pueda avanzar a `RESPONDED`: el token es de UN solo uso.
- *    Se deriva de `estadosQuePuedenAvanzarA` en vez de escribir
- *    `status !== 'RESPONDED'` para que la regla de orden siga siendo una sola.
+ * ¿Sirve el token para VER la invitación? Sólo mira la caducidad: se puede leer
+ * en cualquier estado, también ya respondida y también pasado el cierre, para
+ * que el invitado vea lo que contestó. `expiresAt` incluye la caducidad forzada
+ * del ruling C18.
+ */
+export function admiteLectura(invitacion: { expiresAt: Date }, ahora: Date): boolean {
+  return invitacion.expiresAt.getTime() > ahora.getTime()
+}
+
+/**
+ * ¿Sirve el token para RESPONDER (o cambiar la respuesta)? Token vivo y antes
+ * del cierre. Ya no es de un solo uso (decisión del usuario, bloque A §2): una
+ * invitación RESPONDED se puede responder otra vez hasta el cierre.
  */
 export function admiteRespuesta(
-  invitacion: { status: InvitationStatus; expiresAt: Date },
+  invitacion: { expiresAt: Date },
+  evento: { weddingDate: Date; rsvpDeadlineDays: number },
   ahora: Date,
 ): boolean {
-  return (
-    invitacion.expiresAt.getTime() > ahora.getTime() &&
-    estadosQuePuedenAvanzarA('RESPONDED').includes(invitacion.status)
-  )
+  return admiteLectura(invitacion, ahora) && ahora.getTime() < cierreRsvp(evento).getTime()
 }

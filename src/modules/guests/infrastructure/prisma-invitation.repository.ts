@@ -72,18 +72,14 @@ export class PrismaInvitationRepository implements InvitationRepository {
   }
 
   async marcarRespondida(id: string, ahora: Date): Promise<boolean> {
-    // `admiteRespuesta` traducida al `WHERE`: sin caducar a `ahora` y en un
-    // estado que puede avanzar a RESPONDED. Un solo UPDATE condicionado, así
-    // que de dos respuestas simultáneas Postgres deja pasar una: la segunda
-    // reevalúa el `WHERE` contra la fila ya RESPONDED y afecta a 0 filas.
+    // Sólo la caducidad va en el `WHERE`, en cualquier estado: el invitado
+    // puede cambiar su respuesta (bloque A §2). Un reenvío o un cambio de email
+    // que caduque el token entre la lectura del caso de uso y este UPDATE lo
+    // deja en 0 filas: Postgres reevalúa el `WHERE` contra la fila ya caducada.
     //
     // `clienteDe`: se llama dentro de la unidad de trabajo del RSVP.
     const { count } = await clienteDe(this.prisma).guestInvitation.updateMany({
-      where: {
-        id,
-        expiresAt: { gt: ahora },
-        status: { in: estadosQuePuedenAvanzarA('RESPONDED') },
-      },
+      where: { id, expiresAt: { gt: ahora } },
       data: { status: 'RESPONDED', respondedAt: ahora },
     })
     return count === 1
@@ -98,10 +94,13 @@ export class PrismaInvitationRepository implements InvitationRepository {
   }
 
   async caducarVigentesDe(guestId: string, ahora: Date): Promise<void> {
+    // Sin filtrar por estado: un token RESPONDED también puede cambiar el RSVP
+    // (bloque A §2), así que también muere.
+    //
     // `clienteDe`: `UpdateGuestUseCase` lo llama dentro de la unidad de trabajo
     // del cambio de email.
     await clienteDe(this.prisma).guestInvitation.updateMany({
-      where: { guestId, expiresAt: { gt: ahora }, status: { not: 'RESPONDED' } },
+      where: { guestId, expiresAt: { gt: ahora } },
       data: { expiresAt: ahora },
     })
   }
@@ -159,6 +158,7 @@ function aInvitacion(fila: FilaCompleta): InvitacionCompleta {
       id: fila.guest.event.id,
       name: fila.guest.event.name,
       weddingDate: fila.guest.event.weddingDate,
+      rsvpDeadlineDays: fila.guest.event.rsvpDeadlineDays,
     },
   }
 }

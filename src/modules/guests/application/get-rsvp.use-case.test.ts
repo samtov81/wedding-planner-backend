@@ -17,14 +17,14 @@ describe('GetRsvpUseCase', () => {
   let secuencia = 0
 
   /**
-   * El evento de todas las invitaciones del test. La boda es fija (la vista la
-   * compara literal) y el cierre queda en 2027-05-29: los tests que responden
-   * de verdad dependen de que hoy sea anterior.
+   * El evento de todas las invitaciones del test. La boda es relativa a hoy:
+   * el test que responde de verdad depende de `ahora < cierre`, y una fecha
+   * fija lo rompería el día que el calendario pasara el cierre.
    */
   const evento = {
     id: 'ev-1',
     name: 'Boda de Ana',
-    weddingDate: new Date(Date.UTC(2027, 5, 12)),
+    weddingDate: new Date(Date.now() + 180 * 86_400_000),
     rsvpDeadlineDays: 14,
   }
 
@@ -93,10 +93,10 @@ describe('GetRsvpUseCase', () => {
     expect(vista).toEqual({
       guestName: 'Ana Invitada',
       eventName: 'Boda de Ana',
-      weddingDate: '2027-06-12T00:00:00.000Z',
+      weddingDate: evento.weddingDate.toISOString(),
       rsvp: 'PENDING',
       dietary: 'Vegan',
-      rsvpClosesAt: '2027-05-29T00:00:00.000Z',
+      rsvpClosesAt: new Date(evento.weddingDate.getTime() - 14 * 86_400_000).toISOString(),
     })
   })
 

@@ -66,9 +66,13 @@ export class FirmaInvalidaError extends UnauthorizedError {
  * El RSVP público no acepta este token. Es el MISMO error, con el mismo status,
  * `code` y mensaje, para el token que no existe, el caducado (incluido el que
  * el worker caducó al agotar reintentos, ruling C18, y el que un reenvío o un
- * cambio de email caducó, ruling C24) y el mal formado. Un token YA USADO no
- * está en la lista: desde el bloque A §2 sigue sirviendo hasta que caduca. Distinguirlos le diría a quien prueba tokens al azar cuándo ha
- * acertado uno real; con un solo error no aprende nada.
+ * cambio de email caducó, ruling C24) y el mal formado. Distinguir entre esas
+ * causas le diría a quien prueba tokens al azar cuándo ha acertado uno real;
+ * con un solo error no aprende nada.
+ *
+ * Un token YA USADO no está en la lista: desde el bloque A §2 sigue sirviendo
+ * hasta que caduca. Uno vivo pero pasado el cierre tampoco: ese es
+ * `RsvpCerradoError` (422).
  *
  * Es un 404 y no un 401/410: para quien no tiene un token válido, esa
  * invitación no existe — el mismo criterio que el 404 único del

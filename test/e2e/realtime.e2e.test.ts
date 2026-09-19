@@ -176,7 +176,9 @@ describe('Tiempo real e2e', () => {
     const evento = await prisma.event.create({
       data: {
         name: 'Boda de Ana',
-        weddingDate: new Date(Date.UTC(2027, 5, 12)),
+        // Relativa a hoy: el POST del RSVP exige `ahora < cierre` (bloque A §2),
+        // y una fecha fija dejaría los 204 de este fichero en 422 al pasarla.
+        weddingDate: new Date(Date.now() + 180 * 86_400_000),
         ownerId: pareja.id,
       },
     })

@@ -60,6 +60,16 @@ class RegistroCapturado implements LoggerService {
   }
 }
 
+const DIA_MS = 86_400_000
+/**
+ * La boda del evento compartido, relativa a hoy: desde el bloque A §2 el POST
+ * depende de `ahora < cierre`, y una fecha fija haría que la suite entera
+ * empezara a dar 422 el día que el calendario pasara el cierre.
+ */
+const BODA = new Date(Date.now() + 180 * DIA_MS)
+/** El cierre con el plazo por defecto (14 días). */
+const CIERRE = new Date(BODA.getTime() - 14 * DIA_MS)
+
 describe('RSVP público e2e', () => {
   let pg: PostgresDeTest
   let redis: StartedRedisContainer
@@ -107,8 +117,8 @@ describe('RSVP público e2e', () => {
 
   /**
    * Un invitado nuevo con una invitación nueva: ningún test hereda estado de
-   * otro. Por defecto, del evento compartido (boda 2027-06-12, cierre
-   * 2027-05-29); `eventId` para colgarlo de un evento propio.
+   * otro. Por defecto, del evento compartido (`BODA`, cierre `CIERRE`);
+   * `eventId` para colgarlo de un evento propio.
    */
   async function invitacion(
     datos: {
@@ -178,7 +188,7 @@ describe('RSVP público e2e', () => {
     const evento = await prisma.event.create({
       data: {
         name: 'Boda inminente',
-        weddingDate: new Date(Date.now() + dias * 86_400_000),
+        weddingDate: new Date(Date.now() + dias * DIA_MS),
         ownerId: parejaId,
       },
     })
@@ -205,7 +215,7 @@ describe('RSVP público e2e', () => {
     const evento = await prisma.event.create({
       data: {
         name: 'Boda de Ana',
-        weddingDate: new Date(Date.UTC(2027, 5, 12)),
+        weddingDate: BODA,
         ownerId: pareja.id,
       },
     })
@@ -245,10 +255,10 @@ describe('RSVP público e2e', () => {
       expect(respuesta.body).toEqual({
         guestName: 'Ana Invitada',
         eventName: 'Boda de Ana',
-        weddingDate: '2027-06-12T00:00:00.000Z',
+        weddingDate: BODA.toISOString(),
         rsvp: 'PENDING',
         dietary: null,
-        rsvpClosesAt: '2027-05-29T00:00:00.000Z',
+        rsvpClosesAt: CIERRE.toISOString(),
       })
     })
 
@@ -264,7 +274,7 @@ describe('RSVP público e2e', () => {
       expect(respuesta.body).toMatchObject({
         rsvp: 'CONFIRMED',
         dietary: 'Vegan',
-        rsvpClosesAt: '2027-05-29T00:00:00.000Z',
+        rsvpClosesAt: CIERRE.toISOString(),
       })
     })
   })

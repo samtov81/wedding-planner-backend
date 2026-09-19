@@ -14,6 +14,8 @@ import { Throttle, type ThrottlerOptions } from '@nestjs/throttler'
  *    correo.
  *  - con nombre (`rsvp`, `login`): SÓLO en las rutas que los piden con
  *    `@LimiteDeRuta`. Se suman al global, no lo sustituyen.
+ *  - `webhook`: también con nombre, pero el global se SALTA en vez de
+ *    sumarse — ver más abajo por qué.
  *
  * Por qué hace falta el "sólo": `ThrottlerGuard` aplica TODOS los limitadores
  * declarados a toda ruta que protege, y aquí protege toda la API (`APP_GUARD`).
@@ -27,8 +29,9 @@ import { Throttle, type ThrottlerOptions } from '@nestjs/throttler'
 export const LIMITADOR_GLOBAL = 'global'
 export const LIMITADOR_RSVP = 'rsvp'
 export const LIMITADOR_LOGIN = 'login'
+export const LIMITADOR_WEBHOOK = 'webhook'
 
-type LimitadorDeRuta = typeof LIMITADOR_RSVP | typeof LIMITADOR_LOGIN
+type LimitadorDeRuta = typeof LIMITADOR_RSVP | typeof LIMITADOR_LOGIN | typeof LIMITADOR_WEBHOOK
 
 const reflector = new Reflector()
 const marca = (nombre: LimitadorDeRuta): string => `limitador-de-ruta:${nombre}`
@@ -57,7 +60,14 @@ export function LimiteDeRuta(
 
 export function crearLimitadores(limiteGlobalPorMinuto: number): ThrottlerOptions[] {
   return [
-    { name: LIMITADOR_GLOBAL, ttl: 60_000, limit: limiteGlobalPorMinuto },
+    {
+      name: LIMITADOR_GLOBAL,
+      ttl: 60_000,
+      limit: limiteGlobalPorMinuto,
+      // El webhook de Resend llega en ráfagas desde pocas IPs de Svix; su barrera
+      // es la firma. Lleva su propio límite, más alto.
+      skipIf: (contexto) => pedidoEn(contexto, LIMITADOR_WEBHOOK),
+    },
     // Los valores de los limitadores con nombre son el defecto; el efectivo lo
     // fija cada `@LimiteDeRuta`.
     {
@@ -71,6 +81,12 @@ export function crearLimitadores(limiteGlobalPorMinuto: number): ThrottlerOption
       ttl: 900_000,
       limit: 5,
       skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_LOGIN),
+    },
+    {
+      name: LIMITADOR_WEBHOOK,
+      ttl: 60_000,
+      limit: 1200,
+      skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_WEBHOOK),
     },
   ]
 }

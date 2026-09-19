@@ -235,6 +235,16 @@ describe('Webhook de Resend e2e', () => {
     await enviar(cuerpo, firmar(cuerpo)).expect(400)
   })
 
+  it('el webhook no lleva el límite global sino el suyo propio', async () => {
+    const respuesta = await request(url)
+      .post('/webhooks/resend')
+      .set('Content-Type', 'application/json')
+      .send('{}')
+
+    expect(respuesta.headers['x-ratelimit-limit-global']).toBeUndefined()
+    expect(respuesta.headers['x-ratelimit-limit-webhook']).toBe('1200')
+  })
+
   it('las demás rutas siguen parseando JSON con normalidad', async () => {
     // `rawBody: true` no puede romper el `req.body` del resto de la API.
     const respuesta = await request(url)

@@ -2,6 +2,7 @@ import type { IncomingHttpHeaders } from 'node:http'
 
 import { Controller, HttpCode, Inject, Logger, Post, Req } from '@nestjs/common'
 
+import { LIMITADOR_WEBHOOK, LimiteDeRuta } from '@/shared/http/limitadores'
 import { validarCon } from '@/shared/http/validar-con'
 
 import { HandleDeliveryEventUseCase } from '../application/handle-delivery-event.use-case'
@@ -53,6 +54,7 @@ export class ResendWebhookController {
    */
   @Post('resend')
   @HttpCode(204)
+  @LimiteDeRuta(LIMITADOR_WEBHOOK, { limit: 1200, ttl: 60_000 })
   async recibir(@Req() peticion: PeticionWebhook): Promise<void> {
     const payload = this.verificarFirma(peticion)
     const evento = validarCon(eventoResendSchema, payload)

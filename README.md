@@ -85,7 +85,7 @@ arranque está en `src/main.ts` y `src/configurar-app.ts`.
 npm test               # todo: unitarios, integración y e2e (necesita Docker)
 npx vitest run src/modules/guests            # un directorio
 npx vitest run test/e2e/rsvp.e2e.test.ts     # un fichero
-npm run test:smoke     # compila y arranca dist/main.js con node a secas
+npm run test:smoke     # arranca dist/main.js con node a secas — exige `npm run build` antes
 ```
 
 - **Unitarios** (`src/**/*.test.ts`): casos de uso contra dobles en memoria.

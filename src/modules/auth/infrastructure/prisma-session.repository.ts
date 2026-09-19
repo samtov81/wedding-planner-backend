@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common'
+import type { Prisma } from '@prisma/client'
 
 import { PrismaService } from '@/modules/database/prisma.service'
 
@@ -29,23 +30,18 @@ export class PrismaSessionRepository implements SessionRepository {
     }
   }
 
-  async revocar(id: string): Promise<boolean> {
-    // `updateMany` con `revokedAt: null` en el WHERE es un compare-and-swap:
-    // la base de datos decide quién gana. `count === 1` significa "esta
-    // llamada fue la que revocó"; `0`, que llegó tarde. Devolverlo (en vez de
-    // `void`) es lo que permite al caso de uso detectar el reuso por carrera.
-    const { count } = await this.prisma.session.updateMany({
-      where: { id, revokedAt: null },
-      data: { revokedAt: new Date() },
-    })
-    return count === 1
-  }
-
   async rotar(datos: { sesionARevocar: string; nueva: DatosNuevaSesion }): Promise<boolean> {
     // Revocar y crear, o ninguna de las dos: si el insert de la hija fallase
     // después de una revocación ya confirmada, el usuario se quedaría sin
     // sesión y sin ninguna ruta de recuperación salvo volver a hacer login.
     return await this.prisma.$transaction(async (tx) => {
+      const sesion = await tx.session.findUnique({
+        where: { id: datos.sesionARevocar },
+        select: { familyId: true },
+      })
+      if (sesion === null) return false
+      await this.bloquearFamilia(tx, sesion.familyId)
+
       const { count } = await tx.session.updateMany({
         where: { id: datos.sesionARevocar, revokedAt: null },
         data: { revokedAt: new Date() },
@@ -58,10 +54,33 @@ export class PrismaSessionRepository implements SessionRepository {
   }
 
   async revocarFamilia(familyId: string): Promise<void> {
-    await this.prisma.session.updateMany({
-      where: { familyId, revokedAt: null },
-      data: { revokedAt: new Date() },
+    await this.prisma.$transaction(async (tx) => {
+      await this.bloquearFamilia(tx, familyId)
+      await tx.session.updateMany({
+        where: { familyId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      })
     })
+  }
+
+  /**
+   * Serializa `rotar` y `revocarFamilia` de UNA familia con un cerrojo
+   * consultivo que se suelta solo al terminar la transacción.
+   *
+   * Sin él, en READ COMMITTED, el `UPDATE ... WHERE familyId` de la revocación
+   * toma su instantánea mientras una rotación concurrente aún no ha hecho
+   * COMMIT: espera al cerrojo de fila de la hermana, la revoca al reevaluarla,
+   * pero NO ve a la hija que esa rotación inserta, que queda viva en una
+   * familia revocada — justo el token que la detección de reuso quería matar.
+   * Con el cerrojo, la segunda transacción empieza después del COMMIT de la
+   * primera: o la rotación ve la hermana ya revocada y no crea hija, o la
+   * revocación ve a la hija y la revoca.
+   *
+   * `hashtext` reduce el UUID a la clave entera que pide el cerrojo; una
+   * colisión entre dos familias sólo las serializa de más, nunca de menos.
+   */
+  private async bloquearFamilia(tx: Prisma.TransactionClient, familyId: string): Promise<void> {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${familyId}))`
   }
 
   private aFila(datos: DatosNuevaSesion): {

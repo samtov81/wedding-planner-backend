@@ -10,9 +10,16 @@ export function hashToken(token: string): string {
   return createHash('sha256').update(token).digest('hex')
 }
 
+/**
+ * La forma que `env.schema.ts` exige a `JWT_ACCESS_TTL` al arrancar (`15m`,
+ * `1h`, `30s`). Tiparla así es lo que deja pasar el valor a `expiresIn` sin
+ * un `as`: `jsonwebtoken` sólo acepta duraciones que `ms` sabe leer.
+ */
+type DuracionJwt = `${number}${'s' | 'm' | 'h' | 'd'}`
+
 interface ConfigTokens {
   JWT_ACCESS_SECRET: string
-  JWT_ACCESS_TTL: string
+  JWT_ACCESS_TTL: DuracionJwt
   REFRESH_TTL_DAYS: number
 }
 
@@ -22,12 +29,15 @@ export class TokenService {
 
   firmarAccess(user: { id: string; systemRole: string }): string {
     return jwt.sign({ sub: user.id, role: user.systemRole }, this.env.JWT_ACCESS_SECRET, {
+      algorithm: 'HS256',
       expiresIn: this.env.JWT_ACCESS_TTL,
-    } as jwt.SignOptions)
+    })
   }
 
   verificarAccess(token: string): { sub: string; role: string } {
-    const payload = jwt.verify(token, this.env.JWT_ACCESS_SECRET)
+    // Algoritmo FIJO: sin la lista, `jsonwebtoken` acepta cualquier HMAC que
+    // cuadre con el secreto y es la cabecera del token la que decide.
+    const payload = jwt.verify(token, this.env.JWT_ACCESS_SECRET, { algorithms: ['HS256'] })
     if (typeof payload === 'string' || typeof payload.sub !== 'string') {
       throw new Error('Payload de access token inválido')
     }

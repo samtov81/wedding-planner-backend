@@ -1,8 +1,9 @@
 import type { ExecutionContext } from '@nestjs/common'
-import { UnauthorizedException } from '@nestjs/common'
 
 import { UserRepositoryEnMemoria } from '@/modules/users/infrastructure/user.repository.fake'
+import { UnauthorizedError } from '@/shared/domain'
 
+import { ACCESS_TOKEN_RECHAZADO } from '../application/autenticar-access-token'
 import { TokenService } from '../application/token.service'
 import { JwtAuthGuard } from './jwt-auth.guard'
 
@@ -64,7 +65,7 @@ describe('JwtAuthGuard', () => {
     // su access token: quince minutos de acceso a una cuenta que no existe.
     await expect(
       guard.canActivate(contexto({ headers: { authorization: `Bearer ${token}` } })),
-    ).rejects.toThrow(UnauthorizedException)
+    ).rejects.toThrow(UnauthorizedError)
   })
 
   it('rechaza un rol que no pertenece a SystemRole', async () => {
@@ -72,7 +73,7 @@ describe('JwtAuthGuard', () => {
 
     await expect(
       guard.canActivate(contexto({ headers: { authorization: `Bearer ${token}` } })),
-    ).rejects.toThrow(UnauthorizedException)
+    ).rejects.toThrow(UnauthorizedError)
   })
 
   it('un fallo de la base de datos al recargar NO se disfraza de 401: el error sale tal cual', async () => {
@@ -89,8 +90,23 @@ describe('JwtAuthGuard', () => {
   })
 
   it('rechaza una petición sin cabecera Authorization', async () => {
-    await expect(guard.canActivate(contexto({ headers: {} }))).rejects.toThrow(
-      UnauthorizedException,
-    )
+    await expect(guard.canActivate(contexto({ headers: {} }))).rejects.toThrow(UnauthorizedError)
+  })
+
+  // El 401 sale como error de DOMINIO para que el filtro lo responda con
+  // `code: 'UNAUTHORIZED'`: una `UnauthorizedException` de Nest salía como
+  // `HTTP_ERROR`, el mismo código que cualquier otro fallo HTTP genérico.
+  it.each([
+    ['sin cabecera', {}],
+    ['con una cabecera que no es Bearer', { authorization: 'Basic dTpw' }],
+    ['con un token que no verifica', { authorization: 'Bearer no-es-un-jwt' }],
+  ])('%s: 401 con code UNAUTHORIZED y el mismo mensaje', async (_caso, headers) => {
+    const rechazo = guard.canActivate(contexto({ headers }))
+
+    await expect(rechazo).rejects.toBeInstanceOf(UnauthorizedError)
+    await expect(rechazo).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: ACCESS_TOKEN_RECHAZADO,
+    })
   })
 })

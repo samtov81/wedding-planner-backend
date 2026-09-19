@@ -19,7 +19,7 @@ interface SesionInterna extends SesionPersistida {
  * CLARO (como lo vería un test) y hashean internamente, igual que haría el
  * caso de uso real.
  *
- * `revocar` y `rotar` replican la MISMA semántica de compare-and-swap que el
+ * `rotar` replica la MISMA semántica de compare-and-swap que el
  * adaptador de Prisma: sin eso, el doble no sirve para fijar la detección de
  * reuso por carrera, que es justo lo que se quiere probar sin base de datos.
  */
@@ -36,10 +36,6 @@ export class SessionRepositoryEnMemoria implements SessionRepository {
     if (sesion === undefined) return Promise.resolve(null)
     const { tokenHash: _oculto, ip: _ip, userAgent: _ua, ...publica } = sesion
     return Promise.resolve({ ...publica })
-  }
-
-  revocar(id: string): Promise<boolean> {
-    return Promise.resolve(this.revocarSiViva(id))
   }
 
   rotar(datos: { sesionARevocar: string; nueva: DatosNuevaSesion }): Promise<boolean> {

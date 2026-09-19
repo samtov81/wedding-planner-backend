@@ -1,10 +1,4 @@
-import {
-  type CanActivate,
-  type ExecutionContext,
-  Inject,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common'
+import { type CanActivate, type ExecutionContext, Inject, Injectable } from '@nestjs/common'
 
 import { USER_REPOSITORY, type UserRepository } from '@/modules/users/application/user.repository'
 import { UnauthorizedError } from '@/shared/domain'
@@ -29,7 +23,10 @@ interface RequestConAuth {
  * Qué se comprueba (firma, rol dentro de `SystemRole`, usuario que sigue
  * existiendo) vive en `autenticarAccessToken`, que es el MISMO código que
  * autentica los sockets (Tarea 15). Aquí sólo queda lo que es de HTTP: leer la
- * cabecera y responder con la excepción de Nest.
+ * cabecera y rechazar con `UnauthorizedError` del dominio — no con la
+ * `UnauthorizedException` de Nest, que el filtro responde como `HTTP_ERROR` —
+ * para que todo 401 del guard lleve `code: 'UNAUTHORIZED'`. El mensaje es el
+ * mismo en los tres rechazos: no dice si faltaba la cabecera o fallaba el token.
  */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
@@ -43,7 +40,7 @@ export class JwtAuthGuard implements CanActivate {
     const cabecera = req.headers.authorization
 
     if (cabecera === undefined || !cabecera.startsWith('Bearer ')) {
-      throw new UnauthorizedException('Falta el token de acceso')
+      throw new UnauthorizedError(ACCESS_TOKEN_RECHAZADO)
     }
 
     try {
@@ -59,7 +56,7 @@ export class JwtAuthGuard implements CanActivate {
       // dijera "token caducado", los clientes cerraran la sesión y la caída no
       // se viera. Mismo criterio que el gateway (`conSalaAutorizada`).
       if (error instanceof UnauthorizedError) {
-        throw new UnauthorizedException(ACCESS_TOKEN_RECHAZADO)
+        throw new UnauthorizedError(ACCESS_TOKEN_RECHAZADO)
       }
       throw error
     }

@@ -168,6 +168,20 @@ describe('loadEnv', () => {
     })
   })
 
+  describe('JWT_ACCESS_TTL', () => {
+    it('rechaza al arrancar una duración que `jsonwebtoken` no sabe leer', () => {
+      expect(() => loadEnv({ ...valido, JWT_ACCESS_TTL: '15minutes' })).toThrow(/JWT_ACCESS_TTL/)
+    })
+
+    it('vacía (`JWT_ACCESS_TTL=` en el .env) toma el valor por defecto', () => {
+      expect(loadEnv({ ...valido, JWT_ACCESS_TTL: '' }).JWT_ACCESS_TTL).toBe('15m')
+    })
+
+    it('acepta un número seguido de s, m, h o d', () => {
+      expect(loadEnv({ ...valido, JWT_ACCESS_TTL: '1h' }).JWT_ACCESS_TTL).toBe('1h')
+    })
+  })
+
   describe('LOG_LEVEL', () => {
     it('es opcional y, si viene, tiene que ser un nivel de pino', () => {
       expect(loadEnv(valido).LOG_LEVEL).toBeUndefined()

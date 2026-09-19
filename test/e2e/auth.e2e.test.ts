@@ -147,6 +147,19 @@ describe('Auth e2e', () => {
     expect(cuerpoInexistente.message).toBe(cuerpoMalaClave.message)
   })
 
+  it('sin token responde 401 con code UNAUTHORIZED', async () => {
+    const res = await request(url).get('/auth/me').expect(401)
+    expect((res.body as CuerpoError).code).toBe('UNAUTHORIZED')
+  })
+
+  it('con un token inválido responde 401 con code UNAUTHORIZED', async () => {
+    const res = await request(url)
+      .get('/auth/me')
+      .set('Authorization', 'Bearer no-es-un-jwt')
+      .expect(401)
+    expect((res.body as CuerpoError).code).toBe('UNAUTHORIZED')
+  })
+
   /**
    * Ratifica una LIMITACIÓN CONOCIDA, no el comportamiento deseado a largo
    * plazo: el 409 convierte `/auth/register` en un oráculo de enumeración de

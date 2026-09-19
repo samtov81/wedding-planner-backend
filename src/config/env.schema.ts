@@ -120,7 +120,14 @@ export const envSchema = z
 
     /** 32 bytes es el mínimo razonable para HS256; por debajo el secreto es el eslabón débil. */
     JWT_ACCESS_SECRET: z.string().min(32),
-    JWT_ACCESS_TTL: z.string().default('15m'),
+    /** Duración de `jsonwebtoken`/`ms`: un número seguido de s, m, h o d. Vacío = por defecto. */
+    JWT_ACCESS_TTL: z.preprocess(
+      (valor) => (valor === '' ? undefined : valor),
+      z
+        .string()
+        .regex(/^\d+[smhd]$/, 'Duración como 15m, 1h o 30s')
+        .default('15m'),
+    ),
     REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
     /**

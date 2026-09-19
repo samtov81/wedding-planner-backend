@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
@@ -46,11 +48,9 @@ describe('Invitados e2e', () => {
 
   let ana: { id: string; accessToken: string }
   let beto: { id: string; accessToken: string }
-  let planner: { id: string; accessToken: string }
   let extrano: { id: string; accessToken: string }
-  let fotografo: { id: string; accessToken: string }
 
-  /** Dos bodas distintas: la de Ana y la de Beto. El planner está en las dos. */
+  /** Dos bodas distintas: la de Ana y la de Beto. */
   let bodaDeAna: string
   let bodaDeBeto: string
 
@@ -84,19 +84,26 @@ describe('Invitados e2e', () => {
   }
 
   /**
-   * Invita al planner y ACTIVA la membresía a mano. Todavía no existe el
-   * endpoint de aceptar invitación (queda fuera de esta tarea) y una membresía
-   * `INVITED` no concede acceso — es justo lo que comprueba el e2e de eventos.
+   * Invita a `plannerEmail`/`plannerId` a `eventoId` y ACTIVA la membresía a
+   * mano. Todavía no existe el endpoint de aceptar invitación (queda fuera de
+   * esta tarea) y una membresía `INVITED` no concede acceso — es justo lo que
+   * comprueba el e2e de eventos. Parametrizado por planner para que cada test
+   * que necesite uno se cree el suyo propio.
    */
-  async function meterPlannerEn(eventoId: string, tokenDelCouple: string): Promise<void> {
+  async function meterPlannerEn(
+    eventoId: string,
+    tokenDelCouple: string,
+    plannerEmail: string,
+    plannerId: string,
+  ): Promise<void> {
     await request(url)
       .post(`/events/${eventoId}/members`)
       .set('Authorization', `Bearer ${tokenDelCouple}`)
-      .send({ email: 'planner@test.com', role: 'PLANNER' })
+      .send({ email: plannerEmail, role: 'PLANNER' })
       .expect(201)
 
     await prisma.eventMembership.updateMany({
-      where: { eventId: eventoId, userId: planner.id },
+      where: { eventId: eventoId, userId: plannerId },
       data: { status: 'ACTIVE' },
     })
   }
@@ -110,15 +117,10 @@ describe('Invitados e2e', () => {
 
     ana = await registrarYEntrar('ana@test.com', 'Ana')
     beto = await registrarYEntrar('beto@test.com', 'Beto')
-    planner = await registrarYEntrar('planner@test.com', 'Planner')
     extrano = await registrarYEntrar('extrano@test.com', 'Extraño')
-    fotografo = await registrarYEntrar('foto@test.com', 'Fotógrafo')
 
     bodaDeAna = await crearEvento(ana.accessToken, 'Boda de Ana')
     bodaDeBeto = await crearEvento(beto.accessToken, 'Boda de Beto')
-
-    await meterPlannerEn(bodaDeAna, ana.accessToken)
-    await meterPlannerEn(bodaDeBeto, beto.accessToken)
   }, 240_000)
 
   afterAll(async () => {
@@ -155,85 +157,119 @@ describe('Invitados e2e', () => {
   })
 
   it('rechaza invitar dos veces al mismo correo en el mismo evento: 409', async () => {
+    const correo = `luis-${randomUUID()}@test.com`
     await request(url)
       .post(`/events/${bodaDeAna}/guests`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
-      .send({ name: 'Primo Luis', email: 'luis@test.com', group: 'Family' })
+      .send({ name: 'Primo Luis', email: correo, group: 'Family' })
       .expect(201)
 
     const repetido = await request(url)
       .post(`/events/${bodaDeAna}/guests`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
-      .send({ name: 'Luis otra vez', email: 'luis@test.com', group: 'Work' })
+      .send({ name: 'Luis otra vez', email: correo, group: 'Work' })
       .expect(409)
 
     expect((repetido.body as CuerpoError).code).toBe('GUEST_EMAIL_DUPLICATED')
   })
 
   it('el mismo correo SÍ puede estar invitado a otra boda', async () => {
+    // Crea su propio primer invitado (con correo propio) en la boda de Ana,
+    // y comprueba que ESE MISMO correo entra sin problema en la de Beto: no
+    // depende de que otro test haya dejado ya un correo en `bodaDeAna`.
+    const correo = `luis-${randomUUID()}@test.com`
+    await request(url)
+      .post(`/events/${bodaDeAna}/guests`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ name: 'Primo Luis', email: correo, group: 'Family' })
+      .expect(201)
+
     await request(url)
       .post(`/events/${bodaDeBeto}/guests`)
       .set('Authorization', `Bearer ${beto.accessToken}`)
-      .send({ name: 'Primo Luis', email: 'luis@test.com', group: 'Family' })
+      .send({ name: 'Primo Luis', email: correo, group: 'Family' })
       .expect(201)
   })
 
   it('un planner con DOS eventos ve sólo los invitados de cada uno', async () => {
-    // Requisito arrastrado de la Tarea 9, que no pudo escribirlo porque ni
-    // `Guest` ni esta ruta existían. Es el test de aislamiento entre eventos
-    // del módulo: la misma identidad, con acceso legítimo a las dos bodas,
-    // no debe ver nunca una mezcla.
+    // Boda A y boda B propias, con un planner propio activo en las dos: el
+    // test de aislamiento entre eventos del módulo no debe depender de
+    // cuántos invitados dejaron otros tests en `bodaDeAna`/`bodaDeBeto`.
+    const anaEmail = `ana-${randomUUID()}@test.com`
+    const betoEmail = `beto-${randomUUID()}@test.com`
+    const plannerEmail = `planner-${randomUUID()}@test.com`
+    const anaPropia = await registrarYEntrar(anaEmail, 'Ana Propia')
+    const betoPropio = await registrarYEntrar(betoEmail, 'Beto Propio')
+    const plannerPropio = await registrarYEntrar(plannerEmail, 'Planner Propio')
+
+    const bodaA = await crearEvento(anaPropia.accessToken, 'Boda A')
+    const bodaB = await crearEvento(betoPropio.accessToken, 'Boda B')
+    await meterPlannerEn(bodaA, anaPropia.accessToken, plannerEmail, plannerPropio.id)
+    await meterPlannerEn(bodaB, betoPropio.accessToken, plannerEmail, plannerPropio.id)
+
     await request(url)
-      .post(`/events/${bodaDeBeto}/guests`)
-      .set('Authorization', `Bearer ${planner.accessToken}`)
-      .send({ name: 'Invitado de Beto', group: 'Friends' })
+      .post(`/events/${bodaA}/guests`)
+      .set('Authorization', `Bearer ${anaPropia.accessToken}`)
+      .send({ name: 'Invitado de A', group: 'Friends' })
+      .expect(201)
+    await request(url)
+      .post(`/events/${bodaB}/guests`)
+      .set('Authorization', `Bearer ${betoPropio.accessToken}`)
+      .send({ name: 'Invitado de B', group: 'Friends' })
       .expect(201)
 
-    const deAna = await request(url)
-      .get(`/events/${bodaDeAna}/guests?limit=100`)
-      .set('Authorization', `Bearer ${planner.accessToken}`)
+    const deA = await request(url)
+      .get(`/events/${bodaA}/guests?limit=100`)
+      .set('Authorization', `Bearer ${plannerPropio.accessToken}`)
       .expect(200)
-    const deBeto = await request(url)
-      .get(`/events/${bodaDeBeto}/guests?limit=100`)
-      .set('Authorization', `Bearer ${planner.accessToken}`)
+    const deB = await request(url)
+      .get(`/events/${bodaB}/guests?limit=100`)
+      .set('Authorization', `Bearer ${plannerPropio.accessToken}`)
       .expect(200)
 
-    const itemsDeAna = (deAna.body as CuerpoPagina).items
-    const itemsDeBeto = (deBeto.body as CuerpoPagina).items
+    const itemsDeA = (deA.body as CuerpoPagina).items
+    const itemsDeB = (deB.body as CuerpoPagina).items
 
-    expect(itemsDeAna.length).toBeGreaterThan(0)
-    expect(itemsDeBeto.length).toBeGreaterThan(0)
-    expect(itemsDeAna.every((g) => g.eventId === bodaDeAna)).toBe(true)
-    expect(itemsDeBeto.every((g) => g.eventId === bodaDeBeto)).toBe(true)
+    expect(itemsDeA).toHaveLength(1)
+    expect(itemsDeB).toHaveLength(1)
+    expect(itemsDeA.every((g) => g.eventId === bodaA)).toBe(true)
+    expect(itemsDeB.every((g) => g.eventId === bodaB)).toBe(true)
 
     // Y ningún id se repite entre las dos listas: una mezcla se vería aquí
     // aunque los dos `eventId` de arriba cuadraran por casualidad.
-    const idsDeAna = new Set(itemsDeAna.map((g) => g.id))
-    expect(itemsDeBeto.some((g) => idsDeAna.has(g.id))).toBe(false)
-    expect(itemsDeAna.map((g) => g.name)).not.toContain('Invitado de Beto')
+    const idsDeA = new Set(itemsDeA.map((g) => g.id))
+    expect(itemsDeB.some((g) => idsDeA.has(g.id))).toBe(false)
+    expect(itemsDeA.map((g) => g.name)).not.toContain('Invitado de B')
 
-    // Un invitado de la boda de Beto, pedido por la ruta de la de Ana, es 404:
-    // el id existe, pero no en ESE evento.
-    const ajeno = itemsDeBeto[0]
-    if (ajeno === undefined) throw new Error('la boda de Beto debería tener invitados')
+    // Un invitado de la boda B, pedido por la ruta de la boda A, es 404: el
+    // id existe, pero no en ESE evento.
+    const ajeno = itemsDeB[0]
+    if (ajeno === undefined) throw new Error('la boda B debería tener invitados')
     await request(url)
-      .get(`/events/${bodaDeAna}/guests/${ajeno.id}`)
-      .set('Authorization', `Bearer ${planner.accessToken}`)
+      .get(`/events/${bodaA}/guests/${ajeno.id}`)
+      .set('Authorization', `Bearer ${plannerPropio.accessToken}`)
       .expect(404)
   })
 
   it('pagina con cursor a través de HTTP y acaba con nextCursor null', async () => {
-    for (let i = 0; i < 5; i += 1) {
+    // Boda propia con un número EXACTO de invitados: pagina sobre un total
+    // conocido en vez de contar lo que dejaron otros tests en `bodaDeAna`.
+    const anaEmail = `ana-${randomUUID()}@test.com`
+    const anaPropia = await registrarYEntrar(anaEmail, 'Ana Propia')
+    const bodaPropia = await crearEvento(anaPropia.accessToken, 'Boda de paginación')
+    const total = 5
+
+    for (let i = 0; i < total; i += 1) {
       await request(url)
-        .post(`/events/${bodaDeAna}/guests`)
-        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .post(`/events/${bodaPropia}/guests`)
+        .set('Authorization', `Bearer ${anaPropia.accessToken}`)
         .send({ name: `Página ${i}`, group: 'Friends' })
         .expect(201)
     }
 
     const primera = await request(url)
-      .get(`/events/${bodaDeAna}/guests?limit=3`)
-      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .get(`/events/${bodaPropia}/guests?limit=3`)
+      .set('Authorization', `Bearer ${anaPropia.accessToken}`)
       .expect(200)
     const pagina1 = primera.body as CuerpoPagina
     expect(pagina1.items).toHaveLength(3)
@@ -243,8 +279,8 @@ describe('Invitados e2e', () => {
     let cursor = pagina1.nextCursor
     while (cursor !== null) {
       const siguiente = await request(url)
-        .get(`/events/${bodaDeAna}/guests?limit=3&cursor=${encodeURIComponent(cursor)}`)
-        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .get(`/events/${bodaPropia}/guests?limit=3&cursor=${encodeURIComponent(cursor)}`)
+        .set('Authorization', `Bearer ${anaPropia.accessToken}`)
         .expect(200)
       const pagina = siguiente.body as CuerpoPagina
       for (const g of pagina.items) {
@@ -254,8 +290,7 @@ describe('Invitados e2e', () => {
       cursor = pagina.nextCursor
     }
 
-    const todos = await prisma.guest.count({ where: { eventId: bodaDeAna } })
-    expect(vistos.size).toBe(todos)
+    expect(vistos.size).toBe(total)
   })
 
   it('un cursor inventado es 400, no un 500', async () => {
@@ -275,13 +310,31 @@ describe('Invitados e2e', () => {
   })
 
   it('filtra por rsvp y por grupo desde la query', async () => {
+    // Boda propia con exactamente un invitado PENDING/Friends: el filtro se
+    // comprueba sobre un dato que este test controla, no sobre lo que dejó
+    // otro test en `bodaDeAna`.
+    const anaEmail = `ana-${randomUUID()}@test.com`
+    const anaPropia = await registrarYEntrar(anaEmail, 'Ana Propia')
+    const bodaPropia = await crearEvento(anaPropia.accessToken, 'Boda de filtros')
+
+    await request(url)
+      .post(`/events/${bodaPropia}/guests`)
+      .set('Authorization', `Bearer ${anaPropia.accessToken}`)
+      .send({ name: 'Amigo Pendiente', group: 'Friends' })
+      .expect(201)
+    await request(url)
+      .post(`/events/${bodaPropia}/guests`)
+      .set('Authorization', `Bearer ${anaPropia.accessToken}`)
+      .send({ name: 'Familiar Pendiente', group: 'Family' })
+      .expect(201)
+
     const respuesta = await request(url)
-      .get(`/events/${bodaDeAna}/guests?rsvp=PENDING&group=Friends&limit=100`)
-      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .get(`/events/${bodaPropia}/guests?rsvp=PENDING&group=Friends&limit=100`)
+      .set('Authorization', `Bearer ${anaPropia.accessToken}`)
       .expect(200)
 
     const items = (respuesta.body as CuerpoPagina).items
-    expect(items.length).toBeGreaterThan(0)
+    expect(items).toHaveLength(1)
     expect(items.every((g) => g.rsvp === 'PENDING' && g.group === 'Friends')).toBe(true)
   })
 
@@ -298,27 +351,37 @@ describe('Invitados e2e', () => {
   })
 
   it('el resumen se mueve al cambiar un RSVP, sin ninguna columna de contador', async () => {
+    // Boda propia con un único invitado PENDING: el movimiento del resumen se
+    // mide sobre un antes/después que este test controla por completo.
+    const anaEmail = `ana-${randomUUID()}@test.com`
+    const anaPropia = await registrarYEntrar(anaEmail, 'Ana Propia')
+    const bodaPropia = await crearEvento(anaPropia.accessToken, 'Boda del resumen')
+
+    const creado = (
+      await request(url)
+        .post(`/events/${bodaPropia}/guests`)
+        .set('Authorization', `Bearer ${anaPropia.accessToken}`)
+        .send({ name: 'Pendiente', group: 'Friends' })
+        .expect(201)
+    ).body as CuerpoInvitado
+
     const antes = (
       await request(url)
-        .get(`/events/${bodaDeAna}/guests/summary`)
-        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .get(`/events/${bodaPropia}/guests/summary`)
+        .set('Authorization', `Bearer ${anaPropia.accessToken}`)
         .expect(200)
     ).body as CuerpoResumen
 
-    const alguien = await prisma.guest.findFirstOrThrow({
-      where: { eventId: bodaDeAna, rsvp: 'PENDING' },
-    })
-
     await request(url)
-      .patch(`/events/${bodaDeAna}/guests/${alguien.id}`)
-      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .patch(`/events/${bodaPropia}/guests/${creado.id}`)
+      .set('Authorization', `Bearer ${anaPropia.accessToken}`)
       .send({ rsvp: 'CONFIRMED' })
       .expect(200)
 
     const despues = (
       await request(url)
-        .get(`/events/${bodaDeAna}/guests/summary`)
-        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .get(`/events/${bodaPropia}/guests/summary`)
+        .set('Authorization', `Bearer ${anaPropia.accessToken}`)
         .expect(200)
     ).body as CuerpoResumen
 
@@ -463,13 +526,28 @@ describe('Invitados e2e', () => {
   })
 
   it('un vendor contratado NO puede tocar NINGUNA de las ocho rutas: 403', async () => {
-    // `@RequireEventAccess` es inerte si falta en un método (el guard sólo mira
-    // el handler), y un decorador que falta se ve igual que uno que está. Por
-    // eso se comprueban las SEIS rutas, no sólo el listado: con una sola, el
-    // día que alguien olvide el decorador en el DELETE la suite seguiría verde.
+    // Boda, invitado y vendor propios: `@RequireEventAccess` es inerte si
+    // falta en un método, y un decorador que falta se ve igual que uno que
+    // está. Por eso se comprueban las SEIS rutas, no sólo el listado — con
+    // una sola, el día que alguien olvide el decorador en el DELETE la suite
+    // seguiría verde.
+    const anaEmail = `ana-${randomUUID()}@test.com`
+    const fotografoEmail = `foto-${randomUUID()}@test.com`
+    const anaPropia = await registrarYEntrar(anaEmail, 'Ana Propia')
+    const fotografoPropio = await registrarYEntrar(fotografoEmail, 'Fotógrafo Propio')
+    const bodaPropia = await crearEvento(anaPropia.accessToken, 'Boda propia')
+
+    const victima = (
+      await request(url)
+        .post(`/events/${bodaPropia}/guests`)
+        .set('Authorization', `Bearer ${anaPropia.accessToken}`)
+        .send({ name: 'Invitado', group: 'Friends' })
+        .expect(201)
+    ).body as CuerpoInvitado
+
     const perfil = await prisma.vendorProfile.create({
       data: {
-        userId: fotografo.id,
+        userId: fotografoPropio.id,
         businessName: 'Lumière',
         category: 'Fotografía',
         status: 'PUBLISHED',
@@ -477,7 +555,7 @@ describe('Invitados e2e', () => {
     })
     await prisma.eventVendor.create({
       data: {
-        eventId: bodaDeAna,
+        eventId: bodaPropia,
         vendorProfileId: perfil.id,
         category: 'Fotografía',
         status: 'BOOKED',
@@ -487,40 +565,39 @@ describe('Invitados e2e', () => {
     // Tiene acceso al evento: `GET /events/:id` (sin @RequireEventAccess) le
     // deja entrar. Lo que no tiene es permiso sobre los invitados.
     await request(url)
-      .get(`/events/${bodaDeAna}`)
-      .set('Authorization', `Bearer ${fotografo.accessToken}`)
+      .get(`/events/${bodaPropia}`)
+      .set('Authorization', `Bearer ${fotografoPropio.accessToken}`)
       .expect(200)
 
-    const victima = await prisma.guest.findFirstOrThrow({ where: { eventId: bodaDeAna } })
-    const token = `Bearer ${fotografo.accessToken}`
+    const token = `Bearer ${fotografoPropio.accessToken}`
 
     // Cada petición en su propio thunk para recorrerlas todas en el mismo
     // bucle de abajo: no hay carrera por el puerto, `url` ya escucha desde
     // `beforeAll` (ver `arrancarAppDeTest`, `test/support/app.ts`).
     const negados = [
-      () => request(url).get(`/events/${bodaDeAna}/guests`).set('Authorization', token),
+      () => request(url).get(`/events/${bodaPropia}/guests`).set('Authorization', token),
       () =>
-        request(url).post(`/events/${bodaDeAna}/guests/invitations`).set('Authorization', token),
+        request(url).post(`/events/${bodaPropia}/guests/invitations`).set('Authorization', token),
       () =>
         request(url)
-          .post(`/events/${bodaDeAna}/guests/${victima.id}/invitation`)
+          .post(`/events/${bodaPropia}/guests/${victima.id}/invitation`)
           .set('Authorization', token),
-      () => request(url).get(`/events/${bodaDeAna}/guests/summary`).set('Authorization', token),
+      () => request(url).get(`/events/${bodaPropia}/guests/summary`).set('Authorization', token),
       () =>
         request(url)
-          .post(`/events/${bodaDeAna}/guests`)
+          .post(`/events/${bodaPropia}/guests`)
           .set('Authorization', token)
           .send({ name: 'Colado', group: 'Work' }),
       () =>
-        request(url).get(`/events/${bodaDeAna}/guests/${victima.id}`).set('Authorization', token),
+        request(url).get(`/events/${bodaPropia}/guests/${victima.id}`).set('Authorization', token),
       () =>
         request(url)
-          .patch(`/events/${bodaDeAna}/guests/${victima.id}`)
+          .patch(`/events/${bodaPropia}/guests/${victima.id}`)
           .set('Authorization', token)
           .send({ rsvp: 'DECLINED' }),
       () =>
         request(url)
-          .delete(`/events/${bodaDeAna}/guests/${victima.id}`)
+          .delete(`/events/${bodaPropia}/guests/${victima.id}`)
           .set('Authorization', token),
     ]
 
@@ -533,8 +610,10 @@ describe('Invitados e2e', () => {
     const sigueIgual = await prisma.guest.findUnique({ where: { id: victima.id } })
     expect(sigueIgual).not.toBeNull()
     expect(sigueIgual?.rsvp).toBe(victima.rsvp)
-    expect(await prisma.guest.count({ where: { eventId: bodaDeAna, name: 'Colado' } })).toBe(0)
+    expect(await prisma.guest.count({ where: { eventId: bodaPropia, name: 'Colado' } })).toBe(0)
     // Y que el vendor no haya conseguido encolar ni una invitación.
-    expect(await prisma.guestInvitation.count({ where: { guest: { eventId: bodaDeAna } } })).toBe(0)
+    expect(
+      await prisma.guestInvitation.count({ where: { guest: { eventId: bodaPropia } } }),
+    ).toBe(0)
   })
 })

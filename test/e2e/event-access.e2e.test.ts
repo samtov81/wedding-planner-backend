@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
@@ -67,6 +69,46 @@ describe('Acceso a eventos e2e', () => {
     return (respuesta.body as CuerpoEvento[]).map((e) => e.id).sort()
   }
 
+  /**
+   * Invita a `plannerEmail`/`plannerId` a `eventoId` y ACTIVA la membresía a
+   * mano (no existe todavía el endpoint de aceptar invitación). Parametrizado
+   * por planner para que cada test que necesite un planner activo se cree el
+   * suyo, en vez de compartir el `pedro` de `beforeAll`.
+   */
+  async function activarPlannerEn(
+    eventoId: string,
+    tokenDelCouple: string,
+    plannerEmail: string,
+    plannerId: string,
+  ): Promise<void> {
+    await request(url)
+      .post(`/events/${eventoId}/members`)
+      .set('Authorization', `Bearer ${tokenDelCouple}`)
+      .send({ email: plannerEmail, role: 'PLANNER' })
+      .expect(201)
+
+    await prisma.eventMembership.update({
+      where: { eventId_userId: { eventId: eventoId, userId: plannerId } },
+      data: { status: 'ACTIVE' },
+    })
+  }
+
+  /** Un evento nuevo con un planner propio ya ACTIVE, todo de un solo uso. */
+  async function prepararEventoConPlannerActivo(): Promise<{
+    eventoId: string
+    planner: { id: string; accessToken: string }
+  }> {
+    const coupleEmail = `couple-${randomUUID()}@test.com`
+    const plannerEmail = `planner-${randomUUID()}@test.com`
+    const couple = await registrarYEntrar(coupleEmail, 'Novia Propia')
+    const planner = await registrarYEntrar(plannerEmail, 'Planner Propio')
+    const eventoId = await crearEvento(couple.accessToken, 'Boda propia')
+
+    await activarPlannerEn(eventoId, couple.accessToken, plannerEmail, planner.id)
+
+    return { eventoId, planner }
+  }
+
   beforeAll(async () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
@@ -103,15 +145,21 @@ describe('Acceso a eventos e2e', () => {
   })
 
   it('un usuario sin acceso recibe 404, no 403', async () => {
+    // Usuario propio: `extrano` (compartido con el test de vendor BOOKED de
+    // este mismo fichero) puede acabar con acceso a `eventoDeAna` bajo
+    // `--sequence.shuffle` si ese otro test corre antes. Uno recién
+    // registrado no tiene relación con `eventoDeAna` pase lo que pase.
+    const propio = await registrarYEntrar(`extrano-${randomUUID()}@test.com`, 'Extraño Propio')
+
     const respuesta = await request(url)
       .get(`/events/${eventoDeAna}`)
-      .set('Authorization', `Bearer ${extrano.accessToken}`)
+      .set('Authorization', `Bearer ${propio.accessToken}`)
       .expect(404)
 
     // El cuerpo no debe distinguirse del de un evento que no existe.
     const inventado = await request(url)
       .get(`/events/${INVENTADO}`)
-      .set('Authorization', `Bearer ${extrano.accessToken}`)
+      .set('Authorization', `Bearer ${propio.accessToken}`)
       .expect(404)
 
     expect((respuesta.body as CuerpoError).code).toBe((inventado.body as CuerpoError).code)
@@ -165,49 +213,56 @@ describe('Acceso a eventos e2e', () => {
   })
 
   it('un planner activo entra al evento, pero NO puede invitar: ahí sí es 403', async () => {
-    // No existe todavía el endpoint para aceptar una invitación (es de una
-    // tarea posterior), así que la aceptación se simula escribiendo la fila.
-    await prisma.eventMembership.update({
-      where: { eventId_userId: { eventId: eventoDeAna, userId: pedro.id } },
-      data: { status: 'ACTIVE' },
-    })
+    const { eventoId, planner } = await prepararEventoConPlannerActivo()
 
     await request(url)
-      .get(`/events/${eventoDeAna}`)
-      .set('Authorization', `Bearer ${pedro.accessToken}`)
+      .get(`/events/${eventoId}`)
+      .set('Authorization', `Bearer ${planner.accessToken}`)
       .expect(200)
 
-    // 403 y no 404: Pedro YA sabe que el evento existe, así que negarle esta
-    // operación concreta no le revela nada que no tuviera.
+    // 403 y no 404: el planner YA sabe que el evento existe, así que negarle
+    // esta operación concreta no le revela nada que no tuviera.
     const negado = await request(url)
-      .post(`/events/${eventoDeAna}/members`)
-      .set('Authorization', `Bearer ${pedro.accessToken}`)
-      .send({ email: 'extrano@test.com', role: 'PLANNER' })
+      .post(`/events/${eventoId}/members`)
+      .set('Authorization', `Bearer ${planner.accessToken}`)
+      .send({ email: `otro-${randomUUID()}@test.com`, role: 'PLANNER' })
       .expect(403)
 
     expect((negado.body as CuerpoError).code).toBe('FORBIDDEN')
   })
 
   it('cada quien ve en su lista sólo los eventos a los que tiene acceso', async () => {
+    const anaEmail = `ana-${randomUUID()}@test.com`
+    const pedroEmail = `pedro-${randomUUID()}@test.com`
+    const extranoEmail = `extrano-${randomUUID()}@test.com`
+    const anaPropia = await registrarYEntrar(anaEmail, 'Ana Propia')
+    const pedroPropio = await registrarYEntrar(pedroEmail, 'Pedro Propio')
+    const extranoPropio = await registrarYEntrar(extranoEmail, 'Extraño Propio')
+
+    const eventoDeAnaPropio = await crearEvento(anaPropia.accessToken, 'Boda de Ana propia')
+    const eventoDePedroPropio = await crearEvento(pedroPropio.accessToken, 'Boda de Pedro propia')
+
+    // Pedro es COUPLE del suyo y PLANNER ya activo en el de Ana.
+    await activarPlannerEn(eventoDeAnaPropio, anaPropia.accessToken, pedroEmail, pedroPropio.id)
+
     const deAna = await request(url)
       .get('/events')
-      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .set('Authorization', `Bearer ${anaPropia.accessToken}`)
       .expect(200)
 
     const dePedro = await request(url)
       .get('/events')
-      .set('Authorization', `Bearer ${pedro.accessToken}`)
+      .set('Authorization', `Bearer ${pedroPropio.accessToken}`)
       .expect(200)
 
     const deExtrano = await request(url)
       .get('/events')
-      .set('Authorization', `Bearer ${extrano.accessToken}`)
+      .set('Authorization', `Bearer ${extranoPropio.accessToken}`)
       .expect(200)
 
-    expect((deAna.body as CuerpoEvento[]).map((e) => e.id)).toEqual([eventoDeAna])
-    // Pedro es COUPLE del suyo y PLANNER ya activo en el de Ana.
+    expect((deAna.body as CuerpoEvento[]).map((e) => e.id)).toEqual([eventoDeAnaPropio])
     expect((dePedro.body as CuerpoEvento[]).map((e) => e.id).sort()).toEqual(
-      [eventoDeAna, eventoDePedro].sort(),
+      [eventoDeAnaPropio, eventoDePedroPropio].sort(),
     )
     expect(deExtrano.body).toEqual([])
   })
@@ -251,22 +306,22 @@ describe('Acceso a eventos e2e', () => {
       .expect(403)
   })
 
-  /**
-   * DEBE SER EL ÚLTIMO: revoca la membresía de Pedro, y este fichero comparte
-   * estado entre tests en el orden en que están escritos.
-   */
   it('revocar cierra las dos puertas: el evento suelto y el listado', async () => {
-    expect(await listarEventos(pedro.accessToken)).toEqual([eventoDeAna, eventoDePedro].sort())
+    // Activa SU PROPIA membresía en vez de depender de que otro test haya
+    // dejado a Pedro en ACTIVE: corre igual sola, con shuffle o en la suite.
+    const { eventoId, planner } = await prepararEventoConPlannerActivo()
+
+    expect(await listarEventos(planner.accessToken)).toEqual([eventoId])
 
     await prisma.eventMembership.update({
-      where: { eventId_userId: { eventId: eventoDeAna, userId: pedro.id } },
+      where: { eventId_userId: { eventId: eventoId, userId: planner.id } },
       data: { status: 'REVOKED' },
     })
 
     await request(url)
-      .get(`/events/${eventoDeAna}`)
-      .set('Authorization', `Bearer ${pedro.accessToken}`)
+      .get(`/events/${eventoId}`)
+      .set('Authorization', `Bearer ${planner.accessToken}`)
       .expect(404)
-    expect(await listarEventos(pedro.accessToken)).toEqual([eventoDePedro])
+    expect(await listarEventos(planner.accessToken)).toEqual([])
   })
 })

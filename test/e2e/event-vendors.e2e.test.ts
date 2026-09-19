@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
@@ -24,6 +26,12 @@ interface CuerpoEventVendor {
  * `@UseGuards(EventAccessGuard)` (ver notas de la Tarea 10), así que un test
  * contra el servidor real —no una llamada directa al guard— es la única
  * prueba de que los dos están de verdad enganchados en estas rutas.
+ *
+ * Tarea 2 (endurecimiento): cada test que necesita estado propio (un perfil
+ * PUBLISHED, un listado con un total exacto, un vendor BOOKED) se lo crea con
+ * su propio usuario y su propio evento en vez de heredarlo de un test
+ * anterior — así corre igual aislado, con `--sequence.shuffle`, o dentro de
+ * la suite completa.
  */
 describe('Vendors por evento e2e', () => {
   let pg: PostgresDeTest
@@ -36,7 +44,6 @@ describe('Vendors por evento e2e', () => {
   let extrano: { id: string; accessToken: string }
   let fotografo: { id: string; accessToken: string }
   let evento: string
-  let perfilFotografo: string
 
   async function registrarYEntrar(
     email: string,
@@ -58,6 +65,15 @@ describe('Vendors por evento e2e', () => {
     }
   }
 
+  async function crearEvento(accessToken: string, name: string): Promise<string> {
+    const respuesta = await request(url)
+      .post('/events')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ name, weddingDate: '2027-06-12T00:00:00.000Z' })
+      .expect(201)
+    return (respuesta.body as { id: string }).id
+  }
+
   beforeAll(async () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
@@ -69,12 +85,7 @@ describe('Vendors por evento e2e', () => {
     extrano = await registrarYEntrar('extrano@test.com', 'Extraño')
     fotografo = await registrarYEntrar('foto@test.com', 'Fotógrafo')
 
-    const respuesta = await request(url)
-      .post('/events')
-      .set('Authorization', `Bearer ${ana.accessToken}`)
-      .send({ name: 'Boda de Ana', weddingDate: '2027-06-12T00:00:00.000Z' })
-      .expect(201)
-    evento = (respuesta.body as { id: string }).id
+    evento = await crearEvento(ana.accessToken, 'Boda de Ana')
   }, 180_000)
 
   afterAll(async () => {
@@ -116,8 +127,12 @@ describe('Vendors por evento e2e', () => {
       vendorRef: { kind: 'external', name: 'Flores Pepa' },
     })
 
+    // Filtrado también por `target`: `evento` es compartido con otros tests
+    // de este fichero que también añaden vendors (p. ej. "elimina un
+    // proveedor"), así que un filtro sólo por `eventId` + `action` cuenta
+    // auditoría ajena bajo `--sequence.shuffle`.
     const auditoria = await prisma.auditLog.findMany({
-      where: { eventId: evento, action: 'event_vendor.added' },
+      where: { eventId: evento, action: 'event_vendor.added', target: `event_vendor:${cuerpo.id}` },
     })
     expect(auditoria).toHaveLength(1)
     expect(auditoria[0]).toMatchObject({ actorUserId: ana.id, target: `event_vendor:${cuerpo.id}` })
@@ -137,7 +152,6 @@ describe('Vendors por evento e2e', () => {
     const perfil = await prisma.vendorProfile.create({
       data: { userId: fotografo.id, businessName: 'Lumière', category: 'Fotografía' },
     })
-    perfilFotografo = perfil.id
 
     const respuesta = await request(url)
       .post(`/events/${evento}/vendors`)
@@ -149,43 +163,69 @@ describe('Vendors por evento e2e', () => {
   })
 
   it('enlaza una ficha PUBLISHED del marketplace', async () => {
-    // Se publica la MISMA ficha (una por usuario, `userId` es único en
-    // `VendorProfile`) en vez de crear una segunda para el mismo fotógrafo.
-    await prisma.vendorProfile.update({
-      where: { id: perfilFotografo },
-      data: { status: 'PUBLISHED' },
+    // `VendorProfile.userId` es único, así que este test registra SU PROPIO
+    // fotógrafo en vez de reutilizar `fotografo` (que el test anterior ya usó
+    // para una ficha no-PUBLISHED) o depender de que ese test corriera antes.
+    const fotografoPropio = await registrarYEntrar(`foto-${randomUUID()}@test.com`, 'Fotógrafo Propio')
+    const eventoPropio = await crearEvento(ana.accessToken, 'Boda para enlazar ficha')
+
+    const perfil = await prisma.vendorProfile.create({
+      data: {
+        userId: fotografoPropio.id,
+        businessName: 'Lumière',
+        category: 'Fotografía',
+        status: 'PUBLISHED',
+      },
     })
 
     const respuesta = await request(url)
-      .post(`/events/${evento}/vendors`)
+      .post(`/events/${eventoPropio}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
-      .send({ vendorProfileId: perfilFotografo, category: 'Fotografía' })
+      .send({ vendorProfileId: perfil.id, category: 'Fotografía' })
       .expect(201)
 
     expect((respuesta.body as CuerpoEventVendor).vendorRef).toEqual({
       kind: 'linked',
-      vendorProfileId: perfilFotografo,
+      vendorProfileId: perfil.id,
     })
   })
 
   it('lista los proveedores del evento', async () => {
+    const eventoPropio = await crearEvento(ana.accessToken, 'Boda para listar proveedores')
+
+    await request(url)
+      .post(`/events/${eventoPropio}/vendors`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ externalName: 'Flores Pepa', externalEmail: 'pepa@flores.es', category: 'Floristería' })
+      .expect(201)
+    await request(url)
+      .post(`/events/${eventoPropio}/vendors`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ externalName: 'Catering Uno', externalEmail: 'catering@uno.es', category: 'Catering' })
+      .expect(201)
+
     const respuesta = await request(url)
-      .get(`/events/${evento}/vendors`)
+      .get(`/events/${eventoPropio}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .expect(200)
 
-    expect((respuesta.body as CuerpoEventVendor[]).length).toBeGreaterThanOrEqual(2)
+    const proveedores = respuesta.body as CuerpoEventVendor[]
+    expect(proveedores).toHaveLength(2)
+    expect(proveedores.every((v) => v.eventId === eventoPropio)).toBe(true)
   })
 
   it('actualiza el status de un proveedor', async () => {
-    const listado = await request(url)
-      .get(`/events/${evento}/vendors`)
+    const eventoPropio = await crearEvento(ana.accessToken, 'Boda para actualizar status')
+
+    const creado = await request(url)
+      .post(`/events/${eventoPropio}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
-      .expect(200)
-    const [primero] = listado.body as CuerpoEventVendor[]
+      .send({ externalName: 'Flores Pepa', externalEmail: 'pepa@flores.es', category: 'Floristería' })
+      .expect(201)
+    const id = (creado.body as CuerpoEventVendor).id
 
     const respuesta = await request(url)
-      .patch(`/events/${evento}/vendors/${primero?.id}`)
+      .patch(`/events/${eventoPropio}/vendors/${id}`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .send({ status: 'BOOKED' })
       .expect(200)
@@ -204,60 +244,57 @@ describe('Vendors por evento e2e', () => {
   })
 
   it('un vendor BOOKED tiene acceso al evento pero NO puede gestionar vendors: 403', async () => {
-    const perfil = await prisma.vendorProfile.findFirstOrThrow({
-      where: { userId: fotografo.id },
+    const fotografoPropio = await registrarYEntrar(`foto-${randomUUID()}@test.com`, 'Fotógrafo Propio')
+    const eventoPropio = await crearEvento(ana.accessToken, 'Boda para vendor BOOKED')
+
+    const perfil = await prisma.vendorProfile.create({
+      data: {
+        userId: fotografoPropio.id,
+        businessName: 'Lumière',
+        category: 'Fotografía',
+        status: 'PUBLISHED',
+      },
     })
-    await prisma.eventVendor.updateMany({
-      where: { eventId: evento, vendorProfileId: perfil.id },
-      data: { status: 'BOOKED' },
+    const contratacion = await prisma.eventVendor.create({
+      data: {
+        eventId: eventoPropio,
+        vendorProfileId: perfil.id,
+        category: 'Fotografía',
+        status: 'BOOKED',
+      },
     })
 
-    // Tiene acceso: la lectura sin @RequireEventAccess de /events/:id le deja
-    // entrar (ver test e2e de eventos). Aquí, en cambio, SÍ hay lista y él no
-    // está en ella.
+    // Ronda de arreglo 1, hallazgo Important #2 (C12): comprobar sólo POST
+    // dejaba que quitar el decorador de PATCH o DELETE pasara desapercibido.
+    // Se repiten las cuatro rutas con el mismo `contratacion` que este test
+    // ya creó.
     const negado = await request(url)
-      .post(`/events/${evento}/vendors`)
-      .set('Authorization', `Bearer ${fotografo.accessToken}`)
+      .post(`/events/${eventoPropio}/vendors`)
+      .set('Authorization', `Bearer ${fotografoPropio.accessToken}`)
       .send({ externalName: 'Otro', category: 'Otra' })
       .expect(403)
-
     expect((negado.body as CuerpoError).code).toBe('FORBIDDEN')
 
-    // Ronda de arreglo 1, hallazgo Important #2 (C12): el test de arriba sólo
-    // cubría POST, así que quitar el decorador de PATCH o DELETE dejaba la
-    // suite entera en verde — justo el fallo silencioso que esta tarea
-    // encontró en su propio primer borrador. Se repite la comprobación en
-    // las otras tres rutas, con el estado que este mismo test ya dejó listo
-    // (fotografo BOOKED, con acceso pero sin permiso de gestión).
-    const listaDeAna = await request(url)
-      .get(`/events/${evento}/vendors`)
-      .set('Authorization', `Bearer ${ana.accessToken}`)
-      .expect(200)
-    const [algunProveedor] = listaDeAna.body as CuerpoEventVendor[]
-    if (algunProveedor === undefined)
-      throw new Error('el listado de Ana debería traer al menos uno')
-
     const negadoGet = await request(url)
-      .get(`/events/${evento}/vendors`)
-      .set('Authorization', `Bearer ${fotografo.accessToken}`)
+      .get(`/events/${eventoPropio}/vendors`)
+      .set('Authorization', `Bearer ${fotografoPropio.accessToken}`)
       .expect(403)
     expect((negadoGet.body as CuerpoError).code).toBe('FORBIDDEN')
 
     const negadoPatch = await request(url)
-      .patch(`/events/${evento}/vendors/${algunProveedor.id}`)
-      .set('Authorization', `Bearer ${fotografo.accessToken}`)
+      .patch(`/events/${eventoPropio}/vendors/${contratacion.id}`)
+      .set('Authorization', `Bearer ${fotografoPropio.accessToken}`)
       .send({ status: 'CANCELLED' })
       .expect(403)
     expect((negadoPatch.body as CuerpoError).code).toBe('FORBIDDEN')
 
     const negadoDelete = await request(url)
-      .delete(`/events/${evento}/vendors/${algunProveedor.id}`)
-      .set('Authorization', `Bearer ${fotografo.accessToken}`)
+      .delete(`/events/${eventoPropio}/vendors/${contratacion.id}`)
+      .set('Authorization', `Bearer ${fotografoPropio.accessToken}`)
       .expect(403)
     expect((negadoDelete.body as CuerpoError).code).toBe('FORBIDDEN')
 
-    // Y que ninguno de los tres intentos negados haya tocado la fila.
-    const sigueIgual = await prisma.eventVendor.findUnique({ where: { id: algunProveedor.id } })
+    const sigueIgual = await prisma.eventVendor.findUnique({ where: { id: contratacion.id } })
     expect(sigueIgual).not.toBeNull()
     expect(sigueIgual?.status).not.toBe('CANCELLED')
   })

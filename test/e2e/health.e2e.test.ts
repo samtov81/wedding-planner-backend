@@ -1,17 +1,15 @@
-import type { Server } from 'node:http'
-
-import type { NestExpressApplication } from '@nestjs/platform-express'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
 
-import { crearAppComoMain, fijarEntorno } from '../support/app'
+import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
+import { limpiarContadoresDeRitmo } from '../support/throttler'
 
 describe('Salud e2e', () => {
   let pg: PostgresDeTest
   let redis: StartedRedisContainer
-  let app: NestExpressApplication
-  let server: Server
+  let url: string
+  let cerrar: () => Promise<void>
   let postgresParado = false
 
   /**
@@ -28,25 +26,27 @@ describe('Salud e2e', () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
     fijarEntorno({ databaseUrl: pg.url, redisUrl: redis.getConnectionUrl() })
-
-    app = await crearAppComoMain()
-    server = app.getHttpServer()
+    ;({ url, cerrar } = await arrancarAppDeTest())
   }, 240_000)
 
+  beforeEach(async () => {
+    await limpiarContadoresDeRitmo(redis.getConnectionUrl())
+  })
+
   afterAll(async () => {
-    await app.close()
+    await cerrar()
     await redis.stop()
     await pararPostgres()
   }, 60_000)
 
   it('/health responde 200 con el proceso vivo', async () => {
-    const respuesta = await request(server).get('/health').expect(200)
+    const respuesta = await request(url).get('/health').expect(200)
 
     expect(respuesta.body).toEqual({ status: 'ok' })
   })
 
   it('/health/ready responde 200 con la base de datos y Redis arriba', async () => {
-    const respuesta = await request(server).get('/health/ready').expect(200)
+    const respuesta = await request(url).get('/health/ready').expect(200)
 
     expect(respuesta.body).toEqual({ status: 'ok', checks: { db: true, redis: true } })
   })
@@ -55,12 +55,12 @@ describe('Salud e2e', () => {
     // Las sondas del orquestador llegan siempre desde la misma IP y a ritmo
     // fijo. Con el `global` de 120/min, la sonda 121 sería un 429 y el
     // orquestador daría el proceso por muerto.
-    const primera = await request(server).get('/health').expect(200)
+    const primera = await request(url).get('/health').expect(200)
     expect(primera.headers['x-ratelimit-limit-global']).toBeUndefined()
 
     // El `global` cuenta por IP Y por ruta: hay que pasar de 120 en UNA ruta.
     for (const ruta of ['/health', '/health/ready']) {
-      for (let i = 0; i < 125; i += 1) await request(server).get(ruta).expect(200)
+      for (let i = 0; i < 125; i += 1) await request(url).get(ruta).expect(200)
     }
   })
 
@@ -68,7 +68,7 @@ describe('Salud e2e', () => {
     it('/health/ready falla si la base de datos no responde', async () => {
       await pararPostgres()
 
-      const respuesta = await request(server).get('/health/ready').expect(503)
+      const respuesta = await request(url).get('/health/ready').expect(503)
 
       expect(respuesta.text).toContain('"db":false')
       expect(respuesta.text).toContain('"redis":true')
@@ -80,7 +80,7 @@ describe('Salud e2e', () => {
       // es exactamente cuando no quieres reiniciarlo todo.
       await pararPostgres()
 
-      await request(server).get('/health').expect(200)
+      await request(url).get('/health').expect(200)
     })
   })
 })

@@ -1,5 +1,3 @@
-import type { Server } from 'node:http'
-
 import type { NestExpressApplication } from '@nestjs/platform-express'
 import { Test } from '@nestjs/testing'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
@@ -31,7 +29,7 @@ describe('Logs de peticiones (pino-http) e2e', () => {
   let pg: PostgresDeTest
   let redis: StartedRedisContainer
   let app: NestExpressApplication
-  let server: Server
+  let url: string
   const logs = new LogsCapturados()
 
   beforeAll(async () => {
@@ -51,8 +49,11 @@ describe('Logs de peticiones (pino-http) e2e', () => {
     // Como `main.ts`: el logger de Nest es el de pino.
     app.useLogger(app.get(Logger))
     await configurarApp(app, app.get<Env>(ENV))
-    await app.init()
-    server = app.getHttpServer()
+    // Escuchando de verdad (ver `arrancarAppDeTest`, `test/support/app.ts`):
+    // un servidor que no escucha hace que supertest abra un puerto efímero
+    // POR PETICIÓN, y bajo la suite completa alguna acaba en otro proceso.
+    await app.listen(0, '127.0.0.1')
+    url = (await app.getUrl()).replace('[::1]', '127.0.0.1')
   }, 240_000)
 
   afterAll(async () => {
@@ -69,8 +70,8 @@ describe('Logs de peticiones (pino-http) e2e', () => {
   it('el token del RSVP en la ruta no llega al log, y la petición SÍ se registra', async () => {
     const { token } = generarTokenInvitacion()
 
-    await request(server).get(`/rsvp/${token}`).expect(404)
-    await request(server).post(`/RSVP/${token}?x=1`).send({ rsvp: 'CONFIRMED' }).expect(404)
+    await request(url).get(`/rsvp/${token}`).expect(404)
+    await request(url).post(`/RSVP/${token}?x=1`).send({ rsvp: 'CONFIRMED' }).expect(404)
 
     const todo = logs.todo()
     expect(todo).not.toContain(token)
@@ -84,7 +85,7 @@ describe('Logs de peticiones (pino-http) e2e', () => {
     // hace la página `${APP_URL}/rsvp/<token>` lleva ese Referer.
     const { token } = generarTokenInvitacion()
 
-    await request(server)
+    await request(url)
       .get('/auth/me')
       .set('Referer', `https://app.example.com/rsvp/${token}?utm=x`)
       .expect(401)
@@ -96,7 +97,7 @@ describe('Logs de peticiones (pino-http) e2e', () => {
   })
 
   it('las credenciales de las cabeceras no llegan al log', async () => {
-    await request(server)
+    await request(url)
       .get('/auth/me')
       .set('Authorization', 'Bearer secreto-del-bearer')
       .set('Cookie', 'refresh_token=secreto-de-la-cookie')
@@ -115,11 +116,11 @@ describe('Logs de peticiones (pino-http) e2e', () => {
 
   it('el refresh token que la API pone en Set-Cookie no llega al log', async () => {
     const credenciales = { email: 'logs@test.com', password: 'una-contraseña-larga' }
-    await request(server)
+    await request(url)
       .post('/auth/register')
       .send({ ...credenciales, fullName: 'Logs' })
       .expect(201)
-    const { headers } = await request(server).post('/auth/login').send(credenciales).expect(200)
+    const { headers } = await request(url).post('/auth/login').send(credenciales).expect(200)
 
     const cookies = ([] as string[]).concat(headers['set-cookie'] ?? [])
     expect(cookies.length).toBeGreaterThan(0)
@@ -132,13 +133,13 @@ describe('Logs de peticiones (pino-http) e2e', () => {
   })
 
   it('el x-request-id de la respuesta es el reqId del log: se puede seguir la petición', async () => {
-    const { headers } = await request(server).get('/health/ready').set('x-request-id', 'sigue-me-1')
+    const { headers } = await request(url).get('/health/ready').set('x-request-id', 'sigue-me-1')
 
     expect(headers['x-request-id']).toBe('sigue-me-1')
     // Las sondas no se registran (una línea cada pocos segundos por pod no
     // aporta nada); una ruta normal sí, con su id.
     expect(logs.todo()).not.toContain('sigue-me-1')
-    await request(server).get('/auth/me').set('x-request-id', 'sigue-me-2').expect(401)
+    await request(url).get('/auth/me').set('x-request-id', 'sigue-me-2').expect(401)
     expect(logs.todo()).toContain('"id":"sigue-me-2"')
   })
 })

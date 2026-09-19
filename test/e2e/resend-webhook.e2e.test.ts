@@ -1,14 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import type { Server } from 'node:http'
 
-import { type INestApplication } from '@nestjs/common'
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
 import { Webhook } from 'svix'
 
-import { crearAppComoMain } from '../support/app'
+import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
+import { limpiarContadoresDeRitmo } from '../support/throttler'
 
 type EstadoInvitacion = 'QUEUED' | 'SENT' | 'DELIVERED' | 'BOUNCED' | 'COMPLAINED' | 'RESPONDED'
 
@@ -17,8 +16,8 @@ const SECRETO = `whsec_${Buffer.from('secreto-e2e-del-webhook-32-bytes').toStrin
 describe('Webhook de Resend e2e', () => {
   let pg: PostgresDeTest
   let redis: StartedRedisContainer
-  let app: INestApplication
-  let server: Server
+  let url: string
+  let cerrar: () => Promise<void>
   let prisma: PrismaClient
   let guestId: string
 
@@ -66,7 +65,7 @@ describe('Webhook de Resend e2e', () => {
   }
 
   function enviar(cuerpo: string, cabeceras: Record<string, string>): request.Test {
-    return request(server)
+    return request(url)
       .post('/webhooks/resend')
       .set('Content-Type', 'application/json')
       .set(cabeceras)
@@ -76,22 +75,15 @@ describe('Webhook de Resend e2e', () => {
   beforeAll(async () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
-
-    process.env.NODE_ENV = 'test'
-    process.env.DATABASE_URL = pg.url
-    process.env.REDIS_URL = redis.getConnectionUrl()
-    process.env.JWT_ACCESS_SECRET = 'x'.repeat(32)
-    process.env.JWT_ACCESS_TTL = '15m'
-    process.env.REFRESH_TTL_DAYS = '30'
-    process.env.MAIL_DRIVER = 'fake'
-    process.env.APP_URL = 'http://localhost:5173'
-    process.env.RESEND_WEBHOOK_SECRET = SECRETO
+    fijarEntorno(
+      { databaseUrl: pg.url, redisUrl: redis.getConnectionUrl() },
+      { RESEND_WEBHOOK_SECRET: SECRETO },
+    )
 
     // El arranque de `main.ts` (`configurarApp`): el parser de cuerpo con su
     // límite es el que se despliega, y la firma tiene que seguir verificándose
     // sobre los bytes crudos que ese parser guarda.
-    app = await crearAppComoMain()
-    server = app.getHttpServer() as Server
+    ;({ url, cerrar } = await arrancarAppDeTest())
     prisma = new PrismaClient({ datasources: { db: { url: pg.url } } })
 
     const usuario = await prisma.user.create({
@@ -110,10 +102,14 @@ describe('Webhook de Resend e2e', () => {
     guestId = invitado.id
   }, 240_000)
 
+  beforeEach(async () => {
+    await limpiarContadoresDeRitmo(redis.getConnectionUrl())
+  })
+
   afterAll(async () => {
     delete process.env.RESEND_WEBHOOK_SECRET
     await prisma.$disconnect()
-    await app.close()
+    await cerrar()
     await redis.stop()
     await pg.stop()
   }, 60_000)
@@ -121,7 +117,7 @@ describe('Webhook de Resend e2e', () => {
   it('rechaza un webhook con firma inválida sin tocar la base de datos', async () => {
     const { id, mensaje } = await invitacionEnviada()
 
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .post('/webhooks/resend')
       .set('svix-id', 'msg_falso')
       .set('svix-timestamp', String(Math.floor(Date.now() / 1000)))
@@ -241,7 +237,7 @@ describe('Webhook de Resend e2e', () => {
 
   it('las demás rutas siguen parseando JSON con normalidad', async () => {
     // `rawBody: true` no puede romper el `req.body` del resto de la API.
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .post('/auth/register')
       .send({ email: 'otra@test.com', password: 'una-contraseña-larga', fullName: 'Otra' })
       .expect(201)

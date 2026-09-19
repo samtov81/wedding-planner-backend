@@ -40,3 +40,22 @@ export async function crearAppComoMain(): Promise<NestExpressApplication> {
   await app.init()
   return app
 }
+
+/**
+ * La app como `main.ts`, ESCUCHANDO en un puerto real elegido por el sistema.
+ * `request(app.getHttpServer())` sobre un servidor que no escucha hace que
+ * supertest abra un puerto efímero por PETICIÓN; bajo la suite completa, con
+ * workers en paralelo y el reenvío de puertos de Docker, alguna petición acaba
+ * en otro proceso (403 ajenos, `socket hang up`). Un servidor por fichero,
+ * escuchando una sola vez, elimina esa clase de fallo.
+ */
+export async function arrancarAppDeTest(): Promise<{
+  app: NestExpressApplication
+  url: string
+  cerrar: () => Promise<void>
+}> {
+  const app = await crearAppComoMain()
+  await app.listen(0, '127.0.0.1')
+  const url = await app.getUrl()
+  return { app, url: url.replace('[::1]', '127.0.0.1'), cerrar: () => app.close() }
+}

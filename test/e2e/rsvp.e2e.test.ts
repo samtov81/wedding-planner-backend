@@ -1,13 +1,11 @@
-import type { Server } from 'node:http'
 import { inspect } from 'node:util'
 
-import { type INestApplication, type LoggerService } from '@nestjs/common'
+import { type LoggerService } from '@nestjs/common'
 import type { NestExpressApplication } from '@nestjs/platform-express'
 import { Test } from '@nestjs/testing'
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import { Queue } from 'bullmq'
-import Redis from 'ioredis'
 import request from 'supertest'
 
 import { AppModule } from '@/app.module'
@@ -21,7 +19,9 @@ import { NOTIFICATION_PORT } from '@/modules/notifications/application/notificat
 import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
 import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
 
+import { fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
+import { limpiarContadoresDeRitmo } from '../support/throttler'
 
 interface CuerpoError {
   code: string
@@ -63,9 +63,8 @@ class RegistroCapturado implements LoggerService {
 describe('RSVP público e2e', () => {
   let pg: PostgresDeTest
   let redis: StartedRedisContainer
-  let redisCli: Redis
-  let app: INestApplication
-  let server: Server
+  let app: NestExpressApplication
+  let url: string
   let prisma: PrismaClient
   let eventId: string
   let parejaId: string
@@ -75,15 +74,21 @@ describe('RSVP público e2e', () => {
   const registro = new RegistroCapturado()
   /** Cada token que el test ha usado: ninguno puede aparecer en el log. */
   const tokensUsados = new Set<string>()
-  const otrasApps: INestApplication[] = []
+  const otrasApps: NestExpressApplication[] = []
 
   /**
    * La app real con el puerto de notificaciones sustituido por su doble, para
    * poder registrar miembros y provocar fallos. Desde la Tarea 15 el módulo
    * cablea el adaptador de Prisma: el rollback con el adaptador REAL está en
    * `realtime.e2e.test.ts`. La cola es la REAL (BullMQ sobre el Redis del test).
+   *
+   * Escucha de verdad (`listen(0)`), como `arrancarAppDeTest` en
+   * `test/support/app.ts`: no se puede reutilizar ese helper porque aquí el
+   * módulo lleva `overrideProvider` y un logger propio, pero la razón para
+   * escuchar es la misma — un servidor que no escucha hace que supertest abra
+   * un puerto efímero por petición.
    */
-  async function crearApp(): Promise<NestExpressApplication> {
+  async function crearApp(): Promise<{ app: NestExpressApplication; url: string }> {
     const modulo = await Test.createTestingModule({ imports: [AppModule] })
       .overrideProvider(NOTIFICATION_PORT)
       .useValue(notificaciones)
@@ -95,8 +100,9 @@ describe('RSVP público e2e', () => {
     })
     // El arranque de `main.ts`: body parser, CORS, helmet, filtro… (Tarea 16).
     await configurarApp(nueva, nueva.get<Env>(ENV))
-    await nueva.init()
-    return nueva
+    await nueva.listen(0, '127.0.0.1')
+    const suUrl = (await nueva.getUrl()).replace('[::1]', '127.0.0.1')
+    return { app: nueva, url: suUrl }
   }
 
   /** Un invitado nuevo con una invitación nueva: ningún test hereda estado de otro. */
@@ -135,16 +141,6 @@ describe('RSVP público e2e', () => {
     return { code: cuerpo.code, message: cuerpo.message }
   }
 
-  /**
-   * Los contadores del límite viven en Redis y sobreviven entre tests. Se
-   * borran SÓLO los de los limitadores (no un FLUSHDB, que se llevaría las
-   * colas de BullMQ del worker que está corriendo).
-   */
-  async function reiniciarLimites(): Promise<void> {
-    const claves = [...(await redisCli.keys('*:rsvp}:*')), ...(await redisCli.keys('*:global}:*'))]
-    if (claves.length > 0) await redisCli.del(...claves)
-  }
-
   /** El job que el caso de uso deja en la cola `notifications` para el worker de la Tarea 15. */
   async function jobDeAviso(invitationId: string): Promise<unknown> {
     const cola = new Queue('notifications', { connection: { url: redis.getConnectionUrl() } })
@@ -163,20 +159,9 @@ describe('RSVP público e2e', () => {
   beforeAll(async () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
-
-    process.env.NODE_ENV = 'test'
-    process.env.DATABASE_URL = pg.url
-    process.env.REDIS_URL = redis.getConnectionUrl()
-    process.env.JWT_ACCESS_SECRET = 'x'.repeat(32)
-    process.env.JWT_ACCESS_TTL = '15m'
-    process.env.REFRESH_TTL_DAYS = '30'
-    process.env.MAIL_DRIVER = 'fake'
-    process.env.APP_URL = 'http://localhost:5173'
-
-    app = await crearApp()
-    server = app.getHttpServer() as Server
+    fijarEntorno({ databaseUrl: pg.url, redisUrl: redis.getConnectionUrl() })
+    ;({ app, url } = await crearApp())
     prisma = new PrismaClient({ datasources: { db: { url: pg.url } } })
-    redisCli = new Redis(redis.getConnectionUrl())
 
     const pareja = await prisma.user.create({
       data: { email: 'pareja@test.com', passwordHash: 'x', fullName: 'Pareja' },
@@ -204,12 +189,11 @@ describe('RSVP público e2e', () => {
   }, 240_000)
 
   beforeEach(async () => {
-    await reiniciarLimites()
+    await limpiarContadoresDeRitmo(redis.getConnectionUrl())
   })
 
   afterAll(async () => {
     for (const otra of otrasApps) await otra.close()
-    redisCli.disconnect()
     await prisma.$disconnect()
     await app.close()
     await redis.stop()
@@ -221,7 +205,7 @@ describe('RSVP público e2e', () => {
       // Ni cabecera Authorization ni cookie: la credencial es el token.
       const { token } = await invitacion()
 
-      const respuesta = await request(server).get(`/rsvp/${token}`).expect(200)
+      const respuesta = await request(url).get(`/rsvp/${token}`).expect(200)
 
       // `toEqual` sobre el cuerpo entero: un id, un correo o un campo del
       // evento de más rompen el test.
@@ -240,7 +224,7 @@ describe('RSVP público e2e', () => {
       const { token, guestId, invitationId } = await invitacion()
       const creadasAntes = notificaciones.creadas.length
 
-      await request(server)
+      await request(url)
         .post(`/rsvp/${token}`)
         .send({ rsvp: 'CONFIRMED', dietary: 'Vegan' })
         .expect(204)
@@ -266,9 +250,9 @@ describe('RSVP público e2e', () => {
 
     it('el token es de un solo uso: la segunda respuesta no se escribe', async () => {
       const { token, guestId } = await invitacion()
-      await request(server).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' }).expect(204)
+      await request(url).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' }).expect(204)
 
-      await request(server).post(`/rsvp/${token}`).send({ rsvp: 'DECLINED' }).expect(404)
+      await request(url).post(`/rsvp/${token}`).send({ rsvp: 'DECLINED' }).expect(404)
 
       expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
         'CONFIRMED',
@@ -278,12 +262,12 @@ describe('RSVP público e2e', () => {
     it('un cuerpo inválido es un 400 que no gasta el token', async () => {
       const { token, guestId } = await invitacion()
 
-      await request(server).post(`/rsvp/${token}`).send({ rsvp: 'PENDING' }).expect(400)
+      await request(url).post(`/rsvp/${token}`).send({ rsvp: 'PENDING' }).expect(400)
       expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
         'PENDING',
       )
 
-      await request(server).post(`/rsvp/${token}`).send({ rsvp: 'DECLINED' }).expect(204)
+      await request(url).post(`/rsvp/${token}`).send({ rsvp: 'DECLINED' }).expect(204)
     })
 
     it('si falla una escritura, no se confirma NADA y el token sigue sirviendo', async () => {
@@ -293,7 +277,7 @@ describe('RSVP público e2e', () => {
       const { token, guestId, invitationId } = await invitacion()
       notificaciones.fallarProximaCreacion(new Error('fallo al crear notificaciones'))
 
-      const fallo = await request(server).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' })
+      const fallo = await request(url).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' })
 
       expect(fallo.status).toBe(500)
       expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
@@ -303,14 +287,14 @@ describe('RSVP público e2e', () => {
       expect(fila.status).toBe('DELIVERED')
       expect(fila.respondedAt).toBeNull()
 
-      await request(server).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' }).expect(204)
+      await request(url).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' }).expect(204)
     })
 
     it('si encolar el aviso falla, la respuesta ya está persistida y el invitado ve 204', async () => {
       const { token, guestId, invitationId } = await invitacion()
       const espia = espiarCola().mockRejectedValueOnce(new Error('redis caído'))
 
-      await request(server).post(`/rsvp/${token}`).send({ rsvp: 'DECLINED' }).expect(204)
+      await request(url).post(`/rsvp/${token}`).send({ rsvp: 'DECLINED' }).expect(204)
       espia.mockRestore()
 
       expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
@@ -331,7 +315,7 @@ describe('RSVP público e2e', () => {
       const intentos = ['CONFIRMED', 'DECLINED'] as const
 
       const respuestas = await Promise.all(
-        intentos.map((rsvp) => request(server).post(`/rsvp/${token}`).send({ rsvp })),
+        intentos.map((rsvp) => request(url).post(`/rsvp/${token}`).send({ rsvp })),
       )
 
       expect(respuestas.map((r) => r.status).sort()).toEqual([204, 404])
@@ -378,16 +362,16 @@ describe('RSVP público e2e', () => {
     it('un segundo envío caduca el primer token: GET y POST con el viejo son 404', async () => {
       const guestId = await invitadoPendiente()
       const viejo = await enviarA(guestId)
-      await request(server).get(`/rsvp/${viejo}`).expect(200)
+      await request(url).get(`/rsvp/${viejo}`).expect(200)
 
       const nuevo = await enviarA(guestId)
 
-      await request(server).get(`/rsvp/${viejo}`).expect(404)
-      await request(server).post(`/rsvp/${viejo}`).send({ rsvp: 'DECLINED' }).expect(404)
+      await request(url).get(`/rsvp/${viejo}`).expect(404)
+      await request(url).post(`/rsvp/${viejo}`).send({ rsvp: 'DECLINED' }).expect(404)
       expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
         'PENDING',
       )
-      await request(server).post(`/rsvp/${nuevo}`).send({ rsvp: 'CONFIRMED' }).expect(204)
+      await request(url).post(`/rsvp/${nuevo}`).send({ rsvp: 'CONFIRMED' }).expect(204)
     })
 
     it('corregir un email mal tecleado caduca el enlace que recibió la dirección equivocada', async () => {
@@ -398,8 +382,8 @@ describe('RSVP público e2e', () => {
         email: `corregido-${guestId}@test.com`,
       })
 
-      await request(server).get(`/rsvp/${delDesconocido}`).expect(404)
-      await request(server).post(`/rsvp/${delDesconocido}`).send({ rsvp: 'DECLINED' }).expect(404)
+      await request(url).get(`/rsvp/${delDesconocido}`).expect(404)
+      await request(url).post(`/rsvp/${delDesconocido}`).send({ rsvp: 'DECLINED' }).expect(404)
       expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
         'PENDING',
       )
@@ -434,7 +418,7 @@ describe('RSVP público e2e', () => {
 
       const cuerpos = []
       for (const [, token] of casos) {
-        const respuesta = await request(server).get(`/rsvp/${token}`)
+        const respuesta = await request(url).get(`/rsvp/${token}`)
         expect(respuesta.status).toBe(404)
         cuerpos.push(sinRequestId(respuesta.body as CuerpoError))
       }
@@ -449,7 +433,7 @@ describe('RSVP público e2e', () => {
 
       const cuerpos = []
       for (const [, token] of casos) {
-        const respuesta = await request(server).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' })
+        const respuesta = await request(url).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' })
         expect(respuesta.status).toBe(404)
         cuerpos.push(sinRequestId(respuesta.body as CuerpoError))
       }
@@ -463,68 +447,58 @@ describe('RSVP público e2e', () => {
   describe('límite de ritmo', () => {
     it('POST: el sexto intento en un minuto desde la misma IP es un 429', async () => {
       for (let i = 0; i < 5; i += 1) {
-        await request(server)
-          .post(`/rsvp/${tokenInventado()}`)
-          .send({ rsvp: 'CONFIRMED' })
-          .expect(404)
+        await request(url).post(`/rsvp/${tokenInventado()}`).send({ rsvp: 'CONFIRMED' }).expect(404)
       }
 
-      await request(server)
-        .post(`/rsvp/${tokenInventado()}`)
-        .send({ rsvp: 'CONFIRMED' })
-        .expect(429)
+      await request(url).post(`/rsvp/${tokenInventado()}`).send({ rsvp: 'CONFIRMED' }).expect(429)
     })
 
     it('el límite corta también un token VÁLIDO: se aplica antes de mirar el token', async () => {
       const { token } = await invitacion()
       for (let i = 0; i < 5; i += 1) {
-        await request(server).post(`/rsvp/${tokenInventado()}`).send({ rsvp: 'CONFIRMED' })
+        await request(url).post(`/rsvp/${tokenInventado()}`).send({ rsvp: 'CONFIRMED' })
       }
 
-      await request(server).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' }).expect(429)
+      await request(url).post(`/rsvp/${token}`).send({ rsvp: 'CONFIRMED' }).expect(429)
     })
 
     it('GET: 20 por minuto; el 21 es un 429', async () => {
       for (let i = 0; i < 20; i += 1) {
-        await request(server).get(`/rsvp/${tokenInventado()}`).expect(404)
+        await request(url).get(`/rsvp/${tokenInventado()}`).expect(404)
       }
 
-      await request(server).get(`/rsvp/${tokenInventado()}`).expect(429)
+      await request(url).get(`/rsvp/${tokenInventado()}`).expect(429)
     })
 
     it('el contador vive en Redis: dos instancias comparten el mismo límite', async () => {
       // Con el almacén en memoria por defecto de `@nestjs/throttler`, cada
       // instancia contaría sus 5 y el límite real sería 5 × instancias.
-      const otra = await crearApp()
+      const { app: otra, url: otraUrl } = await crearApp()
       otrasApps.push(otra)
-      const otroServidor = otra.getHttpServer()
 
       for (let i = 0; i < 3; i += 1) {
-        await request(server)
-          .post(`/rsvp/${tokenInventado()}`)
-          .send({ rsvp: 'CONFIRMED' })
-          .expect(404)
+        await request(url).post(`/rsvp/${tokenInventado()}`).send({ rsvp: 'CONFIRMED' }).expect(404)
       }
       for (let i = 0; i < 2; i += 1) {
-        await request(otroServidor)
+        await request(otraUrl)
           .post(`/rsvp/${tokenInventado()}`)
           .send({ rsvp: 'CONFIRMED' })
           .expect(404)
       }
 
-      await request(otroServidor)
+      await request(otraUrl)
         .post(`/rsvp/${tokenInventado()}`)
         .send({ rsvp: 'CONFIRMED' })
         .expect(429)
     })
 
     it('el RSVP lleva su límite Y el global; el de login no cae sobre él (C22)', async () => {
-      const lectura = await request(server).get(`/rsvp/${tokenInventado()}`).expect(404)
+      const lectura = await request(url).get(`/rsvp/${tokenInventado()}`).expect(404)
       expect(lectura.headers['x-ratelimit-limit-rsvp']).toBe('20')
       expect(lectura.headers['x-ratelimit-limit-global']).toBe('120')
       expect(lectura.headers['x-ratelimit-limit-login']).toBeUndefined()
 
-      const respuesta = await request(server)
+      const respuesta = await request(url)
         .post(`/rsvp/${tokenInventado()}`)
         .send({ rsvp: 'CONFIRMED' })
         .expect(404)
@@ -535,7 +509,7 @@ describe('RSVP público e2e', () => {
     it('las demás rutas sin sesión llevan el global, y no el límite del RSVP (C22)', async () => {
       // `register` enumera cuentas vía 409 y `refresh` acepta un secreto: sin
       // límite propio, el global es su único suelo.
-      const registro = await request(server)
+      const registro = await request(url)
         .post('/auth/register')
         .send({ email: 'alguien@test.com', password: 'una-contraseña-larga', fullName: 'Alguien' })
         .expect(201)
@@ -543,7 +517,7 @@ describe('RSVP público e2e', () => {
       expect(registro.headers['x-ratelimit-limit-rsvp']).toBeUndefined()
       expect(registro.headers['x-ratelimit-limit-login']).toBeUndefined()
 
-      const refresco = await request(server).post('/auth/refresh').expect(401)
+      const refresco = await request(url).post('/auth/refresh').expect(401)
       expect(refresco.headers['x-ratelimit-limit-global']).toBe('120')
       expect(refresco.headers['x-ratelimit-limit-rsvp']).toBeUndefined()
     })
@@ -555,17 +529,17 @@ describe('RSVP público e2e', () => {
       const otro = await invitacion()
       registro.lineas.length = 0
 
-      await request(server).get(`/rsvp/${tokenInventado()}`).expect(404)
-      await request(server).post(`/rsvp/${valido.token}`).send({ rsvp: 'MAYBE' }).expect(400)
+      await request(url).get(`/rsvp/${tokenInventado()}`).expect(404)
+      await request(url).post(`/rsvp/${valido.token}`).send({ rsvp: 'MAYBE' }).expect(400)
       notificaciones.fallarProximaCreacion(new Error('fallo al crear notificaciones'))
-      await request(server).post(`/rsvp/${valido.token}`).send({ rsvp: 'CONFIRMED' }).expect(500)
+      await request(url).post(`/rsvp/${valido.token}`).send({ rsvp: 'CONFIRMED' }).expect(500)
       const espia = espiarCola().mockRejectedValueOnce(new Error('redis caído'))
-      await request(server).post(`/rsvp/${otro.token}`).send({ rsvp: 'CONFIRMED' }).expect(204)
+      await request(url).post(`/rsvp/${otro.token}`).send({ rsvp: 'CONFIRMED' }).expect(204)
       espia.mockRestore()
       for (let i = 0; i < 3; i += 1) {
-        await request(server).post(`/rsvp/${tokenInventado()}`).send({ rsvp: 'CONFIRMED' })
+        await request(url).post(`/rsvp/${tokenInventado()}`).send({ rsvp: 'CONFIRMED' })
       }
-      const cortado = await request(server)
+      const cortado = await request(url)
         .post(`/rsvp/${valido.token}`)
         .send({ rsvp: 'CONFIRMED' })
         .expect(429)

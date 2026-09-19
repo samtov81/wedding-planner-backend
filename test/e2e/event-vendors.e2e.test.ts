@@ -1,15 +1,8 @@
-import type { Server } from 'node:http'
-
-import { type INestApplication } from '@nestjs/common'
-import { NestFactory } from '@nestjs/core'
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
-import cookieParser from 'cookie-parser'
 import request from 'supertest'
 
-import { AppModule } from '@/app.module'
-import { DomainExceptionFilter } from '@/shared/http/domain-exception.filter'
-
+import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 
 interface CuerpoError {
@@ -35,8 +28,8 @@ interface CuerpoEventVendor {
 describe('Vendors por evento e2e', () => {
   let pg: PostgresDeTest
   let redis: StartedRedisContainer
-  let app: INestApplication
-  let server: Server
+  let url: string
+  let cerrar: () => Promise<void>
   let prisma: PrismaClient
 
   let ana: { id: string; accessToken: string }
@@ -49,12 +42,12 @@ describe('Vendors por evento e2e', () => {
     email: string,
     fullName: string,
   ): Promise<{ id: string; accessToken: string }> {
-    const registro = await request(server)
+    const registro = await request(url)
       .post('/auth/register')
       .send({ email, password: 'una-contraseña-larga', fullName })
       .expect(201)
 
-    const login = await request(server)
+    const login = await request(url)
       .post('/auth/login')
       .send({ email, password: 'una-contraseña-larga' })
       .expect(200)
@@ -68,28 +61,15 @@ describe('Vendors por evento e2e', () => {
   beforeAll(async () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
-
-    process.env.NODE_ENV = 'test'
-    process.env.DATABASE_URL = pg.url
-    process.env.REDIS_URL = redis.getConnectionUrl()
-    process.env.JWT_ACCESS_SECRET = 'x'.repeat(32)
-    process.env.JWT_ACCESS_TTL = '15m'
-    process.env.REFRESH_TTL_DAYS = '30'
-    process.env.MAIL_DRIVER = 'fake'
-    process.env.APP_URL = 'http://localhost:5173'
-
-    app = await NestFactory.create(AppModule, { logger: false })
-    app.use(cookieParser())
-    app.useGlobalFilters(new DomainExceptionFilter())
-    await app.init()
-    server = app.getHttpServer() as Server
+    fijarEntorno({ databaseUrl: pg.url, redisUrl: redis.getConnectionUrl() })
+    ;({ url, cerrar } = await arrancarAppDeTest())
     prisma = new PrismaClient({ datasources: { db: { url: pg.url } } })
 
     ana = await registrarYEntrar('ana@test.com', 'Ana')
     extrano = await registrarYEntrar('extrano@test.com', 'Extraño')
     fotografo = await registrarYEntrar('foto@test.com', 'Fotógrafo')
 
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .post('/events')
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .send({ name: 'Boda de Ana', weddingDate: '2027-06-12T00:00:00.000Z' })
@@ -99,17 +79,17 @@ describe('Vendors por evento e2e', () => {
 
   afterAll(async () => {
     await prisma.$disconnect()
-    await app.close()
+    await cerrar()
     await redis.stop()
     await pg.stop()
   }, 60_000)
 
   it('sin token no se llega ni a saber si el evento existe: 401', async () => {
-    await request(server).get(`/events/${evento}/vendors`).expect(401)
+    await request(url).get(`/events/${evento}/vendors`).expect(401)
   })
 
   it('quien no tiene acceso al evento recibe 404, no 403', async () => {
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .get(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${extrano.accessToken}`)
       .expect(404)
@@ -118,7 +98,7 @@ describe('Vendors por evento e2e', () => {
   })
 
   it('el COUPLE del evento contrata a un proveedor externo', async () => {
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .post(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .send({
@@ -144,7 +124,7 @@ describe('Vendors por evento e2e', () => {
   })
 
   it('rechaza traer ficha del marketplace y datos externos a la vez: 422', async () => {
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .post(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .send({ vendorProfileId: 'lo-que-sea', externalName: 'Flores Pepa', category: 'Floristería' })
@@ -159,7 +139,7 @@ describe('Vendors por evento e2e', () => {
     })
     perfilFotografo = perfil.id
 
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .post(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .send({ vendorProfileId: perfil.id, category: 'Fotografía' })
@@ -176,7 +156,7 @@ describe('Vendors por evento e2e', () => {
       data: { status: 'PUBLISHED' },
     })
 
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .post(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .send({ vendorProfileId: perfilFotografo, category: 'Fotografía' })
@@ -189,7 +169,7 @@ describe('Vendors por evento e2e', () => {
   })
 
   it('lista los proveedores del evento', async () => {
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .get(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .expect(200)
@@ -198,13 +178,13 @@ describe('Vendors por evento e2e', () => {
   })
 
   it('actualiza el status de un proveedor', async () => {
-    const listado = await request(server)
+    const listado = await request(url)
       .get(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .expect(200)
     const [primero] = listado.body as CuerpoEventVendor[]
 
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .patch(`/events/${evento}/vendors/${primero?.id}`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .send({ status: 'BOOKED' })
@@ -214,7 +194,7 @@ describe('Vendors por evento e2e', () => {
   })
 
   it('un PATCH sobre un id inexistente responde 404', async () => {
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .patch(`/events/${evento}/vendors/00000000-0000-4000-8000-000000000000`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .send({ status: 'BOOKED' })
@@ -235,7 +215,7 @@ describe('Vendors por evento e2e', () => {
     // Tiene acceso: la lectura sin @RequireEventAccess de /events/:id le deja
     // entrar (ver test e2e de eventos). Aquí, en cambio, SÍ hay lista y él no
     // está en ella.
-    const negado = await request(server)
+    const negado = await request(url)
       .post(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${fotografo.accessToken}`)
       .send({ externalName: 'Otro', category: 'Otra' })
@@ -249,7 +229,7 @@ describe('Vendors por evento e2e', () => {
     // encontró en su propio primer borrador. Se repite la comprobación en
     // las otras tres rutas, con el estado que este mismo test ya dejó listo
     // (fotografo BOOKED, con acceso pero sin permiso de gestión).
-    const listaDeAna = await request(server)
+    const listaDeAna = await request(url)
       .get(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .expect(200)
@@ -257,20 +237,20 @@ describe('Vendors por evento e2e', () => {
     if (algunProveedor === undefined)
       throw new Error('el listado de Ana debería traer al menos uno')
 
-    const negadoGet = await request(server)
+    const negadoGet = await request(url)
       .get(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${fotografo.accessToken}`)
       .expect(403)
     expect((negadoGet.body as CuerpoError).code).toBe('FORBIDDEN')
 
-    const negadoPatch = await request(server)
+    const negadoPatch = await request(url)
       .patch(`/events/${evento}/vendors/${algunProveedor.id}`)
       .set('Authorization', `Bearer ${fotografo.accessToken}`)
       .send({ status: 'CANCELLED' })
       .expect(403)
     expect((negadoPatch.body as CuerpoError).code).toBe('FORBIDDEN')
 
-    const negadoDelete = await request(server)
+    const negadoDelete = await request(url)
       .delete(`/events/${evento}/vendors/${algunProveedor.id}`)
       .set('Authorization', `Bearer ${fotografo.accessToken}`)
       .expect(403)
@@ -283,14 +263,14 @@ describe('Vendors por evento e2e', () => {
   })
 
   it('elimina un proveedor', async () => {
-    const creado = await request(server)
+    const creado = await request(url)
       .post(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .send({ externalName: 'Para borrar', category: 'Varios' })
       .expect(201)
     const id = (creado.body as CuerpoEventVendor).id
 
-    await request(server)
+    await request(url)
       .delete(`/events/${evento}/vendors/${id}`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .expect(200)

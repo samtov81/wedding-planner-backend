@@ -1,15 +1,9 @@
-import type { Server } from 'node:http'
-
-import { type INestApplication } from '@nestjs/common'
-import { NestFactory } from '@nestjs/core'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
-import cookieParser from 'cookie-parser'
 import request, { type Response } from 'supertest'
 
-import { AppModule } from '@/app.module'
-import { DomainExceptionFilter } from '@/shared/http/domain-exception.filter'
-
+import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
+import { limpiarContadoresDeRitmo } from '../support/throttler'
 
 interface CuerpoLogin {
   accessToken: string
@@ -42,45 +36,33 @@ function primeraCookie(res: Response): string | undefined {
 describe('Auth e2e', () => {
   let pg: PostgresDeTest
   let redis: StartedRedisContainer
-  let app: INestApplication
-  let server: Server
+  let url: string
+  let cerrar: () => Promise<void>
 
   beforeAll(async () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
-
-    // La app real lee el entorno por el token ENV (ver config.module.ts), que
-    // a su vez lee process.env UNA VEZ al construirse. Se fija aquí, antes de
-    // levantar el módulo, con los puertos efímeros de los contenedores.
-    process.env.NODE_ENV = 'test'
-    process.env.DATABASE_URL = pg.url
-    process.env.REDIS_URL = redis.getConnectionUrl()
-    process.env.JWT_ACCESS_SECRET = 'x'.repeat(32)
-    process.env.JWT_ACCESS_TTL = '15m'
-    process.env.REFRESH_TTL_DAYS = '30'
-    process.env.MAIL_DRIVER = 'fake'
-    process.env.APP_URL = 'http://localhost:5173'
-
-    app = await NestFactory.create(AppModule, { logger: false })
-    app.use(cookieParser())
-    app.useGlobalFilters(new DomainExceptionFilter())
-    await app.init()
-    server = app.getHttpServer() as Server
+    fijarEntorno({ databaseUrl: pg.url, redisUrl: redis.getConnectionUrl() })
+    ;({ url, cerrar } = await arrancarAppDeTest())
   }, 120_000)
 
+  beforeEach(async () => {
+    await limpiarContadoresDeRitmo(redis.getConnectionUrl())
+  })
+
   afterAll(async () => {
-    await app.close()
+    await cerrar()
     await redis.stop()
     await pg.stop()
   }, 60_000)
 
   it('el ciclo completo: registro, login, acceso, refresco y cierre', async () => {
-    await request(server)
+    await request(url)
       .post('/auth/register')
       .send({ email: 'ana@test.com', password: 'una-contraseña-larga', fullName: 'Ana' })
       .expect(201)
 
-    const login = await request(server)
+    const login = await request(url)
       .post('/auth/login')
       .send({ email: 'ana@test.com', password: 'una-contraseña-larga' })
       .expect(200)
@@ -96,7 +78,7 @@ describe('Auth e2e', () => {
     // `me` recarga el usuario de la base de datos, no reparte los claims del
     // token: por eso trae email y nombre, y por eso un usuario borrado o
     // degradado deja de pasar antes de que caduque su access token.
-    const yo = await request(server)
+    const yo = await request(url)
       .get('/auth/me')
       .set('Authorization', `Bearer ${cuerpoLogin.accessToken}`)
       .expect(200)
@@ -107,8 +89,8 @@ describe('Auth e2e', () => {
     })
 
     // La cookie tal como llega del servidor (incluye Path y Expires): se
-    // reenvía a mano porque `server` aquí no es un agente con jar propio.
-    const refresco = await request(server)
+    // reenvía a mano porque `url` aquí no es un agente con jar propio.
+    const refresco = await request(url)
       .post('/auth/refresh')
       .set('Cookie', cookie ?? '')
       .expect(200)
@@ -124,37 +106,37 @@ describe('Auth e2e', () => {
     // y tiene que caer con 401, no colarse. 401 y no 403 porque un refresh
     // muerto es un fallo de IDENTIDAD, no de permiso sobre un recurso: es lo
     // que hace que el cliente dispare "re-autenticar".
-    const reuso = await request(server)
+    const reuso = await request(url)
       .post('/auth/refresh')
       .set('Cookie', cookie ?? '')
       .expect(401)
     expect((reuso.body as CuerpoError).code).toBe('REFRESH_REUSED')
 
     // Logout con la cookie vigente (la rotada) revoca la familia entera.
-    await request(server)
+    await request(url)
       .post('/auth/logout')
       .set('Cookie', cookieRotada ?? '')
       .expect(200)
 
     // Y ya no se puede refrescar con lo que quedó vivo: la familia está muerta.
-    await request(server)
+    await request(url)
       .post('/auth/refresh')
       .set('Cookie', cookieRotada ?? '')
       .expect(401)
   })
 
   it('devuelve el mismo error para email inexistente y contraseña incorrecta', async () => {
-    await request(server)
+    await request(url)
       .post('/auth/register')
       .send({ email: 'existe@test.com', password: 'una-contraseña-larga', fullName: 'Existe' })
       .expect(201)
 
-    const inexistente = await request(server)
+    const inexistente = await request(url)
       .post('/auth/login')
       .send({ email: 'nadie@test.com', password: 'x'.repeat(12) })
       .expect(401)
 
-    const malaClave = await request(server)
+    const malaClave = await request(url)
       .post('/auth/login')
       .send({ email: 'existe@test.com', password: 'incorrecta-pero-larga' })
       .expect(401)
@@ -173,12 +155,12 @@ describe('Auth e2e', () => {
    * permitiría responder siempre 201; cuando exista, este test cambia con él.
    */
   it('rechaza un registro duplicado con 409 (limitación conocida, no objetivo)', async () => {
-    await request(server)
+    await request(url)
       .post('/auth/register')
       .send({ email: 'duplicado@test.com', password: 'una-contraseña-larga', fullName: 'D' })
       .expect(201)
 
-    await request(server)
+    await request(url)
       .post('/auth/register')
       .send({ email: 'duplicado@test.com', password: 'otra-contraseña-larga', fullName: 'D2' })
       .expect(409)
@@ -186,7 +168,7 @@ describe('Auth e2e', () => {
 
   describe('límite de intentos de login', () => {
     function intentar(email: string): request.Test {
-      return request(server).post('/auth/login').send({ email, password: 'no-es-esta' })
+      return request(url).post('/auth/login').send({ email, password: 'no-es-esta' })
     }
 
     it('corta el sexto intento en 15 minutos contra la MISMA cuenta desde la misma IP', async () => {

@@ -1,15 +1,8 @@
-import type { Server } from 'node:http'
-
-import { type INestApplication } from '@nestjs/common'
-import { NestFactory } from '@nestjs/core'
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
-import cookieParser from 'cookie-parser'
 import request from 'supertest'
 
-import { AppModule } from '@/app.module'
-import { DomainExceptionFilter } from '@/shared/http/domain-exception.filter'
-
+import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 
 interface CuerpoError {
@@ -27,8 +20,8 @@ const INVENTADO = '00000000-0000-4000-8000-000000000000'
 describe('Acceso a eventos e2e', () => {
   let pg: PostgresDeTest
   let redis: StartedRedisContainer
-  let app: INestApplication
-  let server: Server
+  let url: string
+  let cerrar: () => Promise<void>
   let prisma: PrismaClient
 
   let ana: { id: string; accessToken: string }
@@ -41,12 +34,12 @@ describe('Acceso a eventos e2e', () => {
     email: string,
     fullName: string,
   ): Promise<{ id: string; accessToken: string }> {
-    const registro = await request(server)
+    const registro = await request(url)
       .post('/auth/register')
       .send({ email, password: 'una-contraseña-larga', fullName })
       .expect(201)
 
-    const login = await request(server)
+    const login = await request(url)
       .post('/auth/login')
       .send({ email, password: 'una-contraseña-larga' })
       .expect(200)
@@ -58,7 +51,7 @@ describe('Acceso a eventos e2e', () => {
   }
 
   async function crearEvento(accessToken: string, name: string): Promise<string> {
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .post('/events')
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ name, weddingDate: '2027-06-12T00:00:00.000Z' })
@@ -67,7 +60,7 @@ describe('Acceso a eventos e2e', () => {
   }
 
   async function listarEventos(accessToken: string): Promise<string[]> {
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .get('/events')
       .set('Authorization', `Bearer ${accessToken}`)
       .expect(200)
@@ -77,21 +70,8 @@ describe('Acceso a eventos e2e', () => {
   beforeAll(async () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
-
-    process.env.NODE_ENV = 'test'
-    process.env.DATABASE_URL = pg.url
-    process.env.REDIS_URL = redis.getConnectionUrl()
-    process.env.JWT_ACCESS_SECRET = 'x'.repeat(32)
-    process.env.JWT_ACCESS_TTL = '15m'
-    process.env.REFRESH_TTL_DAYS = '30'
-    process.env.MAIL_DRIVER = 'fake'
-    process.env.APP_URL = 'http://localhost:5173'
-
-    app = await NestFactory.create(AppModule, { logger: false })
-    app.use(cookieParser())
-    app.useGlobalFilters(new DomainExceptionFilter())
-    await app.init()
-    server = app.getHttpServer() as Server
+    fijarEntorno({ databaseUrl: pg.url, redisUrl: redis.getConnectionUrl() })
+    ;({ url, cerrar } = await arrancarAppDeTest())
     prisma = new PrismaClient({ datasources: { db: { url: pg.url } } })
 
     ana = await registrarYEntrar('ana@test.com', 'Ana')
@@ -104,13 +84,13 @@ describe('Acceso a eventos e2e', () => {
 
   afterAll(async () => {
     await prisma.$disconnect()
-    await app.close()
+    await cerrar()
     await redis.stop()
     await pg.stop()
   }, 60_000)
 
   it('quien crea el evento entra: el evento y su membresía nacen juntos', async () => {
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .get(`/events/${eventoDeAna}`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .expect(200)
@@ -123,13 +103,13 @@ describe('Acceso a eventos e2e', () => {
   })
 
   it('un usuario sin acceso recibe 404, no 403', async () => {
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .get(`/events/${eventoDeAna}`)
       .set('Authorization', `Bearer ${extrano.accessToken}`)
       .expect(404)
 
     // El cuerpo no debe distinguirse del de un evento que no existe.
-    const inventado = await request(server)
+    const inventado = await request(url)
       .get(`/events/${INVENTADO}`)
       .set('Authorization', `Bearer ${extrano.accessToken}`)
       .expect(404)
@@ -139,7 +119,7 @@ describe('Acceso a eventos e2e', () => {
   })
 
   it('un id que ni siquiera es un UUID responde igual: 404, no 500', async () => {
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .get('/events/no-es-un-uuid')
       .set('Authorization', `Bearer ${extrano.accessToken}`)
       .expect(404)
@@ -148,11 +128,11 @@ describe('Acceso a eventos e2e', () => {
   })
 
   it('sin token no se llega ni a saber si el evento existe', async () => {
-    await request(server).get(`/events/${eventoDeAna}`).expect(401)
+    await request(url).get(`/events/${eventoDeAna}`).expect(401)
   })
 
   it('invitar deja la membresía en INVITED, y una invitación sin aceptar no abre nada', async () => {
-    await request(server)
+    await request(url)
       .post(`/events/${eventoDeAna}/members`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .send({ email: 'pedro@test.com', role: 'PLANNER' })
@@ -164,7 +144,7 @@ describe('Acceso a eventos e2e', () => {
     expect(membresia).toMatchObject({ role: 'PLANNER', status: 'INVITED' })
 
     // Invitado pero no aceptado: sigue siendo 404, el mismo que para un extraño.
-    await request(server)
+    await request(url)
       .get(`/events/${eventoDeAna}`)
       .set('Authorization', `Bearer ${pedro.accessToken}`)
       .expect(404)
@@ -192,14 +172,14 @@ describe('Acceso a eventos e2e', () => {
       data: { status: 'ACTIVE' },
     })
 
-    await request(server)
+    await request(url)
       .get(`/events/${eventoDeAna}`)
       .set('Authorization', `Bearer ${pedro.accessToken}`)
       .expect(200)
 
     // 403 y no 404: Pedro YA sabe que el evento existe, así que negarle esta
     // operación concreta no le revela nada que no tuviera.
-    const negado = await request(server)
+    const negado = await request(url)
       .post(`/events/${eventoDeAna}/members`)
       .set('Authorization', `Bearer ${pedro.accessToken}`)
       .send({ email: 'extrano@test.com', role: 'PLANNER' })
@@ -209,17 +189,17 @@ describe('Acceso a eventos e2e', () => {
   })
 
   it('cada quien ve en su lista sólo los eventos a los que tiene acceso', async () => {
-    const deAna = await request(server)
+    const deAna = await request(url)
       .get('/events')
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .expect(200)
 
-    const dePedro = await request(server)
+    const dePedro = await request(url)
       .get('/events')
       .set('Authorization', `Bearer ${pedro.accessToken}`)
       .expect(200)
 
-    const deExtrano = await request(server)
+    const deExtrano = await request(url)
       .get('/events')
       .set('Authorization', `Bearer ${extrano.accessToken}`)
       .expect(200)
@@ -241,7 +221,7 @@ describe('Acceso a eventos e2e', () => {
     })
 
     // SHORTLISTED: todavía no es nadie en este evento.
-    await request(server)
+    await request(url)
       .get(`/events/${eventoDeAna}`)
       .set('Authorization', `Bearer ${extrano.accessToken}`)
       .expect(404)
@@ -252,7 +232,7 @@ describe('Acceso a eventos e2e', () => {
       data: { status: 'BOOKED' },
     })
 
-    const respuesta = await request(server)
+    const respuesta = await request(url)
       .get(`/events/${eventoDeAna}`)
       .set('Authorization', `Bearer ${extrano.accessToken}`)
       .expect(200)
@@ -264,7 +244,7 @@ describe('Acceso a eventos e2e', () => {
     expect(await listarEventos(extrano.accessToken)).toEqual([eventoDeAna])
 
     // Pero un vendor no invita a nadie: tiene acceso, no mando.
-    await request(server)
+    await request(url)
       .post(`/events/${eventoDeAna}/members`)
       .set('Authorization', `Bearer ${extrano.accessToken}`)
       .send({ email: 'pedro@test.com', role: 'PLANNER' })
@@ -283,7 +263,7 @@ describe('Acceso a eventos e2e', () => {
       data: { status: 'REVOKED' },
     })
 
-    await request(server)
+    await request(url)
       .get(`/events/${eventoDeAna}`)
       .set('Authorization', `Bearer ${pedro.accessToken}`)
       .expect(404)

@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common'
 
 import type { QueuePort } from '@/modules/queue/application/queue.port'
-import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/in-memory-queue.adapter'
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
 
 import type { Guest, RsvpStatus } from '../domain/guest'
 import { DIAS_DE_VALIDEZ } from '../domain/invitation'

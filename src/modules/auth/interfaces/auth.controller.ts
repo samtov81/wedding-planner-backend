@@ -103,6 +103,7 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ): Promise<{ ok: true }> {
     const token = this.leerCookieRefreshOpcional(req)
+    // eslint-disable-next-line security/detect-possible-timing-attacks -- no se compara un secreto: sólo se mira si la cookie venía o no
     if (token !== undefined) await this.logoutUseCase.ejecutar(token)
     res.clearCookie(COOKIE_REFRESH, { path: '/auth' })
     return { ok: true }
@@ -116,12 +117,14 @@ export class AuthController {
 
   private leerCookieRefresh(req: Request): string {
     const token = this.leerCookieRefreshOpcional(req)
+    // eslint-disable-next-line security/detect-possible-timing-attacks -- no se compara un secreto: sólo se mira si la cookie venía o no
     if (token === undefined) throw new RefreshInvalidoError()
     return token
   }
 
   private leerCookieRefreshOpcional(req: Request): string | undefined {
     const cookies = req.cookies as Record<string, string> | undefined
+    // eslint-disable-next-line security/detect-object-injection -- la clave es la constante COOKIE_REFRESH, no entrada del usuario
     return cookies?.[COOKIE_REFRESH]
   }
 

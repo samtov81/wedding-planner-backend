@@ -301,6 +301,17 @@ describe('PrismaGuestRepository — paginación por cursor', () => {
       const doble = await fake.listar(eventId, filtros, null, limite)
       expect(doble.items.map((g) => g.id)).toEqual(real.items.map((g) => g.id))
       expect(doble.nextCursor).toEqual(real.nextCursor)
+
+      // Y con el cursor NO nulo: la primera página sólo compara el orden, pero
+      // la desviación que de verdad duele está en la condición de continuación
+      // (`createdAt` empatados y desempate por `id`). Un doble que la escribe
+      // al revés acierta la página 1 y se salta filas a partir de la 2.
+      if (real.nextCursor === null) continue
+      const desde = decodeCursor(real.nextCursor)
+      const realSiguiente = await repo.listar(eventId, filtros, desde, limite)
+      const dobleSiguiente = await fake.listar(eventId, filtros, desde, limite)
+      expect(dobleSiguiente.items.map((g) => g.id)).toEqual(realSiguiente.items.map((g) => g.id))
+      expect(dobleSiguiente.nextCursor).toEqual(realSiguiente.nextCursor)
     }
 
     expect(await fake.contarPorEstado(eventId)).toEqual(await repo.contarPorEstado(eventId))

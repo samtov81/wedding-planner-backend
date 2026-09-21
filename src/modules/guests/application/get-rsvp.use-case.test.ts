@@ -1,6 +1,6 @@
 import { UnidadDeTrabajoEnMemoria } from '@/modules/database/infrastructure/unidad-de-trabajo.fake'
 import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
-import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/in-memory-queue.adapter'
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
 import type { DomainError } from '@/shared/domain'
 
 import { InvitacionNoValidaError } from '../domain/guest-errors'

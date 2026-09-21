@@ -1,4 +1,4 @@
-import { FakeMailAdapter } from './fake-mail.adapter'
+import { FakeMailAdapter } from './mail.adapter.fake'
 
 describe('FakeMailAdapter', () => {
   it('acumula lo enviado para poder assertar sobre ello', async () => {

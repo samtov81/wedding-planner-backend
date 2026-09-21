@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common'
 
-import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/in-memory-queue.adapter'
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
 
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
 import { HandleDeliveryEventUseCase, mapearEstadoResend } from './handle-delivery-event.use-case'

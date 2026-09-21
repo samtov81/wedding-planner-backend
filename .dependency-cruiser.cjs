@@ -26,7 +26,7 @@ module.exports = {
         'que si importara su infrastructure/. `$1` ata el permiso al mismo módulo capturado en ' +
         '`from.path` (dependency-cruiser sí sustituye backreferences en `to.pathNot`, no sólo ' +
         'en `to.path`; ver la regla `modulos-no-se-tocan-las-tripas` de abajo, que ya lo hacía).',
-      from: { path: '^src/modules/([^/]+)/domain' },
+      from: { path: '^src/modules/([^/]+)/domain', pathNot: '\\.test\\.ts$' },
       to: {
         pathNot: `^src/modules/$1/domain|^src/shared/domain|${NODE_BUILTINS}`,
         dependencyTypesNot: ['type-only'],
@@ -36,7 +36,7 @@ module.exports = {
       name: 'application-solo-mira-a-domain',
       severity: 'error',
       comment: 'Los casos de uso no conocen adaptadores: dependen de puertos, que ellos definen.',
-      from: { path: '^src/modules/[^/]+/application' },
+      from: { path: '^src/modules/[^/]+/application', pathNot: '\\.test\\.ts$' },
       to: { path: '^src/modules/[^/]+/(infrastructure|interfaces)' },
     },
     {
@@ -45,8 +45,23 @@ module.exports = {
       comment:
         'Un módulo consume el puerto público de otro, nunca su infrastructure/. ' +
         'Cruzar esa línea convierte dos módulos en uno.',
-      from: { path: '^src/modules/([^/]+)/' },
+      from: { path: '^src/modules/([^/]+)/', pathNot: '\\.test\\.ts$' },
       to: { path: '^src/modules/[^/]+/infrastructure', pathNot: '^src/modules/$1/' },
+    },
+    {
+      name: 'tests-solo-dobles-de-otros-modulos',
+      severity: 'error',
+      comment:
+        'Un test puede usar la infrastructure/ de OTRO módulo sólo si es un doble (*.fake.ts). ' +
+        'Montar un test contra el adaptador real de otro módulo ata este módulo a las tripas ' +
+        'del otro igual que haría el código de producción: el día que el otro cambie su ' +
+        'implementación, el que se rompe es este test. Un doble es el contrato, y el contrato ' +
+        'sí es público.',
+      from: { path: '^src/modules/([^/]+)/.+\\.test\\.ts$' },
+      to: {
+        path: '^src/modules/[^/]+/infrastructure/',
+        pathNot: ['^src/modules/$1/', '\\.fake\\.ts$'],
+      },
     },
     {
       name: 'sin-ciclos',
@@ -66,6 +81,5 @@ module.exports = {
     doNotFollow: { path: 'node_modules' },
     tsConfig: { fileName: 'tsconfig.json' },
     tsPreCompilationDeps: true,
-    exclude: { path: '\\.test\\.ts$' },
   },
 }

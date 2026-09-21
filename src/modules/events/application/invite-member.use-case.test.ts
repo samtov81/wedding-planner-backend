@@ -1,4 +1,4 @@
-import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/in-memory-queue.adapter'
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
 import { UserRepositoryEnMemoria } from '@/modules/users/infrastructure/user.repository.fake'
 import { ConflictError, UnprocessableError } from '@/shared/domain'
 

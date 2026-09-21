@@ -5,6 +5,7 @@ import type { DestinationStream } from 'pino'
 import { ENV } from '@/config/config.module'
 import type { Env } from '@/config/env.schema'
 
+import { CierreOrdenado } from './cierre-ordenado'
 import { opcionesDePinoHttp } from './logger'
 
 /**
@@ -34,5 +35,8 @@ export const DESTINO_DE_LOGS = Symbol('DESTINO_DE_LOGS')
       },
     }),
   ],
+  // El hook de cierre vive aquí porque aquí está el `Logger` de pino que
+  // necesita: `LoggerModule` no es global y `AppModule` no lo importa.
+  providers: [CierreOrdenado],
 })
 export class RegistroModule {}

@@ -17,7 +17,7 @@ describe('Equivalencia: UserRepositoryEnMemoria vs PrismaUserRepository', () => 
 
   beforeAll(async () => {
     pg = await startPostgres()
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const client: any = new PrismaClient({ datasources: { db: { url: pg.url } } })
     // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     client.onModuleInit = async () => {}

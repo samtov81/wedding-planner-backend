@@ -8,7 +8,7 @@ import {
   type InvitationRenderer,
 } from './application/invitation-renderer.port'
 import { MAIL_PORT, type MailPort } from './application/mail.port'
-import { FakeMailAdapter } from './infrastructure/fake-mail.adapter'
+import { FakeMailAdapter } from './infrastructure/mail.adapter.fake'
 import { ResendMailAdapter } from './infrastructure/resend-mail.adapter'
 import { renderGuestInvitation } from './infrastructure/templates/guest-invitation'
 

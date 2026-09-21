@@ -3,8 +3,7 @@ import { UnrecoverableError, type Job } from 'bullmq'
 
 import type { InvitationRenderer } from '@/modules/mail/application/invitation-renderer.port'
 import type { MailPort } from '@/modules/mail/application/mail.port'
-import { FakeMailAdapter } from '@/modules/mail/infrastructure/fake-mail.adapter'
-import { renderGuestInvitation } from '@/modules/mail/infrastructure/templates/guest-invitation'
+import { FakeMailAdapter } from '@/modules/mail/infrastructure/mail.adapter.fake'
 
 import {
   COLA_INVITACIONES,
@@ -19,6 +18,24 @@ import { InvitationProcessor } from './invitation.processor'
  * `exports` de paquete, así que se repite el literal de `bull.constants.js`.
  */
 const PROCESSOR_METADATA = 'bullmq:processor_metadata'
+
+/**
+ * Doble LOCAL de la plantilla. Antes este test importaba `renderGuestInvitation`
+ * de `mail/infrastructure/templates`, es decir, las tripas de otro módulo: la
+ * regla `tests-solo-dobles-de-otros-modulos` del gate lo prohíbe desde la Tarea
+ * 11. Lo que aquí se prueba es el WORKER —que pasa el `rsvpUrl` correcto a la
+ * plantilla y manda lo que ésta devuelve—, no el HTML de React Email, que tiene
+ * su propio test en `mail/infrastructure/templates/guest-invitation.test.ts`.
+ * El doble copia el `rsvpUrl` a las dos versiones porque el contrato del puerto
+ * es exactamente ése: el enlace va en el HTML y también en el texto plano.
+ */
+const plantillaDoble: InvitationRenderer = {
+  render: (datos) =>
+    Promise.resolve({
+      html: `<a href="${datos.rsvpUrl}">Confirm your attendance</a>`,
+      text: `Confirm your attendance: ${datos.rsvpUrl}`,
+    }),
+}
 
 describe('InvitationProcessor', () => {
   let invitaciones: InvitationRepositoryEnMemoria
@@ -68,14 +85,11 @@ describe('InvitationProcessor', () => {
     registroLog = espiarLog()
     invitaciones = new InvitationRepositoryEnMemoria()
     mail = new FakeMailAdapter()
-    // La plantilla REAL, no un doble: el enlace de RSVP tiene que aparecer en
-    // el HTML que de verdad se manda, no en uno de mentira.
-    const plantilla: InvitationRenderer = { render: renderGuestInvitation }
     procesador = new InvitationProcessor(
       invitaciones,
       mail,
       { APP_URL: 'https://app.test' },
-      plantilla,
+      plantillaDoble,
     )
   })
 
@@ -205,7 +219,7 @@ describe('InvitationProcessor', () => {
       invitaciones,
       sinId,
       { APP_URL: 'https://app.test' },
-      { render: renderGuestInvitation },
+      plantillaDoble,
     )
 
     await conConflicto.process(jobFalso({ invitationId: 'inv-1' }))

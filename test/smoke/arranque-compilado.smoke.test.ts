@@ -128,16 +128,27 @@ describe('build compilado', () => {
     for (const linea of lineas) expect(() => JSON.parse(linea) as unknown).not.toThrow()
   })
 
-  it('con SIGTERM cierra ordenadamente y sale', async () => {
+  it('con SIGTERM corre los hooks de cierre y sale por la señal', async () => {
+    // Que el proceso muera por SIGTERM NO prueba un cierre ordenado: sin
+    // `enableShutdownHooks()` lo mata el manejador por defecto de Node, al
+    // instante y sin cerrar Prisma, Redis ni los workers, y esta misma
+    // aserción seguiría en verde. Lo que sólo puede haber escrito un cierre
+    // ordenado es la línea del hook `onApplicationShutdown` de
+    // `CierreOrdenado` (ver `src/shared/logging/cierre-ordenado.ts`, que
+    // define el literal): se exige en el stdout del proceso.
     const fin = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((ok) =>
       proceso.once('exit', (code, signal) => ok({ code, signal })),
     )
+    // El stdout puede tener trozos sin entregar cuando llega `exit`: se espera
+    // también a que se cierre, o la aserción dependería de la suerte.
+    const stdoutCerrado = new Promise<void>((ok) => proceso.stdout?.once('close', () => ok()))
 
     proceso.kill('SIGTERM')
     const { code, signal } = await fin
+    await stdoutCerrado
 
-    // `enableShutdownHooks` cierra la app y vuelve a lanzarse la señal: sale
-    // POR la señal, no con un código de error ni colgado hasta el SIGKILL.
+    expect(salida).toContain('Cierre ordenado completado')
+    // Y sale POR la señal, no con un código de error ni colgado hasta el SIGKILL.
     expect(code === 0 || signal === 'SIGTERM').toBe(true)
   }, 20_000)
 })

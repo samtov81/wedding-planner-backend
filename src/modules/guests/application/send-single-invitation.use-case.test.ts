@@ -1,4 +1,4 @@
-import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/in-memory-queue.adapter'
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
 
 import type { Guest, RsvpStatus } from '../domain/guest'
 import { GuestHasNoEmailError, InvitadoNoEncontradoError } from '../domain/guest-errors'

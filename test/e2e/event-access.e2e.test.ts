@@ -15,6 +15,7 @@ interface CuerpoError {
 interface CuerpoEvento {
   id: string
   name: string
+  rsvpDeadlineDays: number
 }
 
 const INVENTADO = '00000000-0000-4000-8000-000000000000'
@@ -145,19 +146,39 @@ describe('Acceso a eventos e2e', () => {
   })
 
   it('POST /events guarda el plazo del RSVP: por defecto 14, fuera de 0–365 es un 400', async () => {
-    // Bloque A §2. La respuesta no lo expone todavía; se lee de la fila.
+    // Bloque A §2. `POST /events` y `GET /events/:id` devuelven el plazo, no
+    // sólo lo guardan: la pareja necesita poder leer lo que fijó.
     const pareja = await registrarYEntrar(`plazo-${randomUUID()}@test.com`, 'Pareja con plazo')
     const conPlazo = await request(url)
       .post('/events')
       .set('Authorization', `Bearer ${pareja.accessToken}`)
       .send({ name: 'Con plazo', weddingDate: '2027-06-12T00:00:00.000Z', rsvpDeadlineDays: 0 })
       .expect(201)
-    const sinPlazo = await crearEvento(pareja.accessToken, 'Sin plazo')
+    const sinPlazo = await request(url)
+      .post('/events')
+      .set('Authorization', `Bearer ${pareja.accessToken}`)
+      .send({ name: 'Sin plazo', weddingDate: '2027-06-12T00:00:00.000Z' })
+      .expect(201)
+
+    expect((conPlazo.body as CuerpoEvento).rsvpDeadlineDays).toBe(0)
+    expect((sinPlazo.body as CuerpoEvento).rsvpDeadlineDays).toBe(14)
 
     const plazoDe = async (id: string): Promise<number> =>
       (await prisma.event.findUniqueOrThrow({ where: { id } })).rsvpDeadlineDays
     expect(await plazoDe((conPlazo.body as CuerpoEvento).id)).toBe(0)
-    expect(await plazoDe(sinPlazo)).toBe(14)
+    expect(await plazoDe((sinPlazo.body as CuerpoEvento).id)).toBe(14)
+
+    const leidoConPlazo = await request(url)
+      .get(`/events/${(conPlazo.body as CuerpoEvento).id}`)
+      .set('Authorization', `Bearer ${pareja.accessToken}`)
+      .expect(200)
+    expect((leidoConPlazo.body as CuerpoEvento).rsvpDeadlineDays).toBe(0)
+
+    const leidoSinPlazo = await request(url)
+      .get(`/events/${(sinPlazo.body as CuerpoEvento).id}`)
+      .set('Authorization', `Bearer ${pareja.accessToken}`)
+      .expect(200)
+    expect((leidoSinPlazo.body as CuerpoEvento).rsvpDeadlineDays).toBe(14)
 
     for (const rsvpDeadlineDays of [-1, 366, 1.5]) {
       await request(url)

@@ -139,7 +139,9 @@ export const objetoBaseDeEntorno = z.object({
     (valor) => (valor === '' ? undefined : valor),
     z
       .string()
-      .regex(/^\d+[smhd]$/, 'Duración como 15m, 1h o 30s')
+      // Sin cero a la izquierda ni `0` a secas: `0s` desconecta todos los
+      // sockets al instante (Tarea 9), y no es una duración razonable.
+      .regex(/^[1-9]\d*[smhd]$/, 'Duración como 15m, 1h o 30s')
       .default('15m'),
   ),
   REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),

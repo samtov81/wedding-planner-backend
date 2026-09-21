@@ -59,7 +59,9 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
     const fila: InvitacionCompleta = {
       id: parcial.id,
       status: parcial.status ?? 'QUEUED',
-      expiresAt: parcial.expiresAt ?? new Date(Date.UTC(2027, 0, 1)),
+      // Relativa a hoy: con una fecha fija, toda invitación sembrada sin
+      // `expiresAt` explícito nacería caducada en cuanto pasara ese día.
+      expiresAt: parcial.expiresAt ?? new Date(Date.now() + 90 * 86_400_000),
       respondedAt: parcial.respondedAt ?? null,
       resendMessageId: parcial.resendMessageId ?? null,
       guest: { ...invitado.guest },

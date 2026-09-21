@@ -211,6 +211,10 @@ describe('loadEnv', () => {
     it('acepta un número seguido de s, m, h o d', () => {
       expect(loadEnv({ ...valido, JWT_ACCESS_TTL: '1h' }).JWT_ACCESS_TTL).toBe('1h')
     })
+
+    it('rechaza `0s`: desde la Tarea 9 desconecta todos los sockets al instante', () => {
+      expect(() => loadEnv({ ...valido, JWT_ACCESS_TTL: '0s' })).toThrow(/JWT_ACCESS_TTL/)
+    })
   })
 
   describe('LOG_LEVEL', () => {

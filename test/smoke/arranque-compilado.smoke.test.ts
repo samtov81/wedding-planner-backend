@@ -4,6 +4,9 @@ import { resolve } from 'node:path'
 
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 
+// Sin el alias `@/`: esta config de smoke lo deja fuera a propósito (ver
+// `vitest.smoke.config.ts`), así que la constante se importa por ruta relativa.
+import { CIERRE_ORDENADO } from '../../src/shared/logging/cierre-ordenado'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 
 // Vitest corre desde la raíz del repo (el `package.json` que lo lanza).
@@ -140,14 +143,19 @@ describe('build compilado', () => {
       proceso.once('exit', (code, signal) => ok({ code, signal })),
     )
     // El stdout puede tener trozos sin entregar cuando llega `exit`: se espera
-    // también a que se cierre, o la aserción dependería de la suerte.
-    const stdoutCerrado = new Promise<void>((ok) => proceso.stdout?.once('close', () => ok()))
+    // también a que se cierre, o la aserción dependería de la suerte. Si no
+    // hay `stdout` (no debería pasar con `stdio: ['ignore', 'pipe', 'pipe']`),
+    // se resuelve ya: que falle la aserción de abajo, no un timeout de 20 s.
+    const stdoutCerrado =
+      proceso.stdout === null
+        ? Promise.resolve()
+        : new Promise<void>((ok) => proceso.stdout?.once('close', () => ok()))
 
     proceso.kill('SIGTERM')
     const { code, signal } = await fin
     await stdoutCerrado
 
-    expect(salida).toContain('Cierre ordenado completado')
+    expect(salida).toContain(CIERRE_ORDENADO)
     // Y sale POR la señal, no con un código de error ni colgado hasta el SIGKILL.
     expect(code === 0 || signal === 'SIGTERM').toBe(true)
   }, 20_000)

@@ -51,7 +51,8 @@ describe('PrismaSessionRepository', () => {
     // familia nueva, la hacen reproducible sin el cerrojo.
     for (let vuelta = 0; vuelta < VUELTAS; vuelta++) {
       const familyId = randomUUID()
-      // El padre ya revocado no importa: está para que la familia tenga historia.
+      // El padre nace vivo: sólo está para que la familia tenga historia, la
+      // carrera se juega entre la hermana y `revocarFamilia`.
       await crearSesion({ familyId })
       const hermana = await crearSesion({ familyId })
 

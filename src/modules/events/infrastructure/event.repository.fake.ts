@@ -177,7 +177,9 @@ export class EventRepositoryEnMemoria implements EventRepository {
     return {
       id: evento.id,
       name: evento.name ?? 'Evento de prueba',
-      weddingDate: evento.weddingDate ?? new Date('2027-06-12T00:00:00.000Z'),
+      // Relativa a hoy: con una fecha fija, este evento por defecto habría
+      // quedado con su RSVP cerrado en cuanto pasara ese día.
+      weddingDate: evento.weddingDate ?? new Date(Date.now() + 180 * 86_400_000),
       timezone: evento.timezone ?? 'UTC',
       venueLocation: evento.venueLocation ?? null,
       rsvpDeadlineDays: evento.rsvpDeadlineDays ?? DIAS_DE_CIERRE_POR_DEFECTO,

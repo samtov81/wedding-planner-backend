@@ -64,8 +64,8 @@ describe('InvitationProcessor', () => {
     } as Job
   }
 
-  const CADUCIDAD_ORIGINAL = new Date(Date.UTC(2027, 0, 1))
-  /** Relativa a hoy: una caducidad fija empieza a mentir cuando llega su fecha. */
+  // Ambas relativas a hoy: una caducidad fija empieza a mentir cuando llega su fecha.
+  const CADUCIDAD_ORIGINAL = new Date(Date.now() + 90 * 86_400_000)
   const MAÑANA = (): Date => new Date(Date.now() + 86_400_000)
 
   /**

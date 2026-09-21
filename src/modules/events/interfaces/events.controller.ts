@@ -25,6 +25,8 @@ interface EventoRespuesta {
   weddingDate: string
   timezone: string
   venueLocation: string | null
+  /** Bloque A §2. La pareja necesita poder leer el plazo que fijó, no sólo escribirlo. */
+  rsvpDeadlineDays: number
   ownerId: string
 }
 
@@ -108,6 +110,7 @@ export class EventsController {
     weddingDate: Date
     timezone: string
     venueLocation: string | null
+    rsvpDeadlineDays: number
     ownerId: string
   }): EventoRespuesta {
     return {
@@ -116,6 +119,7 @@ export class EventsController {
       weddingDate: evento.weddingDate.toISOString(),
       timezone: evento.timezone,
       venueLocation: evento.venueLocation,
+      rsvpDeadlineDays: evento.rsvpDeadlineDays,
       ownerId: evento.ownerId,
     }
   }

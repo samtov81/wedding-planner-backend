@@ -1,5 +1,9 @@
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
+import type { NestExpressApplication } from '@nestjs/platform-express'
 import request, { type Response } from 'supertest'
+
+import { MAIL_PORT } from '@/modules/mail/application/mail.port'
+import type { FakeMailAdapter } from '@/modules/mail/infrastructure/mail.adapter.fake'
 
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
@@ -36,15 +40,46 @@ function primeraCookie(res: Response): string | undefined {
 describe('Auth e2e', () => {
   let pg: PostgresDeTest
   let redis: StartedRedisContainer
+  let app: NestExpressApplication
   let url: string
   let cerrar: () => Promise<void>
+  /**
+   * El adaptador de correo que el contenedor ya inyectó (MAIL_DRIVER=fake).
+   * Es la ÚNICA forma de leer el token de verificación desde fuera del caso de
+   * uso: la tabla guarda sólo el hash y el token en claro no se registra en
+   * ningún log a propósito.
+   */
+  let correo: FakeMailAdapter
 
   beforeAll(async () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
     fijarEntorno({ databaseUrl: pg.url, redisUrl: redis.getConnectionUrl() })
-    ;({ url, cerrar } = await arrancarAppDeTest())
+    ;({ app, url, cerrar } = await arrancarAppDeTest())
+    correo = app.get<FakeMailAdapter>(MAIL_PORT)
   }, 120_000)
+
+  /**
+   * El correo sale por BullMQ, así que no está enviado cuando responde el 201:
+   * hay que esperar a que el worker de la cola `email` lo procese. Se espera al
+   * mensaje concreto, no a "que haya alguno", porque los tests de este fichero
+   * comparten el mismo adaptador.
+   */
+  async function esperarCorreoA(destinatario: string): Promise<{ html: string; text: string }> {
+    for (let intento = 0; intento < 100; intento += 1) {
+      const mensaje = correo.enviados.find((m) => m.to === destinatario)
+      if (mensaje !== undefined) return { html: mensaje.html ?? '', text: mensaje.text ?? '' }
+      await new Promise((seguir) => setTimeout(seguir, 100))
+    }
+    throw new Error(`No llegó ningún correo a ${destinatario} en 10s`)
+  }
+
+  /** El token tal cual viaja en el enlace del correo. */
+  function tokenDelEnlace(html: string): string {
+    const encontrado = /verify-email\?token=([A-Za-z0-9_%-]+)/.exec(html)
+    if (encontrado?.[1] === undefined) throw new Error('El correo no trae enlace de verificación')
+    return decodeURIComponent(encontrado[1])
+  }
 
   beforeEach(async () => {
     await limpiarContadoresDeRitmo(redis.getConnectionUrl())
@@ -161,22 +196,83 @@ describe('Auth e2e', () => {
   })
 
   /**
-   * Ratifica una LIMITACIÓN CONOCIDA, no el comportamiento deseado a largo
-   * plazo: el 409 convierte `/auth/register` en un oráculo de enumeración de
-   * cuentas (ver el riesgo aceptado en `auth.controller.ts`). Se fija así
-   * mientras no exista el flujo de verificación de email (DESIGN-GAP #6) que
-   * permitiría responder siempre 201; cuando exista, este test cambia con él.
+   * Antes esto respondía 409 y convertía `/auth/register` en un oráculo de
+   * enumeración de cuentas. Ahora las dos ramas son indistinguibles desde
+   * fuera: mismo status y misma forma de respuesta. La diferencia sólo la ve
+   * quien lee el buzón de esa dirección.
    */
-  it('rechaza un registro duplicado con 409 (limitación conocida, no objetivo)', async () => {
-    await request(url)
+  it('un registro duplicado responde 201 igual y no crea una segunda cuenta', async () => {
+    const primero = await request(url)
       .post('/auth/register')
       .send({ email: 'duplicado@test.com', password: 'una-contraseña-larga', fullName: 'D' })
       .expect(201)
 
-    await request(url)
+    const segundo = await request(url)
       .post('/auth/register')
       .send({ email: 'duplicado@test.com', password: 'otra-contraseña-larga', fullName: 'D2' })
-      .expect(409)
+      .expect(201)
+
+    expect(segundo.body).toEqual(primero.body)
+
+    // Y la cuenta original sigue siendo la suya: ni nombre ni contraseña nuevos.
+    await request(url)
+      .post('/auth/login')
+      .send({ email: 'duplicado@test.com', password: 'una-contraseña-larga' })
+      .expect(200)
+    await request(url)
+      .post('/auth/login')
+      .send({ email: 'duplicado@test.com', password: 'otra-contraseña-larga' })
+      .expect(401)
+  })
+
+  it('el ciclo de verificación de email: enlace del correo, segundo clic y token falso', async () => {
+    await request(url)
+      .post('/auth/register')
+      .send({ email: 'verifica@test.com', password: 'una-contraseña-larga', fullName: 'Vera' })
+      .expect(201)
+
+    const { html } = await esperarCorreoA('verifica@test.com')
+    const token = tokenDelEnlace(html)
+
+    const primera = await request(url).post('/auth/verify-email').send({ token }).expect(200)
+    expect(primera.body).toEqual({ outcome: 'verified' })
+
+    // Un solo uso, pero el segundo clic (o el prefetch del cliente de correo)
+    // no puede acabar en error: el usuario ya está verificado.
+    const segunda = await request(url).post('/auth/verify-email').send({ token }).expect(200)
+    expect(segunda.body).toEqual({ outcome: 'already_verified' })
+
+    const basura = await request(url)
+      .post('/auth/verify-email')
+      .send({ token: 'esto-no-es-un-token' })
+      .expect(200)
+    expect(basura.body).toEqual({ outcome: 'invalid_or_expired' })
+  })
+
+  it('el aviso al email ya registrado sale sin enlace ni token', async () => {
+    const alta = { email: 'avisada@test.com', password: 'una-contraseña-larga', fullName: 'Avi' }
+    await request(url).post('/auth/register').send(alta).expect(201)
+    await esperarCorreoA('avisada@test.com')
+
+    await request(url)
+      .post('/auth/register')
+      .send({ ...alta, password: 'otra-contraseña-larga', fullName: 'Impostor' })
+      .expect(201)
+
+    // Dos correos a la misma dirección: el de verificación y el aviso. El aviso
+    // es el segundo y no puede llevar nada accionable — quien lo provoca no es
+    // quien lo recibe.
+    for (let intento = 0; intento < 100 && correo.enviados.filter((m) => m.to === alta.email).length < 2; intento += 1) {
+      await new Promise((seguir) => setTimeout(seguir, 100))
+    }
+    const aviso = correo.enviados.filter((m) => m.to === alta.email)[1]
+    expect(aviso).toBeDefined()
+    expect(aviso?.html).not.toContain('verify-email')
+    expect(aviso?.html).not.toContain('href=')
+  })
+
+  it('verify-email sin token responde 400, no 500', async () => {
+    await request(url).post('/auth/verify-email').send({}).expect(400)
   })
 
   describe('límite de intentos de login', () => {

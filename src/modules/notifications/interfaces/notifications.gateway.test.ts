@@ -43,6 +43,17 @@ describe('NotificationsGateway', () => {
     JWT_ACCESS_TTL: '15m',
     REFRESH_TTL_DAYS: 30,
   })
+  /**
+   * El MISMO servicio, con un TTL de un segundo: la única forma honesta de
+   * probar la caducidad con sockets reales. `vi.useFakeTimers()` congela
+   * también los temporizadores del transporte de Socket.IO (ping/pong, el
+   * timeout del handshake), así que el socket no llega ni a conectar.
+   */
+  const tokensCortos = new TokenService({
+    JWT_ACCESS_SECRET: SECRETO,
+    JWT_ACCESS_TTL: '1s',
+    REFRESH_TTL_DAYS: 30,
+  })
   const eventId = randomUUID()
   const parejaId = randomUUID()
   const extrañoId = randomUUID()
@@ -121,6 +132,19 @@ describe('NotificationsGateway', () => {
     })
   }
 
+  function esperarDesconexion(socket: SocketCliente, ms = 5_000): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const reloj = setTimeout(
+        () => reject(new Error(`el socket no se desconectó en ${ms} ms`)),
+        ms,
+      )
+      socket.once('disconnect', () => {
+        clearTimeout(reloj)
+        resolve()
+      })
+    })
+  }
+
   async function conectarComo(userId: string, systemRole: 'USER' | 'ADMIN' = 'USER') {
     const socket = conectar({ auth: { token: tokens.firmarAccess({ id: userId, systemRole }) } })
     await esperarConexion(socket)
@@ -174,6 +198,21 @@ describe('NotificationsGateway', () => {
       await esperarConexion(socket)
       expect(salasDe(socket)).toContain(salaDeUsuario(parejaId))
       expect(salaDeUsuario(parejaId)).toBe(`user:${parejaId}`)
+    })
+
+    it('desconecta el socket cuando caduca su token', async () => {
+      const socket = conectar({
+        auth: { token: tokensCortos.firmarAccess({ id: parejaId, systemRole: 'USER' }) },
+      })
+      await esperarConexion(socket)
+      const id = socket.id ?? ''
+      expect(gateway.server.sockets.get(id)).toBeDefined()
+
+      await esperarDesconexion(socket)
+
+      expect(socket.connected).toBe(false)
+      // Lo echa el SERVIDOR: el socket deja de existir en el namespace.
+      expect(gateway.server.sockets.get(id)).toBeUndefined()
     })
   })
 
@@ -260,6 +299,32 @@ describe('NotificationsGateway', () => {
 
       expect(respuesta).toEqual({ ok: false, code: 'UNAUTHORIZED' })
       expect(salasDe(socket)).not.toContain(salaDeEvento(eventId))
+    })
+
+    it('limita los join por socket', async () => {
+      const socket = await conectarComo(parejaId)
+      const resolver = vi.spyOn(app.get(EventAccessService), 'resolve')
+
+      const respuestas: RespuestaJoin[] = []
+      for (let i = 0; i < 25; i += 1)
+        respuestas.push(await emitirYEsperar(socket, 'join', { eventId }))
+      // Se cuenta ANTES de restaurar: `mockRestore` también borra las llamadas.
+      const consultas = resolver.mock.calls.length
+      resolver.mockRestore()
+
+      expect(respuestas.slice(0, 20)).toEqual(Array.from({ length: 20 }, () => ({ ok: true })))
+      expect(respuestas.at(-1)).toEqual({ ok: false, code: 'RATE_LIMITED' })
+      // Pasado el límite NO se consulta la base de datos: el ack sale antes.
+      expect(consultas).toBe(20)
+    })
+
+    it('el límite es por socket: otra conexión conserva sus fichas', async () => {
+      const uno = await conectarComo(parejaId)
+      for (let i = 0; i < 21; i += 1) await emitirYEsperar(uno, 'join', { eventId })
+
+      const otro = await conectarComo(parejaId)
+
+      expect(await emitirYEsperar(otro, 'join', { eventId })).toEqual({ ok: true })
     })
   })
 

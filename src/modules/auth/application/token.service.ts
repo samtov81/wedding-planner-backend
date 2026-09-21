@@ -34,14 +34,26 @@ export class TokenService {
     })
   }
 
-  verificarAccess(token: string): { sub: string; role: string } {
+  /**
+   * Devuelve también el `exp` del token (segundos epoch, el claim tal cual lo
+   * escribe `jsonwebtoken`): el gateway de sockets programa con él la
+   * desconexión: una conexión dura horas y el access token 15 minutos.
+   *
+   * Un token sin `exp` se RECHAZA. `jwt.verify` acepta sin rechistar un token
+   * eterno, y aquí un eterno sería una sesión de socket que no caduca nunca.
+   */
+  verificarAccess(token: string): { sub: string; role: string; exp: number } {
     // Algoritmo FIJO: sin la lista, `jsonwebtoken` acepta cualquier HMAC que
     // cuadre con el secreto y es la cabecera del token la que decide.
     const payload = jwt.verify(token, this.env.JWT_ACCESS_SECRET, { algorithms: ['HS256'] })
-    if (typeof payload === 'string' || typeof payload.sub !== 'string') {
+    if (
+      typeof payload === 'string' ||
+      typeof payload.sub !== 'string' ||
+      typeof payload.exp !== 'number'
+    ) {
       throw new Error('Payload de access token inválido')
     }
-    return { sub: payload.sub, role: String(payload.role) }
+    return { sub: payload.sub, role: String(payload.role), exp: payload.exp }
   }
 
   /**

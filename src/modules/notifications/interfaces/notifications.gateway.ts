@@ -27,16 +27,41 @@ import {
   salaDeVendorsDeEvento,
 } from '../application/salas'
 
-/** Lo que el servidor guarda en cada socket. El token NO se registra nunca. */
+/**
+ * Cuántos `join` acepta un socket por minuto. Cada `join` reautentica (una
+ * lectura de usuario) y resuelve el acceso al evento (otra): sin límite, un
+ * cliente con un bucle roto — o alguien probando ids de evento — convierte una
+ * sola conexión en un martillo contra la base de datos. 20/min deja sitio de
+ * sobra para el uso real (un `join` por pantalla abierta) y corta el abuso.
+ */
+const JOINS_POR_MINUTO = 20
+
+/** Fichas por milisegundo: el cubo se rellena de forma continua, no a saltos. */
+const RECARGA_POR_MS = JOINS_POR_MINUTO / 60_000
+
+/**
+ * Lo que el servidor guarda en cada socket. El token NO se registra nunca.
+ * `fichas`/`recargadoEn` son el cubo de fichas del límite de `join`: vive en el
+ * socket, así que se va con él y no hay nada que limpiar.
+ */
 interface DatosDeSocket {
   userId: string
   token: string
+  fichas: number
+  recargadoEn: number
 }
 
 type SocketRealtime = Socket<Record<string, never>, Record<string, never>, never, DatosDeSocket>
 
+/**
+ * DESIGN-GAP (brief de la tarea 9): el brief escribe el ack del límite como
+ * `{ ok: false, error: 'RATE_LIMITED' }`. Aquí va en `code`, como los otros
+ * tres rechazos que ya existían: un mismo ack con dos nombres para el mismo
+ * campo obligaría a cada cliente a mirar los dos. El valor, `RATE_LIMITED`, es
+ * el del brief.
+ */
 export type RespuestaSala =
-  { ok: true } | { ok: false; code: 'NOT_FOUND' | 'UNAUTHORIZED' | 'INTERNAL' }
+  { ok: true } | { ok: false; code: 'NOT_FOUND' | 'UNAUTHORIZED' | 'INTERNAL' | 'RATE_LIMITED' }
 
 /**
  * `z.guid()` y no `z.uuid()`: la misma forma laxa 8-4-4-4-12 que acepta
@@ -123,6 +148,10 @@ export class NotificationsGateway implements OnGatewayInit, OnGatewayConnection 
     @ConnectedSocket() socket: SocketRealtime,
     @MessageBody() datos: unknown,
   ): Promise<RespuestaSala> {
+    // ANTES de validar el cuerpo y de reautenticar: un `join` pasado de ritmo
+    // no llega a tocar la base de datos, que es de lo que protege el límite.
+    if (!this.tomarFicha(socket)) return { ok: false, code: 'RATE_LIMITED' }
+
     return await this.conSalaAutorizada(socket, datos, async (eventId, usuario) => {
       const acceso = await this.accesoAEventos.resolve(usuario.id, usuario.systemRole, eventId)
       // Mismo criterio que `EventAccessGuard`: sin acceso, el evento "no existe".
@@ -150,9 +179,41 @@ export class NotificationsGateway implements OnGatewayInit, OnGatewayConnection 
   private async autenticar(socket: SocketRealtime): Promise<void> {
     const auth = socket.handshake.auth as { token?: unknown }
     const token = typeof auth.token === 'string' ? auth.token : ''
-    const usuario = await autenticarAccessToken(this.tokens, this.usuarios, token)
+    const { usuario, expiraEn } = await autenticarAccessToken(this.tokens, this.usuarios, token)
     socket.data.userId = usuario.id
     socket.data.token = token
+    socket.data.fichas = JOINS_POR_MINUTO
+    socket.data.recargadoEn = Date.now()
+
+    // El token caduca a una hora FIJA, pero el socket no se reautentica solo:
+    // sin esto, una conexión abierta sobrevive a su propio token. `join` ya
+    // reautentica, pero quien sólo escucha no emite nada, así que nadie
+    // volvería a mirar el token. Se le echa al `exp` y que reconecte con uno
+    // nuevo. `Math.max(…, 0)` por si el token caducó entre la firma y el
+    // handshake: `setTimeout` con un negativo dispara igualmente al instante,
+    // pero dejarlo explícito evita depender de eso.
+    const restante = expiraEn.getTime() - Date.now()
+    const temporizador = setTimeout(() => socket.disconnect(true), Math.max(restante, 0))
+    socket.once('disconnect', () => clearTimeout(temporizador))
+  }
+
+  /**
+   * Cubo de fichas POR SOCKET: se recarga de forma continua hasta
+   * `JOINS_POR_MINUTO` y cada `join` gasta una. Por socket y en memoria, no en
+   * Redis: lo que se protege es el coste que una conexión concreta le impone a
+   * esta instancia, y un contador compartido costaría un viaje a Redis por
+   * `join` — justo el trabajo que se quiere evitar.
+   */
+  private tomarFicha(socket: SocketRealtime): boolean {
+    const ahora = Date.now()
+    socket.data.fichas = Math.min(
+      JOINS_POR_MINUTO,
+      socket.data.fichas + (ahora - socket.data.recargadoEn) * RECARGA_POR_MS,
+    )
+    socket.data.recargadoEn = ahora
+    if (socket.data.fichas < 1) return false
+    socket.data.fichas -= 1
+    return true
   }
 
   /**
@@ -172,7 +233,7 @@ export class NotificationsGateway implements OnGatewayInit, OnGatewayConnection 
     try {
       let usuario: UsuarioAutenticado
       try {
-        usuario = await autenticarAccessToken(this.tokens, this.usuarios, socket.data.token)
+        ;({ usuario } = await autenticarAccessToken(this.tokens, this.usuarios, socket.data.token))
       } catch (error) {
         if (error instanceof UnauthorizedError) return { ok: false, code: 'UNAUTHORIZED' }
         throw error

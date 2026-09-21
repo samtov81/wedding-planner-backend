@@ -18,9 +18,23 @@ describe('TokenService', () => {
     expect(() => servicio.verificarAccess(ajeno)).toThrow()
   })
 
-  it('firma y verifica un token de acceso', () => {
+  it('firma y verifica un token de acceso, con su caducidad', () => {
+    // El `exp` sale del token, no del reloj de quien lo lee: es lo que deja al
+    // gateway de sockets programar la desconexión exacta.
     const token = servicio.firmarAccess({ id: 'u-1', systemRole: 'USER' })
-    expect(servicio.verificarAccess(token)).toEqual({ sub: 'u-1', role: 'USER' })
+    expect(servicio.verificarAccess(token)).toEqual({
+      sub: 'u-1',
+      role: 'USER',
+      exp: expect.any(Number) as number,
+    })
+    expect(servicio.verificarAccess(token).exp).toBeCloseTo(Date.now() / 1000 + 900, -1)
+  })
+
+  it('rechaza un token bien firmado pero sin caducidad', () => {
+    // `noTimestamp` + sin `expiresIn`: un token eterno. Sin `exp` no hay
+    // desconexión que programar, así que no se acepta.
+    const eterno = jwt.sign({ sub: 'u-1', role: 'USER' }, secreto, { algorithm: 'HS256' })
+    expect(() => servicio.verificarAccess(eterno)).toThrow(/inválido/i)
   })
 
   it('firma con HS256', () => {

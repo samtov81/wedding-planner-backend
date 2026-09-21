@@ -44,11 +44,15 @@ export class JwtAuthGuard implements CanActivate {
     }
 
     try {
-      req.user = await autenticarAccessToken(
+      // El `expiraEn` que devuelve no sirve aquí: cada petición trae su propio
+      // token y se verifica entera. Es el socket, que no se reautentica solo,
+      // quien lo necesita.
+      const { usuario } = await autenticarAccessToken(
         this.tokens,
         this.usuarios,
         cabecera.slice('Bearer '.length),
       )
+      req.user = usuario
     } catch (error) {
       // SÓLO el rechazo del token es un 401. Un fallo al recargar el usuario
       // (la base de datos caída) sale tal cual y el filtro lo responde como

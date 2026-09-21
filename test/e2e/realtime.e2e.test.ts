@@ -25,6 +25,7 @@ import { DomainExceptionFilter } from '@/shared/http/domain-exception.filter'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 
 const SECRETO_WEBHOOK = `whsec_${Buffer.from('secreto-e2e-del-webhook-32-bytes').toString('base64')}`
+const SECRETO_JWT = 'x'.repeat(32)
 
 interface Participante {
   id: string
@@ -157,7 +158,7 @@ describe('Tiempo real e2e', () => {
     process.env.NODE_ENV = 'test'
     process.env.DATABASE_URL = pg.url
     process.env.REDIS_URL = redis.getConnectionUrl()
-    process.env.JWT_ACCESS_SECRET = 'x'.repeat(32)
+    process.env.JWT_ACCESS_SECRET = SECRETO_JWT
     process.env.JWT_ACCESS_TTL = '15m'
     process.env.REFRESH_TTL_DAYS = '30'
     process.env.MAIL_DRIVER = 'fake'
@@ -360,6 +361,46 @@ describe('Tiempo real e2e', () => {
       }),
     ).toBe(2)
   })
+
+  it('el servidor desconecta el socket cuando caduca su access token', async () => {
+    // Con el adaptador de Redis y todo real. TTL de 2 s firmado con el MISMO
+    // secreto del entorno: no hay forma de acortar el reloj sin romper el
+    // transporte de Socket.IO, que vive de temporizadores reales.
+    const cortos = new TokenService({
+      JWT_ACCESS_SECRET: SECRETO_JWT,
+      JWT_ACCESS_TTL: '2s',
+      REFRESH_TTL_DAYS: 30,
+    })
+    const efimero = await participante(`efimero-${randomUUID()}@test.com`)
+    const socket = await conectarComo({
+      id: efimero.id,
+      accessToken: cortos.firmarAccess({ id: efimero.id, systemRole: 'USER' }),
+    })
+
+    const motivo = await new Promise<string>((resolve, reject) => {
+      const reloj = setTimeout(() => reject(new Error('el socket no se desconectó')), 10_000)
+      socket.once('disconnect', (razon: string) => {
+        clearTimeout(reloj)
+        resolve(razon)
+      })
+    })
+
+    expect(motivo).toBe('io server disconnect')
+    expect(socket.connected).toBe(false)
+  }, 20_000)
+
+  it('un socket que abusa de join recibe RATE_LIMITED sin tocar la base de datos', async () => {
+    const socket = await conectarComo(pareja)
+
+    const respuestas: unknown[] = []
+    for (let i = 0; i < 25; i += 1) respuestas.push(await unirse(socket))
+
+    // Las 20 primeras pasan; de ahí en adelante el cubo está vacío. No se
+    // afirma sobre la última: con Postgres de por medio el cubo se recarga
+    // mientras corre el bucle (20/60 fichas por segundo).
+    expect(respuestas[19]).toEqual({ ok: true })
+    expect(respuestas.slice(20)).toContainEqual({ ok: false, code: 'RATE_LIMITED' })
+  }, 30_000)
 
   it('un rebote que llega por el webhook se avisa como guest.invitation.status', async () => {
     const { guestId, invitationId } = await invitacion()

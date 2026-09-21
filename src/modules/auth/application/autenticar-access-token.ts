@@ -47,17 +47,24 @@ export const ACCESS_TOKEN_RECHAZADO = 'Token de acceso inválido o caducado'
  * Lanza `UnauthorizedError` con el mismo mensaje en todos los casos: distinguir
  * "firma mala" de "usuario borrado" le diría a quien prueba tokens qué ha
  * acertado.
+ *
+ * Devuelve también `expiraEn`, la caducidad del TOKEN (no de la sesión): el
+ * REST la ignora — cada petición trae su token y se vuelve a verificar — y el
+ * gateway de sockets la necesita para echar la conexión cuando llegue, porque
+ * un socket no vuelve a presentar credenciales por sí solo.
  */
 export async function autenticarAccessToken(
   tokens: Pick<TokenService, 'verificarAccess'>,
   usuarios: Pick<UserRepository, 'findById'>,
   token: string,
-): Promise<UsuarioAutenticado> {
+): Promise<{ usuario: UsuarioAutenticado; expiraEn: Date }> {
   let sub: string
+  let exp: number
   try {
     const payload = tokens.verificarAccess(token)
     if (!esSystemRole(payload.role)) throw new UnauthorizedError(ACCESS_TOKEN_RECHAZADO)
     sub = payload.sub
+    exp = payload.exp
   } catch {
     throw new UnauthorizedError(ACCESS_TOKEN_RECHAZADO)
   }
@@ -66,9 +73,13 @@ export async function autenticarAccessToken(
   if (usuario === null) throw new UnauthorizedError(ACCESS_TOKEN_RECHAZADO)
 
   return {
-    id: usuario.id,
-    email: usuario.email,
-    fullName: usuario.fullName,
-    systemRole: usuario.systemRole,
+    usuario: {
+      id: usuario.id,
+      email: usuario.email,
+      fullName: usuario.fullName,
+      systemRole: usuario.systemRole,
+    },
+    // `exp` va en SEGUNDOS epoch (RFC 7519), no en milisegundos.
+    expiraEn: new Date(exp * 1000),
   }
 }

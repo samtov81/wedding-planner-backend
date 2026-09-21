@@ -38,13 +38,18 @@ export interface InvitationRepository {
   /**
    * SENT + `sentAt` + el id del proveedor, en UNA escritura (ver el worker).
    *
+   * `providerMessageId` puede ser `null`: el correo salió pero el proveedor no
+   * dio su id (409 de idempotencia de Resend). La invitación se marca SENT
+   * igual —está enviada—, y lo que se pierde es que sus webhooks de entrega
+   * puedan casarla por `resendMessageId`.
+   *
    * Sólo AVANZA (ruling C21): escribe únicamente si el estado actual está en
    * `estadosQuePuedenAvanzarA('SENT')`, comprobado en la MISMA escritura. Un
    * reintento del job que llega cuando el invitado ya respondió (o el webhook
    * ya dijo DELIVERED/BOUNCED) afecta a 0 filas y NO lanza: pisar `RESPONDED`
    * con `SENT` borraría la respuesta del invitado de la vista de la pareja.
    */
-  marcarEnviada(id: string, providerMessageId: string): Promise<void>
+  marcarEnviada(id: string, providerMessageId: string | null): Promise<void>
 
   /** Entrada del RSVP público (Tarea 14): se busca por hash, nunca por token. */
   buscarPorHash(tokenHash: string): Promise<InvitacionCompleta | null>

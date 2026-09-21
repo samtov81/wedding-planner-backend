@@ -1,5 +1,4 @@
 import { Inject, Injectable } from '@nestjs/common'
-import { UnrecoverableError } from 'bullmq'
 import { Resend } from 'resend'
 
 import { ENV } from '@/config/config.module'
@@ -47,18 +46,18 @@ export class ResendMailAdapter implements MailPort {
     )
 
     if (respuesta.error !== null) {
-      // 409 = la clave de idempotencia ya se usó (`invalid_idempotent_request`
-      // con otro contenido, `concurrent_idempotent_requests` a la vez). El
-      // correo de esa clave YA salió o está saliendo: repetir la petición da
-      // otro 409, así que reintentar cinco veces no arregla nada.
+      // Un conflicto de idempotencia CUENTA COMO ENVIADO (bloque A §5): esa
+      // clave ya produjo un correo —salido, o saliendo en la petición gemela—,
+      // y es exactamente el correo que íbamos a mandar. Lanzar aquí haría que
+      // el worker caducara una invitación cuyo enlace ya está en la bandeja del
+      // invitado, que es justo lo contrario de lo que pasó.
       if (esConflictoDeIdempotencia(respuesta.error)) {
-        // Si la API devuelve el id del correo original, eso es un envío: se
-        // devuelve para que el webhook pueda casarlo.
+        // Si la API devuelve el id del correo original, se devuelve para que el
+        // webhook pueda casarlo. Hoy no lo hace —con `error`, `data` viene
+        // `null`—, y entonces el envío consta sin id: la invitación se marca
+        // SENT sin `resendMessageId` y sus webhooks de entrega no la avanzan.
         if (respuesta.data !== null) return { providerMessageId: respuesta.data.id }
-        // Sin id no hay nada que guardar ni que casar: se falla SIN reintentos.
-        // El worker lo trata como último intento y caduca la invitación, que es
-        // preferible a cinco 409 y un token vivo en los fallidos de Redis.
-        throw new UnrecoverableError('Resend: clave de idempotencia ya usada con otro contenido')
+        return {}
       }
       // Se lanza para que BullMQ reintente. Un error del proveedor devuelto como
       // valor se traga en silencio y la invitación se queda en QUEUED para siempre.
@@ -71,11 +70,17 @@ export class ResendMailAdapter implements MailPort {
 }
 
 /**
- * Por el HTTP, no por el código: `statusCode` 409 es el conflicto de
- * idempotencia (`invalid_idempotent_request`, `concurrent_idempotent_requests`)
- * y cualquier otro conflicto que Resend añada, que tampoco se arregla
- * repitiendo la misma petición.
+ * Los dos códigos con los que Resend dice que esa clave YA produjo un correo:
+ * `invalid_idempotent_request` (misma clave, contenido distinto) y
+ * `concurrent_idempotent_requests` (la petición gemela está en vuelo). Por el
+ * CÓDIGO y no por el 409 a secas: otro conflicto distinto no dice que el correo
+ * haya salido, y darlo por enviado se tragaría un envío de verdad.
+ *
+ * `invalid_idempotency_key` queda FUERA a propósito: es un 400 por una clave
+ * malformada, la petición se rechazó y no salió ningún correo.
  */
-function esConflictoDeIdempotencia(error: { statusCode: number | null }): boolean {
-  return error.statusCode === 409
+const CONFLICTOS_DE_IDEMPOTENCIA = ['invalid_idempotent_request', 'concurrent_idempotent_requests']
+
+function esConflictoDeIdempotencia(error: { name: string }): boolean {
+  return CONFLICTOS_DE_IDEMPOTENCIA.includes(error.name)
 }

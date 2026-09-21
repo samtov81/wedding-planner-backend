@@ -1,5 +1,3 @@
-import { UnrecoverableError } from 'bullmq'
-
 import type { Env } from '@/config/env.schema'
 
 import { ResendMailAdapter } from './resend-mail.adapter'
@@ -58,26 +56,25 @@ describe('ResendMailAdapter', () => {
     })
 
     await expect(adaptador.send(MENSAJE)).rejects.toThrow('boom')
-    // Reintentable: NO es un `UnrecoverableError`.
-    await expect(adaptador.send(MENSAJE)).rejects.not.toBeInstanceOf(UnrecoverableError)
   })
 
-  describe('conflicto de idempotencia (409)', () => {
+  describe('conflicto de idempotencia (bloque A §5: cuenta como enviado)', () => {
     it.each(['invalid_idempotent_request', 'concurrent_idempotent_requests'])(
-      'un %s sin id no se reintenta: cinco intentos darían el mismo 409',
+      'un %s NO lanza: el correo de esa clave ya salió',
       async (name) => {
+        // Lanzar haría que el worker caducara una invitación cuyo enlace ya
+        // está en la bandeja del invitado.
         enviar.mockResolvedValue({
           data: null,
           error: { name, statusCode: 409, message: 'idempotency key already used' },
         })
 
-        await expect(adaptador.send(MENSAJE)).rejects.toBeInstanceOf(UnrecoverableError)
+        // Enviado, pero sin id del proveedor: sus webhooks no podrán casarlo.
+        expect(await adaptador.send(MENSAJE)).toEqual({})
       },
     )
 
-    it('si el conflicto trae el id del correo original, cuenta como enviado', async () => {
-      // La API puede contestar el 409 con el mensaje que sí salió con esa
-      // clave: ese correo ESTÁ enviado, y su id es el que el webhook va a casar.
+    it('si el conflicto trae el id del correo original, ese id se devuelve', async () => {
       enviar.mockResolvedValue({
         data: { id: 're_original' },
         error: { name: 'invalid_idempotent_request', statusCode: 409, message: 'ya usada' },
@@ -86,14 +83,26 @@ describe('ResendMailAdapter', () => {
       expect(await adaptador.send(MENSAJE)).toEqual({ providerMessageId: 're_original' })
     })
 
-    it('un 409 de otra familia también se da por perdido sin reintentar', async () => {
-      // El `statusCode` manda: un conflicto no lo arregla repetir la petición.
+    it('un 409 que NO es de idempotencia sigue siendo un error reintentable', async () => {
+      // Se mira el código, no el HTTP: otro conflicto no dice que el correo
+      // haya salido, y darlo por enviado se tragaría un envío de verdad.
       enviar.mockResolvedValue({
         data: null,
         error: { name: 'application_error', statusCode: 409, message: 'conflict' },
       })
 
-      await expect(adaptador.send(MENSAJE)).rejects.toBeInstanceOf(UnrecoverableError)
+      await expect(adaptador.send(MENSAJE)).rejects.toThrow('conflict')
+    })
+
+    it('una clave MALFORMADA no es un envío: se reintenta como cualquier otro error', async () => {
+      // `invalid_idempotency_key` es un 400: la petición se rechazó y no salió
+      // ningún correo, así que darla por enviada sería mentir.
+      enviar.mockResolvedValue({
+        data: null,
+        error: { name: 'invalid_idempotency_key', statusCode: 400, message: 'clave inválida' },
+      })
+
+      await expect(adaptador.send(MENSAJE)).rejects.toThrow('clave inválida')
     })
   })
 

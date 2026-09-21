@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common'
 import { UnrecoverableError, type Job } from 'bullmq'
 
 import type { InvitationRenderer } from '@/modules/mail/application/invitation-renderer.port'
+import type { MailPort } from '@/modules/mail/application/mail.port'
 import { FakeMailAdapter } from '@/modules/mail/infrastructure/fake-mail.adapter'
 import { renderGuestInvitation } from '@/modules/mail/infrastructure/templates/guest-invitation'
 
@@ -190,6 +191,28 @@ describe('InvitationProcessor', () => {
     expect(mail.enviados).toHaveLength(1)
     expect(mail.enviados[0]?.idempotencyKey).toBe('invitation-inv-1')
     expect(invitaciones.buscar('inv-1')?.status).toBe('SENT')
+  })
+
+  it('un envío sin id del proveedor (409 de idempotencia) marca SENT y NO caduca nada', async () => {
+    // Lo que devuelve el adaptador de Resend ante un conflicto de idempotencia
+    // (bloque A §5): el correo de esa clave ya salió, pero sin id que casar.
+    // La invitación tiene que quedar ENVIADA, no caducada: el enlace está en la
+    // bandeja del invitado.
+    const caducidad = MAÑANA()
+    invitaciones.añadir({ id: 'inv-1', status: 'QUEUED', expiresAt: caducidad })
+    const sinId: MailPort = { send: () => Promise.resolve({}) }
+    const conConflicto = new InvitationProcessor(
+      invitaciones,
+      sinId,
+      { APP_URL: 'https://app.test' },
+      { render: renderGuestInvitation },
+    )
+
+    await conConflicto.process(jobFalso({ invitationId: 'inv-1' }))
+
+    expect(invitaciones.buscar('inv-1')?.status).toBe('SENT')
+    expect(invitaciones.buscar('inv-1')?.resendMessageId).toBeNull()
+    expect(invitaciones.buscar('inv-1')?.expiresAt).toEqual(caducidad)
   })
 
   it('escucha SU cola, no la `email` compartida con otros productores', () => {

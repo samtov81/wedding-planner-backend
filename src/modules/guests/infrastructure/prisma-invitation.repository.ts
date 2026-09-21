@@ -48,7 +48,7 @@ export class PrismaInvitationRepository implements InvitationRepository {
     return fila === null ? null : aInvitacion(fila)
   }
 
-  async marcarEnviada(id: string, providerMessageId: string): Promise<void> {
+  async marcarEnviada(id: string, providerMessageId: string | null): Promise<void> {
     // Estado e id del proveedor en la MISMA escritura: dos updates dejarían una
     // ventana en la que el webhook llega a una invitación sin `resendMessageId`
     // y no sabe a quién pertenece.

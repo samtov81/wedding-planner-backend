@@ -186,7 +186,7 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
     return Promise.resolve(fila === undefined ? null : { ...fila })
   }
 
-  marcarEnviada(id: string, providerMessageId: string): Promise<void> {
+  marcarEnviada(id: string, providerMessageId: string | null): Promise<void> {
     if (this.falloAlMarcar !== null) {
       const error = this.falloAlMarcar
       this.falloAlMarcar = null

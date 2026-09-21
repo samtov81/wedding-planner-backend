@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { PrismaClient } from '@prisma/client'
+import { Prisma, PrismaClient } from '@prisma/client'
 
 import type { PrismaService } from '@/modules/database/prisma.service'
 import { PrismaUnidadDeTrabajo } from '@/modules/database/transaccion'
@@ -71,6 +71,13 @@ describe('Guardas de escritura de la invitación', () => {
       guestId?: string
     }) => Promise<string>
     estado: (id: string) => Promise<{ status: string; resendMessageId: string | null } | null>
+    /**
+     * Qué lanza ESTA implementación ante un `tokenHash` repetido. DIVERGENCIA
+     * declarada: Prisma no traduce el `@unique` (sale su `P2002` crudo) y el
+     * doble lo imita con un `Error` propio. Las dos rechazan, que es lo que el
+     * caso de uso necesita; el error concreto no es el mismo.
+     */
+    esHashDuplicado: (error: unknown) => boolean
     caducidad: (id: string) => Promise<Date | undefined>
     respondidaEn: (id: string) => Promise<Date | null | undefined>
   }
@@ -97,6 +104,8 @@ describe('Guardas de escritura de la invitación', () => {
             where: { id },
             select: { status: true, resendMessageId: true },
           }),
+        esHashDuplicado: (error) =>
+          error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002',
         caducidad: async (id) =>
           (await prisma.guestInvitation.findUnique({ where: { id } }))?.expiresAt,
         respondidaEn: async (id) =>
@@ -143,6 +152,8 @@ describe('Guardas de escritura de la invitación', () => {
                 : { status: fila.status, resendMessageId: fila.resendMessageId },
             )
           },
+          esHashDuplicado: (error) =>
+            error instanceof Error && error.message === 'tokenHash duplicado',
           caducidad: (id) => Promise.resolve(repo.buscar(id)?.expiresAt),
           respondidaEn: (id) => Promise.resolve(repo.buscar(id)?.respondedAt),
         }
@@ -192,7 +203,13 @@ describe('Guardas de escritura de la invitación', () => {
         const { id } = await impl.repo.crear({ guestId, tokenHash, expiresAt: MAÑANA() })
 
         expect((await impl.repo.buscarPorHash(tokenHash))?.id).toBe(id)
-        await expect(impl.repo.crear({ guestId, tokenHash, expiresAt: MAÑANA() })).rejects.toThrow()
+        // Las dos rechazan el `@unique`, cada una con SU error (ver
+        // `esHashDuplicado`): el doble no puede aceptar lo que Postgres no acepta.
+        const error = await impl.repo.crear({ guestId, tokenHash, expiresAt: MAÑANA() }).then(
+          () => null,
+          (fallo: unknown) => fallo,
+        )
+        expect(impl.esHashDuplicado(error)).toBe(true)
       })
     })
 

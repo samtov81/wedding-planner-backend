@@ -67,9 +67,17 @@ export class InvitationProcessor extends WorkerHost {
 
   /**
    * Invitaciones cuyo correo salió en el intento en curso aunque el job fallara
-   * DESPUÉS, al marcarlas. Sólo sirve para que `alFallar` no las caduque; cada
-   * intento fallido emite `failed`, así que la marca se consume enseguida y el
-   * conjunto no crece.
+   * DESPUÉS, al marcarlas. Sólo sirve para que `alFallar` no las caduque.
+   *
+   * La protección es POR PROCESO y en memoria: un reinicio del worker entre el
+   * fallo y su evento `failed` la pierde, y entonces la invitación se caduca
+   * como cualquier otra sin marcar. Acotado: cada intento fallido emite
+   * `failed`, que consume la marca, así que el conjunto no crece.
+   *
+   * DESIGN-GAP: el snippet del plan para `alFallar` no lleva esta marca. Sin
+   * ella el respaldo caduca el caso que `process` protege a propósito —el
+   * correo YA salió y falló el marcado en el último intento—, y el invitado se
+   * queda con un enlace en la bandeja que da 404.
    */
   private readonly enviadasSinMarcar = new Set<string>()
 
@@ -115,11 +123,19 @@ export class InvitationProcessor extends WorkerHost {
   }
 
   /**
-   * Respaldo del ruling C18: un job que falla por STALLED —el worker murió a
-   * mitad, o se pasó de `lockDuration`— nunca entra en el `catch` de `process`,
-   * así que la caducidad de allí no llega a escribirse y el token del payload
-   * seguiría vivo en el conjunto de fallidos de Redis. Cuando BullMQ lo da por
-   * perdido (sin intentos restantes), se caduca la invitación igual.
+   * Respaldo del ruling C18 para los fallos que NO pasan por el `catch` de
+   * `process`: este worker sigue vivo pero pierde el lock del job o lo mueve a
+   * fallidos por su cuenta (`moveToFailed`), de modo que la caducidad de
+   * `process` no llega a escribirse y el token del payload seguiría vivo en el
+   * conjunto de fallidos de Redis. Cuando BullMQ da el job por perdido (sin
+   * intentos restantes), se caduca la invitación igual.
+   *
+   * DESIGN-GAP: el caso del worker MUERTO no queda cubierto. `@OnWorkerEvent`
+   * escucha el `failed` local del worker, que sólo emite `handleFailed`; un job
+   * atascado porque su worker se cayó lo marca fallido el script Lua de BullMQ
+   * y sólo aflora como `failed` GLOBAL de `QueueEvents`. Se deja así en este
+   * bloque (el plan manda `@OnWorkerEvent`): cubrir al worker muerto pide un
+   * `QueueEvents` o un barrido periódico de caducidades, y va a bloque B.
    *
    * Es idempotente con la caducidad de `process`: caducar dos veces sólo mueve
    * `expiresAt` a un `ahora` un poco posterior, y ambos ya están en el pasado.
@@ -226,7 +242,12 @@ export class InvitationProcessor extends WorkerHost {
     // SENT y el id del proveedor en la misma escritura: el webhook (Tarea 13)
     // casa por `resendMessageId`, así que si esto falla el webhook llega a una
     // invitación que no sabe reconocer.
-    await this.invitaciones.marcarEnviada(invitacion.id, providerMessageId)
+    //
+    // Sin id (409 de idempotencia de Resend, bloque A §5) se marca SENT
+    // igualmente con `null`: el correo salió, y lo que se pierde es sólo poder
+    // casar sus webhooks de entrega. Dejarla QUEUED sería peor: el reintento
+    // volvería a chocar con la misma clave y acabaría caducando un enlace vivo.
+    await this.invitaciones.marcarEnviada(invitacion.id, providerMessageId ?? null)
   }
 }
 

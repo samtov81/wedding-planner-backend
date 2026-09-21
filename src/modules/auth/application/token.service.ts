@@ -1,0 +1,73 @@
+import { createHash, randomBytes } from 'node:crypto'
+
+import { Inject, Injectable } from '@nestjs/common'
+import jwt from 'jsonwebtoken'
+
+import { ENV } from '@/config/config.module'
+
+/** SHA-256 basta: el token ya es aleatorio de 32 bytes, no hay nada que forzar. */
+export function hashToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex')
+}
+
+/**
+ * La forma que `env.schema.ts` exige a `JWT_ACCESS_TTL` al arrancar (`15m`,
+ * `1h`, `30s`). Tiparla así es lo que deja pasar el valor a `expiresIn` sin
+ * un `as`: `jsonwebtoken` sólo acepta duraciones que `ms` sabe leer.
+ */
+type DuracionJwt = `${number}${'s' | 'm' | 'h' | 'd'}`
+
+interface ConfigTokens {
+  JWT_ACCESS_SECRET: string
+  JWT_ACCESS_TTL: DuracionJwt
+  REFRESH_TTL_DAYS: number
+}
+
+@Injectable()
+export class TokenService {
+  constructor(@Inject(ENV) private readonly env: ConfigTokens) {}
+
+  firmarAccess(user: { id: string; systemRole: string }): string {
+    return jwt.sign({ sub: user.id, role: user.systemRole }, this.env.JWT_ACCESS_SECRET, {
+      algorithm: 'HS256',
+      expiresIn: this.env.JWT_ACCESS_TTL,
+    })
+  }
+
+  /**
+   * Devuelve también el `exp` del token (segundos epoch, el claim tal cual lo
+   * escribe `jsonwebtoken`): el gateway de sockets programa con él la
+   * desconexión: una conexión dura horas y el access token 15 minutos.
+   *
+   * Un token sin `exp` se RECHAZA. `jwt.verify` acepta sin rechistar un token
+   * eterno, y aquí un eterno sería una sesión de socket que no caduca nunca.
+   */
+  verificarAccess(token: string): { sub: string; role: string; exp: number } {
+    // Algoritmo FIJO: sin la lista, `jsonwebtoken` acepta cualquier HMAC que
+    // cuadre con el secreto y es la cabecera del token la que decide.
+    const payload = jwt.verify(token, this.env.JWT_ACCESS_SECRET, { algorithms: ['HS256'] })
+    if (
+      typeof payload === 'string' ||
+      typeof payload.sub !== 'string' ||
+      typeof payload.exp !== 'number'
+    ) {
+      throw new Error('Payload de access token inválido')
+    }
+    return { sub: payload.sub, role: String(payload.role), exp: payload.exp }
+  }
+
+  /**
+   * Refresh OPACO, no un JWT: no lleva claims, no se puede inspeccionar y se
+   * revoca borrando una fila. Un JWT de refresh es irrevocable por diseño.
+   * Se devuelve el token en claro (va al cliente) y su hash (va a la tabla):
+   * la base de datos nunca guarda el token.
+   */
+  generarRefresh(): { token: string; hash: string } {
+    const token = randomBytes(32).toString('base64url')
+    return { token, hash: hashToken(token) }
+  }
+
+  caducidadRefresh(): Date {
+    return new Date(Date.now() + this.env.REFRESH_TTL_DAYS * 86_400_000)
+  }
+}

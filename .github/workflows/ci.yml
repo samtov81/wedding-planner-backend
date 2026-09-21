@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Sólo para `prisma migrate diff`, que necesita una base de datos "sombra"
+    # donde reproducir las migraciones. Los tests NO la usan: levantan la suya
+    # con Testcontainers (Docker ya viene en el runner).
+    services:
+      sombra:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: sombra
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U ci -d sombra"
+          --health-interval 5s
+          --health-retries 10
+
+    env:
+      # `prisma.config.ts` exige DATABASE_URL para cualquier comando del CLI,
+      # aunque `generate` y `migrate diff` no se conecten a ella.
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/sombra
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npx prisma generate
+
+      - name: Tipos
+        run: npm run typecheck
+
+      # dependency-cruiser (la regla de dependencia) + ESLint.
+      - name: Arquitectura y estilo
+        run: npm run lint
+
+      - name: Formato
+        run: npx prettier --check .
+
+      # Falla si alguien cambió schema.prisma sin generar la migración. Sin
+      # esto, el esquema y las migraciones divergen en silencio y el error
+      # aparece en el primer despliegue.
+      - name: Migraciones al día
+        run: >-
+          npx prisma migrate diff
+          --from-migrations prisma/migrations
+          --to-schema-datamodel prisma/schema.prisma
+          --shadow-database-url postgresql://ci:ci@localhost:5432/sombra
+          --exit-code
+
+      # Unitarios, integración y e2e. Testcontainers necesita Docker, que el
+      # runner ya trae.
+      - name: Tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # Arranca `dist/main.js` con `node` a secas contra Postgres y Redis de
+      # Testcontainers y exige 200 en /health (ruling C20: el build compilaba
+      # pero no arrancaba, y ningún test lo veía).
+      - name: Humo del build compilado
+        run: npm run test:smoke

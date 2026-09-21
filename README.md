@@ -26,7 +26,8 @@ La API queda en `http://localhost:3000`:
 
 - `GET /health` — liveness: el proceso está vivo. No toca dependencias.
 - `GET /health/ready` — readiness: Postgres y Redis responden (503 si no).
-- `GET /docs` — Swagger UI; el documento en `GET /openapi.json`.
+- `GET /docs` — Swagger UI; el documento en `GET /openapi.json`. Apagado en
+  producción salvo `DOCS_ENABLED=true`.
 
 En producción: `npm run build` y `npm start` (`node dist/main.js`), con las
 variables en el entorno (no se lee ningún `.env`).
@@ -42,22 +43,26 @@ comprueba).
 | `DATABASE_URL` | sí | `postgresql://…` |
 | `REDIS_URL` | sí | `redis://…` o `rediss://…` |
 | `JWT_ACCESS_SECRET` | sí | Firma de los access tokens, 32 caracteres o más. En producción se rechaza el valor de `.env.example`. |
-| `APP_URL` | sí | Origen del frontend: base de los enlaces del RSVP y siempre dentro de la allowlist de CORS. |
+| `APP_URL` | sí | Origen del frontend: base de los enlaces del RSVP y siempre dentro de la allowlist de CORS. Sólo `http://` o `https://`. |
 | `NODE_ENV` | no | `development` (defecto), `test` o `production`. |
 | `PORT` | no | 3000 por defecto. |
 | `JWT_ACCESS_TTL` | no | `15m` por defecto. |
 | `REFRESH_TTL_DAYS` | no | 30 por defecto. |
 | `MAIL_DRIVER` | en producción | `fake` (defecto: no envía nada, guarda en memoria; sólo local y test) o `resend`. En producción el arranque exige `resend`. |
-| `MAIL_FROM` | en producción | Remitente de los correos. El defecto (`.test`) se rechaza en producción. |
+| `MAIL_FROM` | en producción | Remitente de los correos. En producción se rechaza cualquier dominio reservado: `.test`, `.example`, `.invalid`, `.localhost` y `example.com`/`.net`/`.org` (RFC 2606) cuentan como remitentes de prueba. |
 | `RESEND_API_KEY` | con `resend` | Clave de la API de Resend. |
 | `RESEND_WEBHOOK_SECRET` | con `resend` | Secreto de firma del webhook (`whsec_<base64>`). |
 | `CORS_ORIGINS` | no | Orígenes adicionales a `APP_URL`, separados por comas. Nunca `*`. La misma lista vale para HTTP y Socket.IO. |
 | `TRUST_PROXY` | detrás de un proxy | De dónde sale la IP del cliente, que es la clave de los límites de ritmo. Vacío sin proxy; `1` detrás de un balanceador; o las IPs/subredes de los proxies. `true` se rechaza. |
 | `LOG_LEVEL` | no | Nivel de pino; `info` por defecto (`silent` en test). |
+| `DOCS_ENABLED` | no | Enciende o apaga Swagger (`GET /docs`, `GET /openapi.json`). Sin fijar: encendido salvo en producción, donde se apaga por defecto. |
 
-`TRUST_PROXY` importa: detrás de un balanceador sin él, todos los invitados
-comparten la IP del balanceador y la boda entera se queda con 5 respuestas de
-RSVP por minuto.
+`TRUST_PROXY` es **obligatorio** detrás de un balanceador: sin él, todos los
+invitados comparten la IP del balanceador y la boda entera se queda con 5
+respuestas de RSVP por minuto. Un error de una variable de entorno nunca oculta
+los de las demás: `loadEnv` acumula todos los fallos (incluidas las reglas de
+producción) en un único mensaje, así que reiniciar varias veces para
+descubrirlos uno a uno no hace falta.
 
 ## Arquitectura
 

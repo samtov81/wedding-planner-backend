@@ -41,6 +41,7 @@ describe('endurecimiento del arranque', () => {
   afterAll(async () => {
     delete process.env.CORS_ORIGINS
     delete process.env.TRUST_PROXY
+    delete process.env.DOCS_ENABLED
     for (const cerrarOtra of otrosCierres) await cerrarOtra()
     await cerrar()
     await redis.stop()
@@ -214,6 +215,20 @@ describe('endurecimiento del arranque', () => {
       // Un salto de confianza: lo que el cliente antepone a la cabecera no
       // cuenta; manda la dirección que añadió el balanceador.
       await responder(trasBalanceador.url, '1.2.3.4, 198.51.100.7').expect(429)
+    })
+  })
+
+  describe('DOCS_ENABLED', () => {
+    it('con DOCS_ENABLED=false, Swagger no se sirve', async () => {
+      fijarEntorno(
+        { databaseUrl: pg.url, redisUrl: redis.getConnectionUrl() },
+        { CORS_ORIGINS: ADMIN, DOCS_ENABLED: 'false' },
+      )
+      const sinDocs = await arrancarAppDeTest()
+      otrosCierres.push(sinDocs.cerrar)
+
+      await request(sinDocs.url).get('/docs').expect(404)
+      await request(sinDocs.url).get('/openapi.json').expect(404)
     })
   })
 })

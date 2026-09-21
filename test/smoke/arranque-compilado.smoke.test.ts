@@ -76,6 +76,9 @@ describe('build compilado', () => {
         RESEND_WEBHOOK_SECRET: `whsec_${Buffer.from('secreto-del-test-de-humo').toString('base64')}`,
         APP_URL: 'http://localhost:5173',
         TRUST_PROXY: '1',
+        // Swagger se apaga por defecto en producción (ver `env.schema.ts`); este
+        // smoke SÍ quiere comprobar que `/openapi.json` se publica.
+        DOCS_ENABLED: 'true',
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })

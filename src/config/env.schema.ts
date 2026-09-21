@@ -100,119 +100,190 @@ const trustProxySchema = z
 const JWT_SECRET_DE_EJEMPLO = 'cambia-esto-por-32-caracteres-o-mas'
 
 /**
- * TLDs reservados (RFC 2606 / RFC 6761): ningún correo sale ni llega de ellos.
- * El `MAIL_FROM` por defecto usa `.test` para que local y test no puedan mandar
- * nada real; en producción ese remitente sólo produciría rebotes.
+ * TLDs reservados (RFC 2606 / RFC 6761) más los nombres de segundo nivel que
+ * RFC 2606 reserva bajo `.com`/`.net`/`.org` (`example.com` y compañía):
+ * ningún correo sale ni llega de ellos. El `MAIL_FROM` por defecto usa `.test`
+ * para que local y test no puedan mandar nada real; en producción ese
+ * remitente sólo produciría rebotes. Se comprueba contra el DOMINIO del
+ * correo (ver `dominioDe`), nunca contra la dirección completa: la parte
+ * local podría contener por casualidad la palabra "invalid" sin que eso diga
+ * nada del dominio.
  */
-const TLD_RESERVADO = /\.(test|example|invalid|localhost)$/i
+const TLD_RESERVADO = /(\.(test|example|invalid|localhost)|(^|[.@])example\.(com|net|org))$/i
+
+/** El dominio de un correo: lo que sigue a la última `@`. */
+function dominioDe(email: string): string {
+  return email.slice(email.lastIndexOf('@') + 1)
+}
 
 /**
  * Entorno del backend. Cada variable se valida al arrancar: un secreto ausente
  * tiene que romper el arranque, no la primera petición que lo necesite.
+ *
+ * Se exporta también sin el `.transform` final (que resuelve el defecto de
+ * `DOCS_ENABLED`) porque ese `.transform` envuelve el objeto en un
+ * `ZodEffects` sin `.shape`; el test de `.env.example` necesita la lista de
+ * claves del objeto base.
  */
-export const envSchema = z
-  .object({
-    NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-    PORT: z.coerce.number().int().positive().default(3000),
+export const objetoBaseDeEntorno = z.object({
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  PORT: z.coerce.number().int().positive().default(3000),
 
-    DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
-    REDIS_URL: z.url({ protocol: /^rediss?$/ }),
+  DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+  REDIS_URL: z.url({ protocol: /^rediss?$/ }),
 
-    /** 32 bytes es el mínimo razonable para HS256; por debajo el secreto es el eslabón débil. */
-    JWT_ACCESS_SECRET: z.string().min(32),
-    /** Duración de `jsonwebtoken`/`ms`: un número seguido de s, m, h o d. Vacío = por defecto. */
-    JWT_ACCESS_TTL: z.preprocess(
-      (valor) => (valor === '' ? undefined : valor),
-      z
-        .string()
-        .regex(/^\d+[smhd]$/, 'Duración como 15m, 1h o 30s')
-        .default('15m'),
-    ),
-    REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
-
-    /**
-     * `fake` guarda los correos EN MEMORIA (con el enlace del RSVP en claro) y no
-     * envía nada: sólo sirve para local y test. En producción el `superRefine`
-     * de abajo exige `resend`.
-     */
-    MAIL_DRIVER: z.enum(['fake', 'resend']).default('fake'),
-    MAIL_FROM: z.email().default('no-reply@weddingplanner.test'),
-    RESEND_API_KEY: opcional(z.string().min(1)),
-    /**
-     * Secreto de firma del webhook de Resend (Svix): `whsec_` + base64. Se valida
-     * la FORMA aquí porque un secreto mal copiado no falla hasta el primer
-     * webhook, y entonces lo hace como 401 silenciosos que Resend reintenta.
-     */
-    RESEND_WEBHOOK_SECRET: opcional(
-      z
-        .string()
-        .regex(/^whsec_[A-Za-z0-9+/]+={0,2}$/, 'Debe ser un secreto de Svix: whsec_<base64>'),
-    ),
-
-    /** Origen del frontend: base de los enlaces de RSVP y allowlist de CORS. */
-    APP_URL: z.url(),
-    /**
-     * Orígenes ADICIONALES a `APP_URL` que pueden llamar a la API y abrir el
-     * socket, separados por comas. Nunca `*` (ver `origenesPermitidos`).
-     */
-    CORS_ORIGINS: z
+  /** 32 bytes es el mínimo razonable para HS256; por debajo el secreto es el eslabón débil. */
+  JWT_ACCESS_SECRET: z.string().min(32),
+  /** Duración de `jsonwebtoken`/`ms`: un número seguido de s, m, h o d. Vacío = por defecto. */
+  JWT_ACCESS_TTL: z.preprocess(
+    (valor) => (valor === '' ? undefined : valor),
+    z
       .string()
-      .default('')
-      .transform((valor) => trocear(valor))
-      .refine((lista) => lista.every(esOrigen), {
-        message: 'Cada origen debe ser exactamente esquema://host[:puerto], sin ruta ni `*`',
-      }),
+      .regex(/^\d+[smhd]$/, 'Duración como 15m, 1h o 30s')
+      .default('15m'),
+  ),
+  REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
-    TRUST_PROXY: trustProxySchema,
-
-    /** Nivel de pino. Sin fijar: `silent` en test, `info` en el resto. */
-    LOG_LEVEL: opcional(z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])),
-  })
   /**
-   * En producción, el fake de correo marcaría cada invitación como SENT sin que
-   * nadie reciba nada (y guardaría cada token vivo en el heap): el arranque falla
-   * aquí. Lo mismo con el remitente por defecto y con el secreto JWT de ejemplo,
-   * que sólo existen para que local arranque sin configurar nada.
-   *
-   * Con `MAIL_DRIVER=resend` salen correos reales y Resend llamará al webhook:
-   * sin secreto, el arranque falla aquí y no en el primer webhook. Con `fake`
-   * no hay correos reales que casar, así que el secreto es opcional y la ruta
-   * rechaza todo (ver `SvixSignatureVerifier`).
+   * `fake` guarda los correos EN MEMORIA (con el enlace del RSVP en claro) y no
+   * envía nada: sólo sirve para local y test. En producción
+   * `validarReglasCruzadas` exige `resend`.
    */
-  .superRefine((env, ctx) => {
-    if (env.NODE_ENV === 'production') {
-      if (env.MAIL_DRIVER !== 'resend') {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['MAIL_DRIVER'],
-          message: 'En producción debe ser `resend`: `fake` no envía ningún correo',
-        })
-      }
-      if (TLD_RESERVADO.test(env.MAIL_FROM)) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['MAIL_FROM'],
-          message: 'En producción no puede ser un dominio reservado (.test, .example…)',
-        })
-      }
-      if (env.JWT_ACCESS_SECRET === JWT_SECRET_DE_EJEMPLO) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['JWT_ACCESS_SECRET'],
-          message: 'En producción no puede ser el valor de ejemplo de .env.example',
-        })
-      }
-    }
-    if (env.MAIL_DRIVER === 'resend' && env.RESEND_WEBHOOK_SECRET === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['RESEND_WEBHOOK_SECRET'],
-        message: 'Obligatorio con MAIL_DRIVER=resend: sin él no se puede verificar el webhook',
-      })
-    }
-  })
+  MAIL_DRIVER: z.enum(['fake', 'resend']).default('fake'),
+  MAIL_FROM: z.email().default('no-reply@weddingplanner.test'),
+  RESEND_API_KEY: opcional(z.string().min(1)),
+  /**
+   * Secreto de firma del webhook de Resend (Svix): `whsec_` + base64. Se valida
+   * la FORMA aquí porque un secreto mal copiado no falla hasta el primer
+   * webhook, y entonces lo hace como 401 silenciosos que Resend reintenta.
+   */
+  RESEND_WEBHOOK_SECRET: opcional(
+    z.string().regex(/^whsec_[A-Za-z0-9+/]+={0,2}$/, 'Debe ser un secreto de Svix: whsec_<base64>'),
+  ),
+
+  /** Origen del frontend: base de los enlaces de RSVP y allowlist de CORS. */
+  APP_URL: z.url({ protocol: /^https?$/ }),
+  /**
+   * Orígenes ADICIONALES a `APP_URL` que pueden llamar a la API y abrir el
+   * socket, separados por comas. Nunca `*` (ver `origenesPermitidos`).
+   */
+  CORS_ORIGINS: z
+    .string()
+    .default('')
+    .transform((valor) => trocear(valor))
+    .refine((lista) => lista.every(esOrigen), {
+      message: 'Cada origen debe ser exactamente esquema://host[:puerto], sin ruta ni `*`',
+    }),
+
+  TRUST_PROXY: trustProxySchema,
+
+  /** Nivel de pino. Sin fijar: `silent` en test, `info` en el resto. */
+  LOG_LEVEL: opcional(z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])),
+
+  /**
+   * Swagger (`GET /docs` y `GET /openapi.json`) se sirve salvo que se apague
+   * explícitamente. Sin fijar: encendido fuera de producción, apagado en
+   * producción (el `.transform` de abajo resuelve ese defecto, porque
+   * depende de `NODE_ENV`).
+   */
+  DOCS_ENABLED: opcional(z.enum(['true', 'false']).transform((v) => v === 'true')),
+})
+
+/**
+ * El defecto de `DOCS_ENABLED` depende de `NODE_ENV`, así que no puede ir en
+ * `.default()` del propio campo. Esto es sólo cálculo de un valor, no
+ * validación: no añade issues, así que puede vivir aquí sin afectar a "un
+ * error no oculta otros" (ver `validarReglasCruzadas`).
+ */
+export const envSchema = objetoBaseDeEntorno.transform((env) => ({
+  ...env,
+  DOCS_ENABLED: env.DOCS_ENABLED ?? env.NODE_ENV !== 'production',
+}))
 
 export type Env = z.infer<typeof envSchema>
+
+/** Un fallo de `validarReglasCruzadas`, con la misma forma que un issue de Zod. */
+export interface EnvIssue {
+  readonly path: string[]
+  readonly message: string
+}
+
+// Sub-esquemas para los campos que las reglas cruzadas necesitan, con las
+// mismas reglas y defectos que sus equivalentes en el objeto principal.
+// Deliberadamente duplicados: leerlos del entorno CRUDO (no del resultado del
+// objeto base) es lo que permite evaluarlos aunque otra variable, como PORT,
+// rompa el parseo base.
+const NODE_ENV_CRUDO = z.enum(['development', 'test', 'production']).default('development')
+const MAIL_DRIVER_CRUDO = z.enum(['fake', 'resend']).default('fake')
+const MAIL_FROM_CRUDO = z.email().default('no-reply@weddingplanner.test')
+const JWT_ACCESS_SECRET_CRUDO = z.string().min(32)
+const RESEND_WEBHOOK_SECRET_CRUDO = opcional(
+  z.string().regex(/^whsec_[A-Za-z0-9+/]+={0,2}$/, 'Debe ser un secreto de Svix: whsec_<base64>'),
+)
+
+/**
+ * Reglas que cruzan varios campos: en producción, el fake de correo marcaría
+ * cada invitación como SENT sin que nadie reciba nada (y guardaría cada token
+ * vivo en el heap), así que exige `resend`, un remitente no reservado y un
+ * secreto JWT distinto del de `.env.example`. Con `MAIL_DRIVER=resend` salen
+ * correos reales y Resend llamará al webhook: sin secreto, el arranque falla
+ * aquí y no en el primer webhook. Con `fake` no hay correos reales que casar,
+ * así que el secreto es opcional y la ruta rechaza todo (ver
+ * `SvixSignatureVerifier`).
+ *
+ * Vive FUERA de `envSchema` a propósito. Un `superRefine` sobre un `z.object`
+ * sólo se ejecuta si TODO el objeto parsea sin issues: con estas reglas ahí
+ * dentro, `PORT=abc` haría desaparecer del mensaje el aviso de `MAIL_DRIVER`
+ * en producción, y reiniciar dos veces para descubrir dos variables mal es
+ * justo lo que `loadEnv` existe para evitar. Por eso cada campo se parsea
+ * suelto desde el entorno crudo (`source`, no el resultado de `envSchema`) y
+ * `loadEnv` combina esta lista de issues con la del objeto base.
+ */
+export function validarReglasCruzadas(source: NodeJS.ProcessEnv): EnvIssue[] {
+  const nodeEnv = NODE_ENV_CRUDO.safeParse(source.NODE_ENV)
+  const mailDriver = MAIL_DRIVER_CRUDO.safeParse(source.MAIL_DRIVER)
+  const issues: EnvIssue[] = []
+
+  if (nodeEnv.success && nodeEnv.data === 'production') {
+    if (mailDriver.success && mailDriver.data !== 'resend') {
+      issues.push({
+        path: ['MAIL_DRIVER'],
+        message: 'En producción debe ser `resend`: `fake` no envía ningún correo',
+      })
+    }
+
+    const mailFrom = MAIL_FROM_CRUDO.safeParse(source.MAIL_FROM)
+    if (mailFrom.success && TLD_RESERVADO.test(dominioDe(mailFrom.data))) {
+      issues.push({
+        path: ['MAIL_FROM'],
+        message: 'En producción no puede ser un dominio reservado (.test, .example…)',
+      })
+    }
+
+    const jwtSecret = JWT_ACCESS_SECRET_CRUDO.safeParse(source.JWT_ACCESS_SECRET)
+    if (jwtSecret.success && jwtSecret.data === JWT_SECRET_DE_EJEMPLO) {
+      issues.push({
+        path: ['JWT_ACCESS_SECRET'],
+        message: 'En producción no puede ser el valor de ejemplo de .env.example',
+      })
+    }
+  }
+
+  const webhookSecret = RESEND_WEBHOOK_SECRET_CRUDO.safeParse(source.RESEND_WEBHOOK_SECRET)
+  if (
+    mailDriver.success &&
+    mailDriver.data === 'resend' &&
+    webhookSecret.success &&
+    webhookSecret.data === undefined
+  ) {
+    issues.push({
+      path: ['RESEND_WEBHOOK_SECRET'],
+      message: 'Obligatorio con MAIL_DRIVER=resend: sin él no se puede verificar el webhook',
+    })
+  }
+
+  return issues
+}
 
 /**
  * La ÚNICA allowlist de orígenes, compartida por el HTTP (`enableCors`) y por

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { parseEnv } from 'node:util'
 
 import { EnvValidationError, loadEnv } from './env'
-import { envSchema, origenesPermitidos } from './env.schema'
+import { objetoBaseDeEntorno, origenesPermitidos } from './env.schema'
 
 const valido: NodeJS.ProcessEnv = {
   NODE_ENV: 'test',
@@ -10,6 +10,19 @@ const valido: NodeJS.ProcessEnv = {
   REDIS_URL: 'redis://localhost:6379',
   JWT_ACCESS_SECRET: 'x'.repeat(32),
   APP_URL: 'http://localhost:5173',
+}
+
+// Un entorno de producción por lo demás VÁLIDO: las reglas cruzadas no deben
+// ocultar los issues de las demás variables, así que cada test cambia
+// exactamente una cosa. Se declara aquí (no dentro de un solo `describe`)
+// porque varios bloques de test lo necesitan.
+const validoProduccion: NodeJS.ProcessEnv = {
+  ...valido,
+  NODE_ENV: 'production',
+  MAIL_DRIVER: 'resend',
+  MAIL_FROM: 'no-reply@weddingplanner.app',
+  RESEND_API_KEY: 're_x',
+  RESEND_WEBHOOK_SECRET: `whsec_${Buffer.from('s'.repeat(32)).toString('base64')}`,
 }
 
 describe('loadEnv', () => {
@@ -65,16 +78,9 @@ describe('loadEnv', () => {
   })
 
   describe('NODE_ENV=production', () => {
-    // Un entorno de producción por lo demás VÁLIDO: el `superRefine` no corre si
-    // otra variable ya falla, así que cada test cambia exactamente una cosa.
-    const produccion: NodeJS.ProcessEnv = {
-      ...valido,
-      NODE_ENV: 'production',
-      MAIL_DRIVER: 'resend',
-      MAIL_FROM: 'no-reply@weddingplanner.app',
-      RESEND_API_KEY: 're_x',
-      RESEND_WEBHOOK_SECRET: `whsec_${Buffer.from('s'.repeat(32)).toString('base64')}`,
-    }
+    // `validoProduccion` está declarado a nivel de módulo: lo reutilizan
+    // también los tests de DOCS_ENABLED y de "un error no oculta otros".
+    const produccion = validoProduccion
 
     it('un entorno de producción completo arranca', () => {
       expect(loadEnv(produccion).MAIL_DRIVER).toBe('resend')
@@ -110,6 +116,31 @@ describe('loadEnv', () => {
       expect(loadEnv({ ...valido, JWT_ACCESS_SECRET: ejemplo.JWT_ACCESS_SECRET }).MAIL_FROM).toBe(
         'no-reply@weddingplanner.test',
       )
+    })
+
+    it('example.com cuenta como remitente de prueba', () => {
+      expect(() => loadEnv({ ...validoProduccion, MAIL_FROM: 'no-reply@example.com' })).toThrow(
+        /MAIL_FROM/,
+      )
+    })
+
+    it('un error de una variable no oculta los de producción', () => {
+      expect(() => loadEnv({ ...validoProduccion, PORT: 'abc', MAIL_DRIVER: 'fake' })).toThrow(
+        /PORT[\s\S]*MAIL_DRIVER|MAIL_DRIVER[\s\S]*PORT/,
+      )
+    })
+  })
+
+  describe('APP_URL', () => {
+    it('sólo acepta http o https', () => {
+      expect(() => loadEnv({ ...valido, APP_URL: 'ftp://app.example.com' })).toThrow(/APP_URL/)
+    })
+  })
+
+  describe('DOCS_ENABLED', () => {
+    it('es false por defecto en producción y true fuera', () => {
+      expect(loadEnv(validoProduccion).DOCS_ENABLED).toBe(false)
+      expect(loadEnv(valido).DOCS_ENABLED).toBe(true)
     })
   })
 
@@ -203,7 +234,7 @@ describe('loadEnv', () => {
     const ejemplo = parseEnv(readFileSync('.env.example', 'utf8'))
 
     it('documenta TODAS las variables del esquema: ninguna se descubre al desplegar', () => {
-      expect(Object.keys(ejemplo).sort()).toEqual(Object.keys(envSchema.shape).sort())
+      expect(Object.keys(ejemplo).sort()).toEqual(Object.keys(objetoBaseDeEntorno.shape).sort())
     })
 
     it('tal cual, es un entorno válido para arrancar en local', () => {

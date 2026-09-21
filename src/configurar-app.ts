@@ -79,11 +79,22 @@ export async function configurarApp(app: NestExpressApplication, env: Env): Prom
   // DESIGN-GAP: el documento lista rutas, métodos y la autenticación, pero no
   // los esquemas de los cuerpos: los DTO son esquemas Zod, no clases de
   // `class-validator`, y `@nestjs/swagger` sólo lee clases decoradas.
-  const documento = SwaggerModule.createDocument(
-    app,
-    new DocumentBuilder().setTitle('Wedding Planner API').setVersion('1.0').addBearerAuth().build(),
-  )
-  SwaggerModule.setup('docs', app, documento, { jsonDocumentUrl: 'openapi.json' })
+  //
+  // Apagado en producción salvo `DOCS_ENABLED=true` (ver `env.schema.ts`): el
+  // documento no lleva nada secreto, pero expone la forma entera de la API a
+  // quien no la necesita. `env.DOCS_ENABLED` ya resuelve ese defecto según
+  // `NODE_ENV`, así que aquí sólo se lee.
+  if (env.DOCS_ENABLED) {
+    const documento = SwaggerModule.createDocument(
+      app,
+      new DocumentBuilder()
+        .setTitle('Wedding Planner API')
+        .setVersion('1.0')
+        .addBearerAuth()
+        .build(),
+    )
+    SwaggerModule.setup('docs', app, documento, { jsonDocumentUrl: 'openapi.json' })
+  }
 
   // Socket.IO sobre Redis. Sin este adapter, un usuario conectado a la
   // instancia B nunca recibe lo que emite la instancia A, y quien emite es el

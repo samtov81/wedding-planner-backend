@@ -32,6 +32,11 @@ const RUTAS_DE_SONDA = /^\/health(\/|\?|$)/
  *  - `Referer` pasa por la misma `urlParaRegistro`: desde la página
  *    `${APP_URL}/rsvp/<token>` servida en el mismo origen que la API, cada
  *    llamada lo lleva con el token vivo en claro.
+ *  - `x-original-uri` / `x-forwarded-uri` / `x-rewrite-url` pasan por la misma
+ *    función: son las cabeceras que un proxy inverso (nginx `auth_request`,
+ *    Traefik ForwardAuth) añade con la URL ORIGINAL de la petición —incluido
+ *    el token del RSVP si esa era la ruta— antes de reescribirla hacia el
+ *    backend.
  *  - `serializers.res` deja sólo el código de estado.
  *  - `redact` tacha las cabeceras con credenciales (ver `RUTAS_REDACTADAS`).
  */
@@ -69,14 +74,26 @@ export function opcionesDePinoHttp(env: Env): Options {
 }
 
 /**
- * Las cabeceras tal cual, salvo `referer`, que se tacha como la URL. Una que
- * no sea texto (Node la da siempre como string; esto es por si cambia) se
- * descarta en vez de registrarse sin tachar.
+ * Cabeceras que llevan una URL completa y por tanto pasan por
+ * `urlParaRegistro` en vez de registrarse tal cual: `referer` (ver arriba) y
+ * las tres que añade un proxy inverso con la URL original de la petición.
+ */
+const CABECERAS_CON_URL = ['referer', 'x-original-uri', 'x-forwarded-uri', 'x-rewrite-url']
+
+/**
+ * Las cabeceras tal cual, salvo las de `CABECERAS_CON_URL`, que se tachan como
+ * la URL. Una que no sea texto (Node la da siempre como string; esto es por
+ * si cambia) se descarta en vez de registrarse sin tachar.
  */
 function cabecerasParaRegistro(
   cabeceras: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  if (cabeceras === undefined || !('referer' in cabeceras)) return cabeceras
-  const { referer, ...resto } = cabeceras
-  return typeof referer === 'string' ? { ...resto, referer: urlParaRegistro(referer) } : resto
+  if (cabeceras === undefined) return cabeceras
+  let resultado = cabeceras
+  for (const nombre of CABECERAS_CON_URL) {
+    if (!(nombre in resultado)) continue
+    const { [nombre]: valor, ...resto } = resultado
+    resultado = typeof valor === 'string' ? { ...resto, [nombre]: urlParaRegistro(valor) } : resto
+  }
+  return resultado
 }

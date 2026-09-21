@@ -96,6 +96,26 @@ describe('Logs de peticiones (pino-http) e2e', () => {
     expect(todo).toContain('"referer":"https://app.example.com/rsvp/[REDACTADO]?utm=x"')
   })
 
+  it('el token del RSVP en las cabeceras de proxy tampoco llega al log', async () => {
+    // `X-Original-URI` / `X-Forwarded-Uri` / `X-Rewrite-Url`: las añade un
+    // proxy inverso (nginx `auth_request`, Traefik ForwardAuth) con la URL
+    // ORIGINAL de la petición, token incluido si esa era la ruta.
+    const { token } = generarTokenInvitacion()
+
+    await request(url)
+      .get('/auth/me')
+      .set('X-Original-URI', `/rsvp/${token}`)
+      .set('X-Forwarded-Uri', `/rsvp/${token}`)
+      .set('X-Rewrite-Url', `/rsvp/${token}`)
+      .expect(401)
+
+    const todo = logs.todo()
+    expect(todo).not.toContain(token)
+    expect(todo).toContain('"x-original-uri":"/rsvp/[REDACTADO]"')
+    expect(todo).toContain('"x-forwarded-uri":"/rsvp/[REDACTADO]"')
+    expect(todo).toContain('"x-rewrite-url":"/rsvp/[REDACTADO]"')
+  })
+
   it('las credenciales de las cabeceras no llegan al log', async () => {
     await request(url)
       .get('/auth/me')

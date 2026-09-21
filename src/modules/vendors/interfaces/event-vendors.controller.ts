@@ -73,24 +73,28 @@ export class EventVendorsController {
   @RequireEventAccess('COUPLE', 'PLANNER')
   @Patch(':eventVendorId')
   async actualizarVendor(
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
     @Param('eventId') eventId: string,
     @Param('eventVendorId') eventVendorId: string,
     @Body() body: unknown,
   ): Promise<EventVendorRespuesta> {
+    const yo = this.exigirUsuario(usuario)
     const id = idDeRuta(eventVendorId, () => new EventVendorNoEncontradoError())
     const datos = validarCon(updateEventVendorSchema, body)
-    const vendor = await this.actualizar.ejecutar(eventId, id, datos)
+    const vendor = await this.actualizar.ejecutar(eventId, id, datos, yo.id)
     return this.aRespuesta(vendor)
   }
 
   @RequireEventAccess('COUPLE', 'PLANNER')
   @Delete(':eventVendorId')
   async eliminarVendor(
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
     @Param('eventId') eventId: string,
     @Param('eventVendorId') eventVendorId: string,
   ): Promise<{ ok: true }> {
+    const yo = this.exigirUsuario(usuario)
     const id = idDeRuta(eventVendorId, () => new EventVendorNoEncontradoError())
-    await this.eliminar.ejecutar(eventId, id)
+    await this.eliminar.ejecutar(eventId, id, yo.id)
     return { ok: true }
   }
 

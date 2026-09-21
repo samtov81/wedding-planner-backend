@@ -18,21 +18,45 @@ describe('UpdateEventVendorUseCase', () => {
       actorUserId: 'ana',
     })
 
-    const actualizado = await caso.ejecutar(EVENTO, vista.id, {
-      status: 'BOOKED',
-      assignedBudget: 1500,
-    })
+    const actualizado = await caso.ejecutar(
+      EVENTO,
+      vista.id,
+      { status: 'BOOKED', assignedBudget: 1500 },
+      'ana',
+    )
 
     expect(actualizado).toMatchObject({ status: 'BOOKED', assignedBudget: 1500 })
+  })
+
+  it('deja rastro en la auditoría de quién actualizó y qué campos cambiaron, sin datos personales', async () => {
+    const vendors = new EventVendorRepositoryEnMemoria()
+    const caso = new UpdateEventVendorUseCase(vendors)
+    const vista = await vendors.crear({
+      eventId: EVENTO,
+      vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
+      category: 'Floristería',
+      specialty: null,
+      assignedBudget: null,
+      actorUserId: 'ana',
+    })
+
+    await caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED', assignedBudget: 1500 }, 'ana')
+
+    expect(vendors.auditoria).toContainEqual({
+      actorUserId: 'ana',
+      eventId: EVENTO,
+      action: 'event_vendor.updated',
+      target: `event_vendor:${vista.id}`,
+    })
   })
 
   it('rechaza actualizar un id que no existe', async () => {
     const vendors = new EventVendorRepositoryEnMemoria()
     const caso = new UpdateEventVendorUseCase(vendors)
 
-    await expect(caso.ejecutar(EVENTO, 'no-existe', { status: 'BOOKED' })).rejects.toBeInstanceOf(
-      EventVendorNoEncontradoError,
-    )
+    await expect(
+      caso.ejecutar(EVENTO, 'no-existe', { status: 'BOOKED' }, 'ana'),
+    ).rejects.toBeInstanceOf(EventVendorNoEncontradoError)
   })
 
   it('rechaza actualizar un proveedor de OTRO evento: mismo 404 que uno inexistente', async () => {
@@ -47,8 +71,8 @@ describe('UpdateEventVendorUseCase', () => {
       actorUserId: 'ana',
     })
 
-    await expect(caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED' })).rejects.toBeInstanceOf(
-      EventVendorNoEncontradoError,
-    )
+    await expect(
+      caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED' }, 'ana'),
+    ).rejects.toBeInstanceOf(EventVendorNoEncontradoError)
   })
 })

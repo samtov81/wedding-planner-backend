@@ -332,6 +332,53 @@ describe('Vendors por evento e2e', () => {
     expect(sigueIgual?.status).not.toBe('CANCELLED')
   })
 
+  it('añadir, actualizar y borrar un proveedor externo deja tres AuditLog sin datos personales en metadata', async () => {
+    const eventoPropio = await crearEvento(ana.accessToken, 'Boda para auditoría sin PII')
+    const nombre = 'Flores Auditoría'
+    const email = 'auditoria@flores.es'
+    const telefono = '+34600111222'
+
+    const creado = await request(url)
+      .post(`/events/${eventoPropio}/vendors`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({
+        externalName: nombre,
+        externalEmail: email,
+        externalPhone: telefono,
+        category: 'Floristería',
+      })
+      .expect(201)
+    const id = (creado.body as CuerpoEventVendor).id
+
+    await request(url)
+      .patch(`/events/${eventoPropio}/vendors/${id}`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ status: 'BOOKED' })
+      .expect(200)
+
+    await request(url)
+      .delete(`/events/${eventoPropio}/vendors/${id}`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(200)
+
+    const auditoria = await prisma.auditLog.findMany({
+      where: { eventId: eventoPropio, target: `event_vendor:${id}` },
+      orderBy: { createdAt: 'asc' },
+    })
+    expect(auditoria.map((fila) => fila.action)).toEqual([
+      'event_vendor.added',
+      'event_vendor.updated',
+      'event_vendor.removed',
+    ])
+    for (const fila of auditoria) {
+      expect(fila.actorUserId).toBe(ana.id)
+      const metadataJson = JSON.stringify(fila.metadata)
+      expect(metadataJson).not.toContain(nombre)
+      expect(metadataJson).not.toContain(email)
+      expect(metadataJson).not.toContain(telefono)
+    }
+  })
+
   it('elimina un proveedor', async () => {
     const creado = await request(url)
       .post(`/events/${evento}/vendors`)

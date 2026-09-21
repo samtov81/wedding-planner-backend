@@ -48,7 +48,16 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
           eventId: datos.eventId,
           action: 'event_vendor.added',
           target: `event_vendor:${fila.id}`,
-          metadata: { vendorRef: datos.vendorRef },
+          // Sin nombre, email ni teléfono: `vendorRef` completo (rama
+          // `external`) los lleva en claro. `kind` y `vendorProfileId` (sólo
+          // en la rama `linked`, donde no hay dato personal) bastan para
+          // auditar QUÉ se dio de alta sin guardar quién es la persona.
+          metadata: {
+            kind: datos.vendorRef.kind,
+            ...(datos.vendorRef.kind === 'linked'
+              ? { vendorProfileId: datos.vendorRef.vendorProfileId }
+              : {}),
+          },
         },
       })
 
@@ -69,38 +78,74 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
     return fila === null ? null : this.aVista(fila)
   }
 
+  // `this.prisma.$transaction`, no `clienteDe(this.prisma)`: este módulo no
+  // está enganchado a `UnidadDeTrabajo` en ningún caso de uso (ni el propio ni
+  // de otro módulo importa `EventVendorRepository`), así que `actualizar` y
+  // `eliminar` nunca corren dentro de una transacción ajena que anidar. Es la
+  // misma forma que ya usa `crear` para su `AuditLog`.
   async actualizar(
     eventId: string,
     eventVendorId: string,
     cambios: CambiosEventVendor,
+    actorUserId: string,
   ): Promise<EventVendorVista> {
-    // `updateMany` + relectura, no `update`: `update` exige una clave única
-    // (`id`), y con sólo `id` no se comprueba que la fila sea de ESTE evento.
-    // El caso de uso ya comprobó existencia con `buscarPorId`, pero repetir el
-    // filtro aquí evita que una futura llamada directa al repositorio la salte.
-    await this.prisma.eventVendor.updateMany({
-      where: { id: eventVendorId, eventId },
-      data: {
-        ...(cambios.category !== undefined ? { category: cambios.category } : {}),
-        ...(cambios.specialty !== undefined ? { specialty: cambios.specialty } : {}),
-        ...(cambios.assignedBudget !== undefined ? { assignedBudget: cambios.assignedBudget } : {}),
-        ...(cambios.status !== undefined ? { status: cambios.status } : {}),
-      },
+    return await this.prisma.$transaction(async (tx) => {
+      // `updateMany` + relectura, no `update`: `update` exige una clave única
+      // (`id`), y con sólo `id` no se comprueba que la fila sea de ESTE
+      // evento. El caso de uso ya comprobó existencia con `buscarPorId`, pero
+      // repetir el filtro aquí evita que una futura llamada directa al
+      // repositorio la salte.
+      await tx.eventVendor.updateMany({
+        where: { id: eventVendorId, eventId },
+        data: {
+          ...(cambios.category !== undefined ? { category: cambios.category } : {}),
+          ...(cambios.specialty !== undefined ? { specialty: cambios.specialty } : {}),
+          ...(cambios.assignedBudget !== undefined
+            ? { assignedBudget: cambios.assignedBudget }
+            : {}),
+          ...(cambios.status !== undefined ? { status: cambios.status } : {}),
+        },
+      })
+      // `findFirst`, no `findFirstOrThrow`: si la fila desapareció ENTRE el
+      // `updateMany` y esta relectura (borrado concurrente), lanzar un P2025
+      // crudo sería un 500. El caso de uso ya comprobó que existía antes de
+      // escribir; aquí se repite el mismo 404 de dominio para la ventana
+      // entre medias. Al lanzar dentro de la transacción, Prisma la deshace:
+      // no queda un `AuditLog` de un cambio que nunca se leyó de vuelta.
+      const fila = await tx.eventVendor.findFirst({
+        where: { id: eventVendorId, eventId },
+      })
+      if (fila === null) throw new EventVendorNoEncontradoError()
+
+      await tx.auditLog.create({
+        data: {
+          actorUserId,
+          eventId,
+          action: 'event_vendor.updated',
+          target: `event_vendor:${eventVendorId}`,
+          // Sin datos personales: sólo QUÉ campos cambiaron, nunca su valor
+          // (`category`/`specialty` son texto libre y podrían llevarlos).
+          metadata: { eventVendorId, campos: Object.keys(cambios) },
+        },
+      })
+
+      return this.aVista(fila)
     })
-    // `findFirst`, no `findFirstOrThrow`: si la fila desapareció ENTRE el
-    // `updateMany` y esta relectura (borrado concurrente), lanzar un P2025
-    // crudo sería un 500. El caso de uso ya comprobó que existía antes de
-    // escribir; aquí se repite el mismo 404 de dominio para la ventana entre
-    // medias.
-    const fila = await this.prisma.eventVendor.findFirst({
-      where: { id: eventVendorId, eventId },
-    })
-    if (fila === null) throw new EventVendorNoEncontradoError()
-    return this.aVista(fila)
   }
 
-  async eliminar(eventId: string, eventVendorId: string): Promise<void> {
-    await this.prisma.eventVendor.deleteMany({ where: { id: eventVendorId, eventId } })
+  async eliminar(eventId: string, eventVendorId: string, actorUserId: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.eventVendor.deleteMany({ where: { id: eventVendorId, eventId } })
+      await tx.auditLog.create({
+        data: {
+          actorUserId,
+          eventId,
+          action: 'event_vendor.removed',
+          target: `event_vendor:${eventVendorId}`,
+          metadata: { eventVendorId },
+        },
+      })
+    })
   }
 
   /** La fila de Prisma no sale de infrastructure/: reconstruye el `VendorRef`. */

@@ -84,6 +84,7 @@ export class EventVendorRepositoryEnMemoria implements EventVendorRepository {
     eventId: string,
     eventVendorId: string,
     cambios: CambiosEventVendor,
+    actorUserId: string,
   ): Promise<EventVendorVista> {
     const fila = this.filas.find((f) => f.id === eventVendorId && f.eventId === eventId)
     if (fila === undefined) throw new Error('fila inexistente en el doble en memoria')
@@ -92,12 +93,24 @@ export class EventVendorRepositoryEnMemoria implements EventVendorRepository {
     if (cambios.assignedBudget !== undefined) fila.assignedBudget = cambios.assignedBudget
     if (cambios.status !== undefined) fila.status = cambios.status
     fila.updatedAt = new Date('2026-01-02T00:00:00.000Z')
+    this.auditoria.push({
+      actorUserId,
+      eventId,
+      action: 'event_vendor.updated',
+      target: `event_vendor:${eventVendorId}`,
+    })
     return Promise.resolve(this.aVista(fila))
   }
 
-  eliminar(eventId: string, eventVendorId: string): Promise<void> {
+  eliminar(eventId: string, eventVendorId: string, actorUserId: string): Promise<void> {
     const indice = this.filas.findIndex((f) => f.id === eventVendorId && f.eventId === eventId)
     if (indice !== -1) this.filas.splice(indice, 1)
+    this.auditoria.push({
+      actorUserId,
+      eventId,
+      action: 'event_vendor.removed',
+      target: `event_vendor:${eventVendorId}`,
+    })
     return Promise.resolve()
   }
 

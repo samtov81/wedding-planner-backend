@@ -8,10 +8,10 @@ import { EVENT_VENDOR_REPOSITORY, type EventVendorRepository } from './event-ven
 export class RemoveEventVendorUseCase {
   constructor(@Inject(EVENT_VENDOR_REPOSITORY) private readonly vendors: EventVendorRepository) {}
 
-  async ejecutar(eventId: string, eventVendorId: string): Promise<void> {
+  async ejecutar(eventId: string, eventVendorId: string, actorUserId: string): Promise<void> {
     const existente = await this.vendors.buscarPorId(eventId, eventVendorId)
     if (existente === null) throw new EventVendorNoEncontradoError()
 
-    await this.vendors.eliminar(eventId, eventVendorId)
+    await this.vendors.eliminar(eventId, eventVendorId, actorUserId)
   }
 }

@@ -24,10 +24,11 @@ export class UpdateEventVendorUseCase {
     eventId: string,
     eventVendorId: string,
     cambios: CambiosEventVendor,
+    actorUserId: string,
   ): Promise<EventVendorVista> {
     const existente = await this.vendors.buscarPorId(eventId, eventVendorId)
     if (existente === null) throw new EventVendorNoEncontradoError()
 
-    return await this.vendors.actualizar(eventId, eventVendorId, cambios)
+    return await this.vendors.actualizar(eventId, eventVendorId, cambios, actorUserId)
   }
 }

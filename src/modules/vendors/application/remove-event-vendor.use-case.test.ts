@@ -18,16 +18,38 @@ describe('RemoveEventVendorUseCase', () => {
       actorUserId: 'ana',
     })
 
-    await caso.ejecutar(EVENTO, vista.id)
+    await caso.ejecutar(EVENTO, vista.id, 'ana')
 
     expect(await vendors.buscarPorId(EVENTO, vista.id)).toBeNull()
+  })
+
+  it('deja rastro en la auditoría de quién eliminó, sin datos personales', async () => {
+    const vendors = new EventVendorRepositoryEnMemoria()
+    const caso = new RemoveEventVendorUseCase(vendors)
+    const vista = await vendors.crear({
+      eventId: EVENTO,
+      vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
+      category: 'Floristería',
+      specialty: null,
+      assignedBudget: null,
+      actorUserId: 'ana',
+    })
+
+    await caso.ejecutar(EVENTO, vista.id, 'ana')
+
+    expect(vendors.auditoria).toContainEqual({
+      actorUserId: 'ana',
+      eventId: EVENTO,
+      action: 'event_vendor.removed',
+      target: `event_vendor:${vista.id}`,
+    })
   })
 
   it('rechaza eliminar un id que no existe', async () => {
     const vendors = new EventVendorRepositoryEnMemoria()
     const caso = new RemoveEventVendorUseCase(vendors)
 
-    await expect(caso.ejecutar(EVENTO, 'no-existe')).rejects.toBeInstanceOf(
+    await expect(caso.ejecutar(EVENTO, 'no-existe', 'ana')).rejects.toBeInstanceOf(
       EventVendorNoEncontradoError,
     )
   })
@@ -44,7 +66,7 @@ describe('RemoveEventVendorUseCase', () => {
       actorUserId: 'ana',
     })
 
-    await expect(caso.ejecutar(EVENTO, vista.id)).rejects.toBeInstanceOf(
+    await expect(caso.ejecutar(EVENTO, vista.id, 'ana')).rejects.toBeInstanceOf(
       EventVendorNoEncontradoError,
     )
   })

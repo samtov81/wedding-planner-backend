@@ -57,13 +57,24 @@ export interface EventVendorRepository {
   /** `null` si no existe O si existe pero pertenece a otro evento. */
   buscarPorId(eventId: string, eventVendorId: string): Promise<EventVendorVista | null>
 
+  /**
+   * Escribe el `AuditLog` (`event_vendor.updated`) en la MISMA transacción
+   * que el cambio, igual que `crear`. `actorUserId` llega por parámetro desde
+   * el caso de uso, igual que en `crear`.
+   */
   actualizar(
     eventId: string,
     eventVendorId: string,
     cambios: CambiosEventVendor,
+    actorUserId: string,
   ): Promise<EventVendorVista>
 
-  eliminar(eventId: string, eventVendorId: string): Promise<void>
+  /**
+   * Escribe el `AuditLog` (`event_vendor.removed`) en la MISMA transacción
+   * que el borrado, igual que `crear`. `actorUserId` llega por parámetro
+   * desde el caso de uso, igual que en `crear`.
+   */
+  eliminar(eventId: string, eventVendorId: string, actorUserId: string): Promise<void>
 }
 
 export const EVENT_VENDOR_REPOSITORY = Symbol('EVENT_VENDOR_REPOSITORY')

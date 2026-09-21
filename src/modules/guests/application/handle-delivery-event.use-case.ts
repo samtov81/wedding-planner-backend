@@ -90,6 +90,17 @@ export class HandleDeliveryEventUseCase {
 
     const avanzadas = await this.invitaciones.actualizarEstadoPorMessageId(evento.messageId, estado)
 
+    // Ninguna invitación que avanzar: un correo que no es una invitación, uno
+    // borrado, o un webhook repetido. En silencio no se distingue de un evento
+    // que sí debería haber cambiado algo, así que queda el rastro —en `debug`,
+    // porque en una cuenta de Resend compartida es la mayoría de eventos.
+    if (avanzadas.length === 0) {
+      this.registro.debug(
+        `Evento de Resend sin invitación que avanzar messageId=${evento.messageId}`,
+      )
+      return
+    }
+
     for (const { invitationId, guestId, eventId } of avanzadas) {
       const job: JobEstadoInvitacion = {
         eventId,

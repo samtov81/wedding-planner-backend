@@ -6,11 +6,22 @@ import type {
   InvitacionCompleta,
   InvitationRepository,
 } from '../application/invitation.repository'
+import { InvitadoNoEncontradoError } from '../domain/guest-errors'
 import {
   admiteLectura,
   estadosQuePuedenAvanzarA,
   type InvitationStatus,
 } from '../domain/invitation'
+
+/**
+ * Un invitado que el doble CONOCE: la fila de `guests` a la que apunta la clave
+ * foránea de la invitación, con su evento. Sin esto, `crear` aceptaría un
+ * `guestId` inventado que Postgres rechaza con `P2003`.
+ */
+interface InvitadoConocido {
+  guest: InvitacionCompleta['guest']
+  event: InvitacionCompleta['event']
+}
 
 /**
  * Doble en memoria del puerto (ruling H1). No es más permisivo que el
@@ -41,31 +52,72 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
       this.idsPorHash.set(parcial.tokenHash, parcial.id)
     }
 
+    // Sembrar una invitación implica que su invitado existe: queda registrado
+    // para que un `crear` posterior sobre él no se comporte como un `P2003`.
+    const invitado = this.registrarInvitado({ ...parcial.guest, event: parcial.event })
+
     const fila: InvitacionCompleta = {
       id: parcial.id,
       status: parcial.status ?? 'QUEUED',
       expiresAt: parcial.expiresAt ?? new Date(Date.UTC(2027, 0, 1)),
       respondedAt: parcial.respondedAt ?? null,
       resendMessageId: parcial.resendMessageId ?? null,
-      guest: {
-        id: parcial.guest?.id ?? 'g1',
-        eventId: parcial.guest?.eventId ?? 'ev-1',
-        name: parcial.guest?.name ?? 'Ana Invitada',
-        email: parcial.guest?.email === undefined ? 'invitada@test.com' : parcial.guest.email,
-      },
-      event: {
-        id: parcial.event?.id ?? 'ev-1',
-        name: parcial.event?.name ?? 'Boda de Ana',
-        // Relativa a hoy: con una fecha fija, todo test que respondiera sobre el
-        // evento por defecto empezaría a dar RSVP_CLOSED al pasar su cierre.
-        weddingDate: parcial.event?.weddingDate ?? new Date(Date.now() + 180 * 86_400_000),
-        // El `@default(14)` de la columna. Literal y no la constante de
-        // `events/domain`: un módulo no importa el dominio de otro.
-        rsvpDeadlineDays: parcial.event?.rsvpDeadlineDays ?? 14,
-      },
+      guest: { ...invitado.guest },
+      event: { ...invitado.event },
     }
     this.filas.push(fila)
     return fila
+  }
+
+  /**
+   * Da de alta al invitado (y a su evento) que el doble conoce, como la fila de
+   * `guests` que Postgres exige para poder crear su invitación. Lo que el test
+   * nombra gana; lo que no, lo hereda de lo ya registrado, y sólo si no había
+   * nada se rellena con los valores por defecto. Así dos invitaciones del mismo
+   * invitado comparten invitado y evento, como comparten fila en Postgres.
+   */
+  registrarInvitado(datos: {
+    id?: string
+    eventId?: string
+    name?: string
+    email?: string | null
+    event?: Partial<InvitacionCompleta['event']> | undefined
+  }): InvitadoConocido {
+    const id = datos.id ?? 'g1'
+    const previo = this.invitados.get(id)
+
+    const guest: InvitacionCompleta['guest'] = {
+      id,
+      eventId: datos.eventId ?? previo?.guest.eventId ?? 'ev-1',
+      name: datos.name ?? previo?.guest.name ?? 'Ana Invitada',
+      // Sin `??`: un email `null` registrado es un dato, no un hueco.
+      email:
+        datos.email !== undefined
+          ? datos.email
+          : previo !== undefined
+            ? previo.guest.email
+            : 'invitada@test.com',
+    }
+    const invitado: InvitadoConocido = {
+      guest,
+      event: {
+        // El evento ES el del invitado: en Postgres, `guests.eventId` apunta a
+        // esta misma fila y no pueden discrepar.
+        id: datos.event?.id ?? previo?.event.id ?? guest.eventId,
+        name: datos.event?.name ?? previo?.event.name ?? 'Boda de Ana',
+        // Relativa a hoy: con una fecha fija, todo test que respondiera sobre el
+        // evento por defecto empezaría a dar RSVP_CLOSED al pasar su cierre.
+        weddingDate:
+          datos.event?.weddingDate ??
+          previo?.event.weddingDate ??
+          new Date(Date.now() + 180 * 86_400_000),
+        // El `@default(14)` de la columna. Literal y no la constante de
+        // `events/domain`: un módulo no importa el dominio de otro.
+        rsvpDeadlineDays: datos.event?.rsvpDeadlineDays ?? previo?.event.rsvpDeadlineDays ?? 14,
+      },
+    }
+    this.invitados.set(id, invitado)
+    return invitado
   }
 
   /** Vista de sólo lectura para assertar en los tests. */
@@ -84,6 +136,8 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
 
   /** Indexado por hash, como el `@unique` de la columna: dos iguales chocan. */
   private readonly idsPorHash = new Map<string, string>()
+  /** Los `guests` que existen, como las filas a las que apunta la clave foránea. */
+  private readonly invitados = new Map<string, InvitadoConocido>()
   private readonly fallosAlCrear = new Map<string, Error>()
   private falloAlMarcar: Error | null = null
 
@@ -101,15 +155,28 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
     const fallo = this.fallosAlCrear.get(datos.guestId)
     if (fallo !== undefined) return Promise.reject(fallo)
 
+    // La clave foránea del esquema: un invitado que no existe da `P2003`, y el
+    // adaptador de Prisma lo traduce a este error. El doble no puede crear una
+    // invitación colgando de nadie.
+    const invitado = this.invitados.get(datos.guestId)
+    if (invitado === undefined) return Promise.reject(new InvitadoNoEncontradoError())
+
     if (this.idsPorHash.has(datos.tokenHash)) {
       // El `@unique` de `tokenHash` en el esquema, replicado: el doble no puede
       // aceptar lo que Postgres rechazaría.
       return Promise.reject(new Error('tokenHash duplicado'))
     }
 
-    const fila = this.añadir({ id: randomUUID(), expiresAt: datos.expiresAt })
-    fila.guest.id = datos.guestId
-    this.idsPorHash.set(datos.tokenHash, fila.id)
+    // Con los datos del invitado REGISTRADO, no con los de por defecto: la fila
+    // que devuelve `buscarConInvitadoYEvento` es la que el `include` de Prisma
+    // traería, y el worker escribe a ese correo.
+    const fila = this.añadir({
+      id: randomUUID(),
+      expiresAt: datos.expiresAt,
+      tokenHash: datos.tokenHash,
+      guest: invitado.guest,
+      event: invitado.event,
+    })
 
     return Promise.resolve({ id: fila.id })
   }

@@ -33,6 +33,14 @@ describe('SendInvitationsUseCase', () => {
       createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, invitados.filas.length)),
     }
     invitados.sembrar(fila)
+    // El invitado también EXISTE para el repositorio de invitaciones: es la
+    // fila a la que apunta su clave foránea, sin la cual `crear` da un 404.
+    invitaciones.registrarInvitado({
+      id: fila.id,
+      eventId: fila.eventId,
+      name: fila.name,
+      email: fila.email,
+    })
   }
 
   beforeEach(() => {

@@ -7,6 +7,7 @@ import { PrismaUnidadDeTrabajo } from '@/modules/database/transaccion'
 
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 import type { InvitationRepository } from '../application/invitation.repository'
+import { InvitadoNoEncontradoError } from '../domain/guest-errors'
 import type { InvitationStatus } from '../domain/invitation'
 import { InvitationRepositoryEnMemoria } from './invitation.repository.fake'
 import { PrismaGuestRepository } from './prisma-guest.repository'
@@ -106,6 +107,22 @@ describe('Guardas de escritura de la invitación', () => {
       'doble en memoria',
       () => {
         const repo = new InvitationRepositoryEnMemoria()
+        // Las dos filas de `guests` que existen en Postgres: sin ellas, el
+        // doble aceptaría un `crear` que la FK rechaza.
+        repo.registrarInvitado({
+          id: guestId,
+          eventId,
+          name: 'Invitada',
+          email: 'i@test.com',
+          event: { id: eventId, name: 'Boda', weddingDate: new Date('2027-06-12') },
+        })
+        repo.registrarInvitado({
+          id: otroGuestId,
+          eventId,
+          name: 'Otra',
+          email: 'o@test.com',
+          event: { id: eventId, name: 'Boda', weddingDate: new Date('2027-06-12') },
+        })
         return {
           repo,
           sembrar: ({ status, expiresAt, resendMessageId, guestId: deQuien }) =>
@@ -138,6 +155,59 @@ describe('Guardas de escritura de la invitación', () => {
 
     beforeEach(() => {
       impl = crear()
+    })
+
+    describe('crear', () => {
+      it('un guestId que no existe es un 404 del invitado, no un 500 de Prisma', async () => {
+        // Postgres lo rechaza con `P2003` (clave foránea) y el adaptador lo
+        // traduce; el doble no puede ser más permisivo y aceptarlo.
+        await expect(
+          impl.repo.crear({
+            guestId: randomUUID(),
+            tokenHash: randomUUID(),
+            expiresAt: MAÑANA(),
+          }),
+        ).rejects.toBeInstanceOf(InvitadoNoEncontradoError)
+      })
+
+      it('la fila creada cuelga del invitado real y de su evento', async () => {
+        const caducidad = MAÑANA()
+
+        const { id } = await impl.repo.crear({
+          guestId,
+          tokenHash: randomUUID(),
+          expiresAt: caducidad,
+        })
+
+        expect(await impl.repo.buscarConInvitadoYEvento(id)).toMatchObject({
+          status: 'QUEUED',
+          expiresAt: caducidad,
+          guest: { id: guestId, eventId, name: 'Invitada', email: 'i@test.com' },
+          event: { id: eventId, name: 'Boda' },
+        })
+      })
+
+      it('se encuentra por su hash, y dos invitaciones no pueden compartirlo', async () => {
+        const tokenHash = randomUUID()
+        const { id } = await impl.repo.crear({ guestId, tokenHash, expiresAt: MAÑANA() })
+
+        expect((await impl.repo.buscarPorHash(tokenHash))?.id).toBe(id)
+        await expect(impl.repo.crear({ guestId, tokenHash, expiresAt: MAÑANA() })).rejects.toThrow()
+      })
+    })
+
+    describe('caducar (ruling C18)', () => {
+      it('deja el token muerto: `expiresAt` en el pasado', async () => {
+        const id = await impl.sembrar({ status: 'SENT', expiresAt: MAÑANA() })
+
+        await impl.repo.caducar(id)
+
+        expect((await impl.caducidad(id))?.getTime() ?? Infinity).toBeLessThanOrEqual(Date.now())
+      })
+
+      it('una invitación que ya no existe no lanza', async () => {
+        await expect(impl.repo.caducar(randomUUID())).resolves.toBeUndefined()
+      })
     })
 
     describe('marcarEnviada (ruling C21)', () => {

@@ -1,7 +1,23 @@
+import { Logger } from '@nestjs/common'
+
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/in-memory-queue.adapter'
 
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
 import { HandleDeliveryEventUseCase, mapearEstadoResend } from './handle-delivery-event.use-case'
+
+/**
+ * El caso de uso registra lo que descarta (`debug`) y los avisos que no puede
+ * encolar (`warn`). En test ese ruido tapa el resultado, así que se silencia
+ * para todo el fichero; los tests que lo comprueban montan su propio espía.
+ */
+beforeEach(() => {
+  vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined)
+  vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 describe('HandleDeliveryEventUseCase', () => {
   let invitaciones: InvitationRepositoryEnMemoria
@@ -80,6 +96,18 @@ describe('HandleDeliveryEventUseCase', () => {
     await expect(
       caso.ejecutar({ type: 'email.delivered', messageId: 'ajeno' }),
     ).resolves.toBeUndefined()
+  })
+
+  it('deja rastro (debug) del messageId que no casa con ninguna invitación', async () => {
+    // Ignorarlo es correcto, pero en silencio no se distingue de un webhook que
+    // sí debería haber avanzado algo: sin este rastro no hay nada que mirar.
+    const depuracion = vi.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined)
+
+    await caso.ejecutar({ type: 'email.delivered', messageId: 'ajeno' })
+
+    const registrado = depuracion.mock.calls.map((llamada) => String(llamada[0])).join('\n')
+    expect(registrado).toContain('messageId=ajeno')
+    depuracion.mockRestore()
   })
 
   it('ignora tipos de evento que no nos interesan', async () => {

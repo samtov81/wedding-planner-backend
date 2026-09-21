@@ -47,8 +47,24 @@ describe('InvitationProcessor', () => {
   }
 
   const CADUCIDAD_ORIGINAL = new Date(Date.UTC(2027, 0, 1))
+  /** Relativa a hoy: una caducidad fija empieza a mentir cuando llega su fecha. */
+  const MAÑANA = (): Date => new Date(Date.now() + 86_400_000)
+
+  /**
+   * El worker registra cada descarte. En test ese ruido tapa el resultado, así
+   * que se silencia de una vez y los tests que lo comprueban leen este mismo
+   * espía en vez de montar otro.
+   */
+  const espiarLog = (): ReturnType<typeof vi.spyOn> =>
+    vi.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined)
+  let registroLog: ReturnType<typeof espiarLog>
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
 
   beforeEach(() => {
+    registroLog = espiarLog()
     invitaciones = new InvitationRepositoryEnMemoria()
     mail = new FakeMailAdapter()
     // La plantilla REAL, no un doble: el enlace de RSVP tiene que aparecer en
@@ -184,7 +200,6 @@ describe('InvitationProcessor', () => {
       name: string
     }
     expect(metadatos.name).toBe(COLA_INVITACIONES)
-    expect(COLA_INVITACIONES).not.toBe('email')
   })
 
   it('el ÚLTIMO intento fallido caduca la invitación: el token que quede en Redis ya no vale', async () => {
@@ -223,5 +238,120 @@ describe('InvitationProcessor', () => {
 
     expect(mail.enviados).toHaveLength(1)
     expect(invitaciones.buscar('inv-1')?.expiresAt).toEqual(CADUCIDAD_ORIGINAL)
+  })
+  describe('descartes registrados', () => {
+    // Los tres `return` silenciosos de `enviar` dejaban un job completado sin
+    // rastro: desde fuera, un correo que no llega y ninguna explicación.
+    // Se registra el motivo con el id, NUNCA con el token.
+    const casos: Array<[string, () => void, string]> = [
+      ['la invitación ya no existe', () => undefined, 'no existe'],
+      [
+        'la invitación ya no está en cola',
+        () => {
+          invitaciones.añadir({ id: 'inv-1', status: 'SENT', expiresAt: MAÑANA() })
+        },
+        'SENT',
+      ],
+      [
+        'el invitado se quedó sin correo',
+        () => {
+          invitaciones.añadir({
+            id: 'inv-1',
+            status: 'QUEUED',
+            expiresAt: MAÑANA(),
+            guest: { email: null },
+          })
+        },
+        'sin email',
+      ],
+    ]
+
+    it.each(casos)('dice que %s, con el id y sin el token', async (_caso, sembrar, motivo) => {
+      sembrar()
+
+      await procesador.process(
+        jobFalso({ invitationId: 'inv-1', token: 'token-secreto', requestId: 'req-9' }),
+      )
+
+      const registrado = registroLog.mock.calls.map((llamada) => String(llamada[0])).join('\n')
+      expect(registrado).toContain(motivo)
+      expect(registrado).toContain('invitationId=inv-1')
+      expect(registrado).toContain('requestId=req-9')
+      expect(registrado).not.toContain('token-secreto')
+    })
+  })
+
+  describe('respaldo del evento `failed` (ruling C18)', () => {
+    // Un job que BullMQ da por atascado (`stalled`) NUNCA entra en el `catch`
+    // de `process`: sin este respaldo, su token seguiría vivo en Redis.
+    it('un job que falla sin pasar por `process` (stalled) caduca la invitación al agotar intentos', async () => {
+      invitaciones.añadir({ id: 'inv-1', status: 'QUEUED', expiresAt: MAÑANA() })
+
+      await procesador.alFallar(
+        jobFalso({ invitationId: 'inv-1' }, { attemptsMade: 5, attempts: 5 }),
+        new Error('job stalled more than allowable limit'),
+      )
+
+      expect(invitaciones.buscar('inv-1')?.expiresAt.getTime()).toBeLessThanOrEqual(Date.now())
+    })
+
+    it('un fallo con intentos pendientes no caduca nada', async () => {
+      const caducidad = MAÑANA()
+      invitaciones.añadir({ id: 'inv-1', status: 'QUEUED', expiresAt: caducidad })
+
+      await procesador.alFallar(
+        jobFalso({ invitationId: 'inv-1' }, { attemptsMade: 2, attempts: 5 }),
+        new Error('x'),
+      )
+
+      expect(invitaciones.buscar('inv-1')?.expiresAt).toEqual(caducidad)
+    })
+
+    it('un `UnrecoverableError` caduca aunque queden intentos: BullMQ no lo va a reintentar', async () => {
+      invitaciones.añadir({ id: 'inv-1', status: 'QUEUED', expiresAt: MAÑANA() })
+
+      await procesador.alFallar(
+        jobFalso({ invitationId: 'inv-1' }, { attemptsMade: 0, attempts: 5 }),
+        new UnrecoverableError('payload roto'),
+      )
+
+      expect(invitaciones.buscar('inv-1')?.expiresAt.getTime()).toBeLessThanOrEqual(Date.now())
+    })
+
+    it('si el correo YA salió, el respaldo tampoco caduca: el enlace está en la bandeja', async () => {
+      // El fallo fue al marcar, después de un envío bueno. El evento `failed`
+      // no ve lo que pasó dentro de `process`, así que hay que decírselo: si
+      // caducara, el invitado tendría en su bandeja un enlace que da 404.
+      const caducidad = MAÑANA()
+      invitaciones.añadir({ id: 'inv-1', status: 'QUEUED', expiresAt: caducidad })
+      invitaciones.fallarProximoMarcado(new Error('base de datos caída'))
+      await expect(
+        procesador.process(jobFalso({ invitationId: 'inv-1' }, { attemptsMade: 4, attempts: 5 })),
+      ).rejects.toThrow('base de datos caída')
+
+      // BullMQ cuenta el intento y emite `failed`: ya no quedan intentos.
+      await procesador.alFallar(
+        jobFalso({ invitationId: 'inv-1' }, { attemptsMade: 5, attempts: 5 }),
+        new Error('base de datos caída'),
+      )
+
+      expect(mail.enviados).toHaveLength(1)
+      expect(invitaciones.buscar('inv-1')?.expiresAt).toEqual(caducidad)
+    })
+
+    it('un payload que no identifica invitación no caduca nada y no lanza', async () => {
+      const roto = {
+        name: JOB_INVITACION,
+        data: { invitationId: 42 },
+        attemptsMade: 5,
+        opts: { attempts: 5 },
+      } as unknown as Job
+
+      await expect(procesador.alFallar(roto, new Error('x'))).resolves.toBeUndefined()
+    })
+
+    it('sin job (BullMQ puede no traerlo) no lanza', async () => {
+      await expect(procesador.alFallar(undefined, new Error('x'))).resolves.toBeUndefined()
+    })
   })
 })

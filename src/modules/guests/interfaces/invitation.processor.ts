@@ -1,4 +1,4 @@
-import { Processor, WorkerHost } from '@nestjs/bullmq'
+import { OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullmq'
 import { Inject, Logger } from '@nestjs/common'
 import { UnrecoverableError, type Job } from 'bullmq'
 import { z } from 'zod'
@@ -65,6 +65,14 @@ export class InvitationProcessor extends WorkerHost {
 
   private readonly registro = new Logger(InvitationProcessor.name)
 
+  /**
+   * Invitaciones cuyo correo salió en el intento en curso aunque el job fallara
+   * DESPUÉS, al marcarlas. Sólo sirve para que `alFallar` no las caduque; cada
+   * intento fallido emite `failed`, así que la marca se consume enseguida y el
+   * conjunto no crece.
+   */
+  private readonly enviadasSinMarcar = new Set<string>()
+
   async process(job: Job): Promise<void> {
     const leido = payloadInvitacionSchema.safeParse(job.data)
     // Un payload roto no lo arregla ningún reintento: `UnrecoverableError` lo
@@ -84,20 +92,54 @@ export class InvitationProcessor extends WorkerHost {
       // conjunto de fallidos de Redis sin límite (el recorte por edad no lo
       // acota); caducada, el token ya no abre nada.
       //
-      // Se decide aquí, dentro de `process`, y no en el evento `failed` del
-      // worker: aquí la caducidad queda escrita ANTES de que BullMQ dé el job
-      // por fallido, se prueba sin Redis, y si `caducar` falla se registra en
-      // vez de perderse en un emisor de eventos. La regla de "último" replica la
-      // de BullMQ (`Job.shouldRetryJob`): no quedan intentos, o el error es
-      // `UnrecoverableError`.
+      // Se decide aquí, dentro de `process`, y no sólo en el evento `failed`
+      // del worker: aquí la caducidad queda escrita ANTES de que BullMQ dé el
+      // job por fallido, se prueba sin Redis, y si `caducar` falla se registra
+      // en vez de perderse en un emisor de eventos. `alFallar` es el RESPALDO,
+      // para el job que nunca llega hasta aquí (STALLED). La regla de "último"
+      // replica la de BullMQ (`Job.shouldRetryJob`): no quedan intentos, o el
+      // error es `UnrecoverableError`.
       //
       // Si el correo YA salió (el fallo fue al marcar), NO se caduca: el enlace
       // está en la bandeja del invitado y caducarlo le rompería el RSVP.
-      if (!envio.salio && esUltimoIntento(job, error)) {
+      if (envio.salio) {
+        // El correo SÍ salió: se le dice al respaldo del evento `failed`, que
+        // no puede ver lo que pasó aquí dentro y caducaría el enlace que el
+        // invitado ya tiene en su bandeja.
+        this.enviadasSinMarcar.add(datos.invitationId)
+      } else if (esUltimoIntento(job, error)) {
         await this.caducarSinOcultar(datos, error)
       }
       throw error
     }
+  }
+
+  /**
+   * Respaldo del ruling C18: un job que falla por STALLED —el worker murió a
+   * mitad, o se pasó de `lockDuration`— nunca entra en el `catch` de `process`,
+   * así que la caducidad de allí no llega a escribirse y el token del payload
+   * seguiría vivo en el conjunto de fallidos de Redis. Cuando BullMQ lo da por
+   * perdido (sin intentos restantes), se caduca la invitación igual.
+   *
+   * Es idempotente con la caducidad de `process`: caducar dos veces sólo mueve
+   * `expiresAt` a un `ahora` un poco posterior, y ambos ya están en el pasado.
+   */
+  @OnWorkerEvent('failed')
+  async alFallar(job: Job | undefined, error: Error): Promise<void> {
+    // BullMQ puede emitir `failed` sin job (no pudo leerlo de Redis): sin
+    // payload no hay invitación que caducar.
+    if (job === undefined) return
+    // Mismo criterio que `process`: un payload que no identifica invitación no
+    // permite caducar nada, y reintentar no lo arregla.
+    const leido = payloadInvitacionSchema.safeParse(job.data)
+    if (!leido.success) return
+    // El correo de este intento ya salió (falló el marcado): misma regla que
+    // `process`, no se caduca lo que el invitado tiene en la bandeja. Se
+    // consume la marca aunque queden intentos: el siguiente la vuelve a poner.
+    if (this.enviadasSinMarcar.delete(leido.data.invitationId)) return
+    const quedan = (job.opts.attempts ?? 1) - job.attemptsMade
+    if (quedan > 0 && !esIrrecuperable(error)) return
+    await this.caducarSinOcultar(leido.data, error)
   }
 
   private async caducarSinOcultar(datos: PayloadInvitacion, original: unknown): Promise<void> {
@@ -113,17 +155,32 @@ export class InvitationProcessor extends WorkerHost {
     }
   }
 
+  /** Por qué se descarta un job. Con los ids, NUNCA con el token del payload. */
+  private registrarDescarte(datos: PayloadInvitacion, motivo: string): void {
+    this.registro.log(
+      `Job de invitación descartado, ${motivo} invitationId=${datos.invitationId} ` +
+        `requestId=${datos.requestId}`,
+    )
+  }
+
   private async enviar(datos: PayloadInvitacion, envio: { salio: boolean }): Promise<void> {
     const invitacion = await this.invitaciones.buscarConInvitadoYEvento(datos.invitationId)
 
     // La invitación pudo borrarse entre el encolado y el procesado. No es un
     // error: se descarta el job sin reintentar, porque reintentar no la va a
-    // hacer aparecer.
-    if (invitacion === null) return
+    // hacer aparecer. Se dice por qué: un job completado sin rastro es un
+    // correo que no llega y ninguna explicación.
+    if (invitacion === null) {
+      this.registrarDescarte(datos, 'la invitación ya no existe')
+      return
+    }
 
     // Ya enviada: esto es una reentrega tardía del mismo job. Salir aquí es lo
     // que impide el segundo correo.
-    if (invitacion.status !== 'QUEUED') return
+    if (invitacion.status !== 'QUEUED') {
+      this.registrarDescarte(datos, `la invitación ya no está en cola (${invitacion.status})`)
+      return
+    }
 
     // Caducada mientras el job esperaba: un reenvío o un cambio de email la
     // sustituyó (ruling C24), o agotó intentos antes. Mandarla sería mandar un
@@ -140,7 +197,10 @@ export class InvitationProcessor extends WorkerHost {
     // El correo pudo borrarse del invitado después de encolar. Lanzar sería
     // reintentar cinco veces algo que ningún reintento arregla; el envío
     // masivo ya reporta este caso como `NO_EMAIL`.
-    if (invitacion.guest.email === null) return
+    if (invitacion.guest.email === null) {
+      this.registrarDescarte(datos, 'el invitado se quedó sin email')
+      return
+    }
 
     const { html, text } = await this.plantilla.render({
       guestName: invitacion.guest.name,
@@ -172,9 +232,21 @@ export class InvitationProcessor extends WorkerHost {
 
 /** Misma regla que `Job.shouldRetryJob` de BullMQ, vista desde dentro del intento. */
 function esUltimoIntento(job: Job, error: unknown): boolean {
-  if (error instanceof UnrecoverableError) return true
+  if (esIrrecuperable(error)) return true
   // `attemptsMade` cuenta los intentos YA terminados; éste es el `+ 1`.
   return job.attemptsMade + 1 >= (job.opts.attempts ?? 1)
+}
+
+/**
+ * También POR NOMBRE: el error que llega al evento `failed` viaja serializado
+ * por Redis y vuelve como un `Error` corriente, así que el `instanceof` no lo
+ * reconoce. Y un `UnrecoverableError` de otra copia de `bullmq` en el árbol de
+ * dependencias tampoco casaría por prototipo. Mismo criterio que BullMQ, que
+ * marca el job como fallido definitivo por su nombre.
+ */
+function esIrrecuperable(error: unknown): boolean {
+  if (error instanceof UnrecoverableError) return true
+  return error instanceof Error && error.name === 'UnrecoverableError'
 }
 
 /** Fecha legible en el correo. UTC explícito: el worker no está en la zona de la boda. */

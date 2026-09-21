@@ -29,9 +29,11 @@ import { Throttle, type ThrottlerOptions } from '@nestjs/throttler'
 export const LIMITADOR_GLOBAL = 'global'
 export const LIMITADOR_RSVP = 'rsvp'
 export const LIMITADOR_LOGIN = 'login'
+export const LIMITADOR_REGISTER = 'register'
+export const LIMITADOR_VERIFY_EMAIL = 'verify-email'
 export const LIMITADOR_WEBHOOK = 'webhook'
 
-type LimitadorDeRuta = typeof LIMITADOR_RSVP | typeof LIMITADOR_LOGIN | typeof LIMITADOR_WEBHOOK
+type LimitadorDeRuta = typeof LIMITADOR_RSVP | typeof LIMITADOR_LOGIN | typeof LIMITADOR_REGISTER | typeof LIMITADOR_VERIFY_EMAIL | typeof LIMITADOR_WEBHOOK
 
 const reflector = new Reflector()
 const marca = (nombre: LimitadorDeRuta): string => `limitador-de-ruta:${nombre}`
@@ -81,6 +83,18 @@ export function crearLimitadores(limiteGlobalPorMinuto: number): ThrottlerOption
       ttl: 900_000,
       limit: 5,
       skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_LOGIN),
+    },
+    {
+      name: LIMITADOR_REGISTER,
+      ttl: 900_000,
+      limit: 5,
+      skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_REGISTER),
+    },
+    {
+      name: LIMITADOR_VERIFY_EMAIL,
+      ttl: 900_000,
+      limit: 10,
+      skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_VERIFY_EMAIL),
     },
     {
       name: LIMITADOR_WEBHOOK,

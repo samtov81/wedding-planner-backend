@@ -146,6 +146,9 @@ export const objetoBaseDeEntorno = z.object({
   ),
   REFRESH_TTL_DAYS: z.coerce.number().int().positive().default(30),
 
+  /** Horas de validez de un token de verificación de email (defecto 48h). */
+  EMAIL_VERIFICATION_TTL_HOURS: z.coerce.number().int().positive().default(48),
+
   /**
    * `fake` guarda los correos EN MEMORIA (con el enlace del RSVP en claro) y no
    * envía nada: sólo sirve para local y test. En producción

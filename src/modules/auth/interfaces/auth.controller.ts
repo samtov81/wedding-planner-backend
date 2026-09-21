@@ -3,15 +3,16 @@ import type { Request, Response } from 'express'
 
 import { ENV } from '@/config/config.module'
 import type { Env } from '@/config/env.schema'
-import { LIMITADOR_LOGIN, LimiteDeRuta } from '@/shared/http/limitadores'
+import { LIMITADOR_LOGIN, LIMITADOR_REGISTER, LIMITADOR_VERIFY_EMAIL, LimiteDeRuta } from '@/shared/http/limitadores'
 import { validarCon } from '@/shared/http/validar-con'
 
 import { LoginUseCase } from '../application/login.use-case'
 import { LogoutUseCase } from '../application/logout.use-case'
 import { RefreshUseCase } from '../application/refresh.use-case'
 import { RegisterUseCase } from '../application/register.use-case'
+import { VerifyEmailUseCase } from '../application/verify-email.use-case'
 import { RefreshInvalidoError } from '../domain/token-errors'
-import { loginSchema, registerSchema } from './auth.dto'
+import { loginSchema, registerSchema, verifyEmailSchema } from './auth.dto'
 import { CurrentUser, type UsuarioAutenticado } from './current-user.decorator'
 import { JwtAuthGuard } from './jwt-auth.guard'
 
@@ -24,27 +25,39 @@ export class AuthController {
     private readonly loginUseCase: LoginUseCase,
     private readonly refreshUseCase: RefreshUseCase,
     private readonly logoutUseCase: LogoutUseCase,
+    private readonly verifyEmailUseCase: VerifyEmailUseCase,
     @Inject(ENV) private readonly env: Env,
   ) {}
 
   /**
-   * RIESGO ACEPTADO (ligado al DESIGN-GAP #6, `register.use-case.ts`):
-   * registrar un email ya existente responde `409 EMAIL_ALREADY_REGISTERED`,
-   * así que este endpoint permite ENUMERAR CUENTAS — basta leer el status, sin
-   * necesidad de cronometrar `/auth/login` como hace el hash señuelo de
-   * `LoginUseCase`. Se filtra una sola cosa: si un email concreto tiene cuenta.
-   * No se arregla aquí porque el arreglo correcto (responder siempre 201 y
-   * avisar por correo al dueño de la cuenta existente) exige emitir y canjear
-   * un token de verificación de email, y no hay tabla donde persistirlo: es
-   * exactamente lo que el DESIGN-GAP #6 documenta como inexistente. Lo
-   * desbloquea esa tabla más el endpoint de verificación; hasta entonces,
-   * media feature sin dónde guardarse sería peor que el riesgo conocido.
+   * Registro con verificación de email. Responde 201 en ambos casos: email
+   * nuevo (crea usuario + encola verificación) o email ya registrado (encola
+   * notificación de intento, sin crear usuario). La respuesta es idéntica en
+   * ambas ramas — por tanto, no enumera cuentas por el status code. Ver
+   * `RegisterUseCase` para los detalles de timing-equalization.
    */
   @Post('register')
+  @HttpCode(201)
+  @LimiteDeRuta(LIMITADOR_REGISTER, { limit: 5, ttl: 900_000, getTracker: rastreoPorIpYCorreo })
   async register(@Body() body: unknown): Promise<{ id: string; email: string; fullName: string }> {
     const datos = validarCon(registerSchema, body)
-    const usuario = await this.registerUseCase.ejecutar(datos)
-    return { id: usuario.id, email: usuario.email, fullName: usuario.fullName }
+    return await this.registerUseCase.ejecutar(datos)
+  }
+
+  /**
+   * Consumir un token de verificación de email. Un solo uso: al consumirse,
+   * se marca CONSUMED. Llamadas posteriores con el mismo token devuelven
+   * outcome='already_verified' (amigable, no error).
+   *
+   * Límite: 10/15min por IP. Generous — 32 bytes aleatorios hacen inviable
+   * brute force. Existe para higiene/logging, no como defensa real.
+   */
+  @Post('verify-email')
+  @HttpCode(200)
+  @LimiteDeRuta(LIMITADOR_VERIFY_EMAIL, { limit: 10, ttl: 900_000 })
+  async verifyEmail(@Body() body: unknown): Promise<{ outcome: string }> {
+    const { token } = validarCon(verifyEmailSchema, body)
+    return await this.verifyEmailUseCase.ejecutar(token)
   }
 
   /**

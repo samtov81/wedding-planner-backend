@@ -7,10 +7,20 @@ import {
   INVITATION_RENDERER,
   type InvitationRenderer,
 } from './application/invitation-renderer.port'
+import {
+  EMAIL_VERIFICATION_RENDERER,
+  type EmailVerificationRenderer,
+} from './application/email-verification-renderer.port'
+import {
+  REGISTRATION_NOTICE_RENDERER,
+  type RegistrationNoticeRenderer,
+} from './application/registration-notice-renderer.port'
 import { MAIL_PORT, type MailPort } from './application/mail.port'
 import { FakeMailAdapter } from './infrastructure/mail.adapter.fake'
 import { ResendMailAdapter } from './infrastructure/resend-mail.adapter'
 import { renderGuestInvitation } from './infrastructure/templates/guest-invitation'
+import { renderEmailVerification } from './infrastructure/templates/email-verification'
+import { renderRegistrationAttemptNotice } from './infrastructure/templates/registration-attempt-notice'
 
 @Module({
   providers: [
@@ -26,7 +36,15 @@ import { renderGuestInvitation } from './infrastructure/templates/guest-invitati
       provide: INVITATION_RENDERER,
       useValue: { render: renderGuestInvitation } satisfies InvitationRenderer,
     },
+    {
+      provide: EMAIL_VERIFICATION_RENDERER,
+      useValue: { render: renderEmailVerification } satisfies EmailVerificationRenderer,
+    },
+    {
+      provide: REGISTRATION_NOTICE_RENDERER,
+      useValue: { render: renderRegistrationAttemptNotice } satisfies RegistrationNoticeRenderer,
+    },
   ],
-  exports: [MAIL_PORT, INVITATION_RENDERER],
+  exports: [MAIL_PORT, INVITATION_RENDERER, EMAIL_VERIFICATION_RENDERER, REGISTRATION_NOTICE_RENDERER],
 })
 export class MailModule {}

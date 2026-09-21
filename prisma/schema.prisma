@@ -50,6 +50,11 @@ enum InvitationStatus {
   RESPONDED
 }
 
+enum EmailVerificationStatus {
+  PENDING
+  CONSUMED
+}
+
 model User {
   id              String     @id @default(uuid()) @db.Uuid
   email           String     @unique
@@ -60,11 +65,12 @@ model User {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
-  sessions      Session[]
-  memberships   EventMembership[]
-  ownedEvents   Event[]           @relation("EventOwner")
-  vendorProfile VendorProfile?
-  notifications Notification[]
+  sessions                    Session[]
+  memberships                 EventMembership[]
+  ownedEvents                 Event[]                    @relation("EventOwner")
+  vendorProfile               VendorProfile?
+  notifications               Notification[]
+  emailVerificationTokens     EmailVerificationToken[]
 
   @@map("users")
 }
@@ -222,6 +228,21 @@ model GuestInvitation {
   @@index([guestId])
   @@index([resendMessageId])
   @@map("guest_invitations")
+}
+
+model EmailVerificationToken {
+  id         String                   @id @default(uuid()) @db.Uuid
+  userId     String                   @db.Uuid
+  tokenHash  String                   @unique
+  status     EmailVerificationStatus  @default(PENDING)
+  consumedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime                 @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_verification_tokens")
 }
 
 model Notification {

@@ -166,7 +166,10 @@ describe('Vendors por evento e2e', () => {
     // `VendorProfile.userId` es único, así que este test registra SU PROPIO
     // fotógrafo en vez de reutilizar `fotografo` (que el test anterior ya usó
     // para una ficha no-PUBLISHED) o depender de que ese test corriera antes.
-    const fotografoPropio = await registrarYEntrar(`foto-${randomUUID()}@test.com`, 'Fotógrafo Propio')
+    const fotografoPropio = await registrarYEntrar(
+      `foto-${randomUUID()}@test.com`,
+      'Fotógrafo Propio',
+    )
     const eventoPropio = await crearEvento(ana.accessToken, 'Boda para enlazar ficha')
 
     const perfil = await prisma.vendorProfile.create({
@@ -196,12 +199,20 @@ describe('Vendors por evento e2e', () => {
     await request(url)
       .post(`/events/${eventoPropio}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
-      .send({ externalName: 'Flores Pepa', externalEmail: 'pepa@flores.es', category: 'Floristería' })
+      .send({
+        externalName: 'Flores Pepa',
+        externalEmail: 'pepa@flores.es',
+        category: 'Floristería',
+      })
       .expect(201)
     await request(url)
       .post(`/events/${eventoPropio}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
-      .send({ externalName: 'Catering Uno', externalEmail: 'catering@uno.es', category: 'Catering' })
+      .send({
+        externalName: 'Catering Uno',
+        externalEmail: 'catering@uno.es',
+        category: 'Catering',
+      })
       .expect(201)
 
     const respuesta = await request(url)
@@ -220,7 +231,11 @@ describe('Vendors por evento e2e', () => {
     const creado = await request(url)
       .post(`/events/${eventoPropio}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
-      .send({ externalName: 'Flores Pepa', externalEmail: 'pepa@flores.es', category: 'Floristería' })
+      .send({
+        externalName: 'Flores Pepa',
+        externalEmail: 'pepa@flores.es',
+        category: 'Floristería',
+      })
       .expect(201)
     const id = (creado.body as CuerpoEventVendor).id
 
@@ -243,8 +258,26 @@ describe('Vendors por evento e2e', () => {
     expect((respuesta.body as CuerpoError).code).toBe('EVENT_VENDOR_NOT_FOUND')
   })
 
+  it('un eventVendorId mal formado responde 404, no 500: Prisma nunca ve un id que no es UUID', async () => {
+    const respuestaPatch = await request(url)
+      .patch(`/events/${evento}/vendors/no-es-uuid`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ status: 'BOOKED' })
+      .expect(404)
+    expect((respuestaPatch.body as CuerpoError).code).toBe('EVENT_VENDOR_NOT_FOUND')
+
+    const respuestaDelete = await request(url)
+      .delete(`/events/${evento}/vendors/no-es-uuid`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(404)
+    expect((respuestaDelete.body as CuerpoError).code).toBe('EVENT_VENDOR_NOT_FOUND')
+  })
+
   it('un vendor BOOKED tiene acceso al evento pero NO puede gestionar vendors: 403', async () => {
-    const fotografoPropio = await registrarYEntrar(`foto-${randomUUID()}@test.com`, 'Fotógrafo Propio')
+    const fotografoPropio = await registrarYEntrar(
+      `foto-${randomUUID()}@test.com`,
+      'Fotógrafo Propio',
+    )
     const eventoPropio = await crearEvento(ana.accessToken, 'Boda para vendor BOOKED')
 
     const perfil = await prisma.vendorProfile.create({

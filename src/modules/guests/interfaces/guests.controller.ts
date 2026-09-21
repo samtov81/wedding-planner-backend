@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
 import { EventAccessGuard } from '@/modules/events/interfaces/event-access.guard'
 import { RequireEventAccess } from '@/modules/events/interfaces/require-event-access.decorator'
 import { decodeCursor, type CursorValue } from '@/shared/domain'
+import { idDeRuta } from '@/shared/http/id-de-ruta'
 import { validarCon } from '@/shared/http/validar-con'
 
 import { CreateGuestUseCase } from '../application/create-guest.use-case'
@@ -31,6 +32,7 @@ import {
 import { SendSingleInvitationUseCase } from '../application/send-single-invitation.use-case'
 import { UpdateGuestUseCase } from '../application/update-guest.use-case'
 import type { Guest, GuestSummary } from '../domain/guest'
+import { InvitadoNoEncontradoError } from '../domain/guest-errors'
 import {
   actualizarInvitadoSchema,
   crearInvitadoSchema,
@@ -166,7 +168,8 @@ export class GuestsController {
     @Param('guestId') guestId: string,
     @Req() peticion: PeticionConId,
   ): Promise<{ guestId: string; invitationId: string }> {
-    return await this.enviarInvitacion.ejecutar(eventId, guestId, peticion.requestId ?? '')
+    const id = idDeRuta(guestId, () => new InvitadoNoEncontradoError())
+    return await this.enviarInvitacion.ejecutar(eventId, id, peticion.requestId ?? '')
   }
 
   @RequireEventAccess('COUPLE', 'PLANNER')
@@ -175,7 +178,8 @@ export class GuestsController {
     @Param('eventId') eventId: string,
     @Param('guestId') guestId: string,
   ): Promise<InvitadoRespuesta> {
-    return aRespuesta(await this.ver.ejecutar(eventId, guestId))
+    const id = idDeRuta(guestId, () => new InvitadoNoEncontradoError())
+    return aRespuesta(await this.ver.ejecutar(eventId, id))
   }
 
   @RequireEventAccess('COUPLE', 'PLANNER')
@@ -185,9 +189,10 @@ export class GuestsController {
     @Param('guestId') guestId: string,
     @Body() body: unknown,
   ): Promise<InvitadoRespuesta> {
+    const id = idDeRuta(guestId, () => new InvitadoNoEncontradoError())
     const cambios = validarCon(actualizarInvitadoSchema, body)
 
-    return aRespuesta(await this.actualizar.ejecutar(eventId, guestId, cambios))
+    return aRespuesta(await this.actualizar.ejecutar(eventId, id, cambios))
   }
 
   @RequireEventAccess('COUPLE', 'PLANNER')
@@ -196,7 +201,8 @@ export class GuestsController {
     @Param('eventId') eventId: string,
     @Param('guestId') guestId: string,
   ): Promise<{ ok: true }> {
-    await this.eliminar.ejecutar(eventId, guestId)
+    const id = idDeRuta(guestId, () => new InvitadoNoEncontradoError())
+    await this.eliminar.ejecutar(eventId, id)
     return { ok: true }
   }
 }

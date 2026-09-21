@@ -494,6 +494,20 @@ describe('RSVP público e2e', () => {
         'PENDING',
       )
     })
+
+    it('borrar el correo (PATCH email: null) también caduca el enlace vigente', async () => {
+      const guestId = await invitadoPendiente()
+      const viejo = await enviarA(guestId)
+
+      await app.get(UpdateGuestUseCase).ejecutar(eventId, guestId, { email: null })
+
+      await request(url).get(`/rsvp/${viejo}`).expect(404)
+      await request(url).post(`/rsvp/${viejo}`).send({ rsvp: 'DECLINED' }).expect(404)
+      expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).rsvp).toBe(
+        'PENDING',
+      )
+      expect((await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).email).toBeNull()
+    })
   })
 
   describe('todo fallo de token es indistinguible', () => {

@@ -12,13 +12,17 @@ import { UpdateGuestUseCase } from './update-guest.use-case'
 const EVENTO_A = '11111111-1111-4111-8111-111111111111'
 const EVENTO_B = '22222222-2222-4222-8222-222222222222'
 
+/** Ids con forma de UUID: `decodeCursor` los exige desde la Tarea 7. */
+const A = (i: number): string => `aaaaaaaa-0000-4000-8000-00000000000${i}`
+const B0 = 'bbbbbbbb-0000-4000-8000-000000000000'
+
 function repoSembrado(): GuestRepositoryEnMemoria {
   const repo = new GuestRepositoryEnMemoria()
   const base = new Date('2026-01-01T00:00:00.000Z')
 
   for (let i = 0; i < 6; i += 1) {
     repo.sembrar({
-      id: `a${i}`,
+      id: A(i),
       eventId: EVENTO_A,
       name: `G0${i}`,
       email: `g0${i}@boda.test`,
@@ -29,7 +33,7 @@ function repoSembrado(): GuestRepositoryEnMemoria {
     })
   }
   repo.sembrar({
-    id: 'b0',
+    id: B0,
     eventId: EVENTO_B,
     name: 'De otra boda',
     email: null,
@@ -112,7 +116,7 @@ describe('UpdateGuestUseCase', () => {
       id: 'inv-a0',
       status: 'DELIVERED',
       expiresAt: new Date(Date.UTC(2099, 0, 1)),
-      guest: { id: 'a0', eventId: EVENTO_A },
+      guest: { id: A(0), eventId: EVENTO_A },
     }).id
   }
 
@@ -120,7 +124,7 @@ describe('UpdateGuestUseCase', () => {
     const repo = repoSembrado()
     const caso = casoCon(repo)
 
-    const actualizado = await caso.ejecutar(EVENTO_A, 'a0', { rsvp: 'DECLINED' })
+    const actualizado = await caso.ejecutar(EVENTO_A, A(0), { rsvp: 'DECLINED' })
 
     expect(actualizado.rsvp).toBe('DECLINED')
   })
@@ -129,7 +133,7 @@ describe('UpdateGuestUseCase', () => {
     const repo = repoSembrado()
     const caso = casoCon(repo)
 
-    await expect(caso.ejecutar(EVENTO_A, 'b0', { rsvp: 'DECLINED' })).rejects.toBeInstanceOf(
+    await expect(caso.ejecutar(EVENTO_A, B0, { rsvp: 'DECLINED' })).rejects.toBeInstanceOf(
       InvitadoNoEncontradoError,
     )
   })
@@ -143,7 +147,7 @@ describe('UpdateGuestUseCase', () => {
       async (_c, email) => {
         const id = invitacionVigenteDeA0()
 
-        await casoCon(repoSembrado()).ejecutar(EVENTO_A, 'a0', { email })
+        await casoCon(repoSembrado()).ejecutar(EVENTO_A, A(0), { email })
 
         expect(invitaciones.buscar(id)?.expiresAt.getTime()).toBeLessThanOrEqual(Date.now())
         // Cambio de email y caducidad en la MISMA unidad de trabajo.
@@ -155,8 +159,8 @@ describe('UpdateGuestUseCase', () => {
       const id = invitacionVigenteDeA0()
       const caso = casoCon(repoSembrado())
 
-      await caso.ejecutar(EVENTO_A, 'a0', { rsvp: 'DECLINED', name: 'Otro nombre' })
-      await caso.ejecutar(EVENTO_A, 'a0', { email: 'g00@boda.test' })
+      await caso.ejecutar(EVENTO_A, A(0), { rsvp: 'DECLINED', name: 'Otro nombre' })
+      await caso.ejecutar(EVENTO_A, A(0), { email: 'g00@boda.test' })
 
       expect(invitaciones.buscar(id)?.expiresAt).toEqual(new Date(Date.UTC(2099, 0, 1)))
     })
@@ -168,16 +172,16 @@ describe('DeleteGuestUseCase', () => {
     const repo = repoSembrado()
     const caso = new DeleteGuestUseCase(repo)
 
-    await caso.ejecutar(EVENTO_A, 'a0')
+    await caso.ejecutar(EVENTO_A, A(0))
 
-    expect(await repo.buscar(EVENTO_A, 'a0')).toBeNull()
+    expect(await repo.buscar(EVENTO_A, A(0))).toBeNull()
   })
 
   it('borrar un invitado de otro evento es 404, no un borrado silencioso', async () => {
     const repo = repoSembrado()
     const caso = new DeleteGuestUseCase(repo)
 
-    await expect(caso.ejecutar(EVENTO_A, 'b0')).rejects.toBeInstanceOf(InvitadoNoEncontradoError)
-    expect(await repo.buscar(EVENTO_B, 'b0')).not.toBeNull()
+    await expect(caso.ejecutar(EVENTO_A, B0)).rejects.toBeInstanceOf(InvitadoNoEncontradoError)
+    expect(await repo.buscar(EVENTO_B, B0)).not.toBeNull()
   })
 })

@@ -5,6 +5,8 @@ export class InvalidCursorError extends Error {
   }
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
 export interface CursorValue {
   createdAt: Date
   id: string
@@ -45,6 +47,10 @@ export function decodeCursor(raw: string): CursorValue {
     const { c, i } = crudo as { c: string; i: string }
     const createdAt = new Date(c)
     if (Number.isNaN(createdAt.getTime())) throw new InvalidCursorError()
+    // Un `id` que no es UUID no puede existir: rechazarlo aquí, con el mismo
+    // `InvalidCursorError` de siempre, evita que llegue crudo al repositorio y
+    // Prisma lo rechace como P2023 (500) en vez de un 400.
+    if (!UUID.test(i)) throw new InvalidCursorError()
 
     return { createdAt, id: i }
   } catch {

@@ -9,6 +9,7 @@ import type {
   EventVendorRepository,
   EventVendorVista,
 } from '../application/event-vendor.repository'
+import { EventVendorNoEncontradoError } from '../domain/vendor-errors'
 import type { VendorRef } from '../domain/vendor-ref'
 
 @Injectable()
@@ -86,9 +87,15 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
         ...(cambios.status !== undefined ? { status: cambios.status } : {}),
       },
     })
-    const fila = await this.prisma.eventVendor.findFirstOrThrow({
+    // `findFirst`, no `findFirstOrThrow`: si la fila desapareció ENTRE el
+    // `updateMany` y esta relectura (borrado concurrente), lanzar un P2025
+    // crudo sería un 500. El caso de uso ya comprobó que existía antes de
+    // escribir; aquí se repite el mismo 404 de dominio para la ventana entre
+    // medias.
+    const fila = await this.prisma.eventVendor.findFirst({
       where: { id: eventVendorId, eventId },
     })
+    if (fila === null) throw new EventVendorNoEncontradoError()
     return this.aVista(fila)
   }
 

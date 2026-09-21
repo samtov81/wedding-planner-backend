@@ -29,12 +29,18 @@ function fila(datos: {
 
 describe('ListNotificationsUseCase', () => {
   it('devuelve la página y el total de no leídas, contado sobre las filas', async () => {
+    // Ids con forma de UUID: `decodeCursor` los exige desde la Tarea 7.
+    const a = 'aaaaaaaa-0000-4000-8000-000000000000'
+    const b = 'bbbbbbbb-0000-4000-8000-000000000000'
+    const c = 'cccccccc-0000-4000-8000-000000000000'
+    const d = 'dddddddd-0000-4000-8000-000000000000'
+
     const repo = new NotificationRepositoryEnMemoria()
     repo.filas.push(
-      fila({ id: 'a', minuto: 1 }),
-      fila({ id: 'b', minuto: 2, leida: true }),
-      fila({ id: 'c', minuto: 3 }),
-      fila({ id: 'd', minuto: 4, userId: 'planner' }),
+      fila({ id: a, minuto: 1 }),
+      fila({ id: b, minuto: 2, leida: true }),
+      fila({ id: c, minuto: 3 }),
+      fila({ id: d, minuto: 4, userId: 'planner' }),
     )
 
     const resultado = await new ListNotificationsUseCase(repo).ejecutar('ev-1', 'pareja', {
@@ -43,9 +49,9 @@ describe('ListNotificationsUseCase', () => {
       soloNoLeidas: false,
     })
 
-    expect(resultado.items.map((n) => n.id)).toEqual(['c', 'b'])
+    expect(resultado.items.map((n) => n.id)).toEqual([c, b])
     expect(resultado.unreadCount).toBe(2)
-    expect(decodeCursor(resultado.nextCursor ?? '').id).toBe('b')
+    expect(decodeCursor(resultado.nextCursor ?? '').id).toBe(b)
   })
 })
 

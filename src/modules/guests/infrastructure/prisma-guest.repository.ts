@@ -11,7 +11,7 @@ import type {
   GuestRepository,
 } from '../application/guest.repository'
 import type { Guest, RsvpStatus } from '../domain/guest'
-import { EmailDuplicadoError } from '../domain/guest-errors'
+import { EmailDuplicadoError, InvitadoNoEncontradoError } from '../domain/guest-errors'
 import { encodeCursor, type CursorPage, type CursorValue } from '@/shared/domain'
 
 /** Orden ÚNICO de todo el módulo: el mismo que respalda el índice del esquema. */
@@ -143,7 +143,13 @@ export class PrismaGuestRepository implements GuestRepository {
       throw traducir(error)
     }
 
-    const fila = await cliente.guest.findFirstOrThrow({ where: { id: guestId, eventId } })
+    // `findFirst`, no `findFirstOrThrow`: si la fila desapareció ENTRE el
+    // `updateMany` y esta relectura (borrado concurrente), lanzar un P2025
+    // crudo sería un 500. El caso de uso ya comprobó que existía antes de
+    // escribir; aquí se repite el mismo 404 de dominio para la ventana entre
+    // medias.
+    const fila = await cliente.guest.findFirst({ where: { id: guestId, eventId } })
+    if (fila === null) throw new InvitadoNoEncontradoError()
     return aInvitado(fila)
   }
 

@@ -426,6 +426,83 @@ describe('Invitados e2e', () => {
     expect((respuesta.body as CuerpoError).code).toBe('GUEST_NOT_FOUND')
   })
 
+  it('un guestId mal formado responde 404, no 500: Prisma nunca ve un id que no es UUID', async () => {
+    const respuestaGet = await request(url)
+      .get(`/events/${bodaDeAna}/guests/no-es-uuid`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(404)
+    expect((respuestaGet.body as CuerpoError).code).toBe('GUEST_NOT_FOUND')
+
+    const respuestaPatch = await request(url)
+      .patch(`/events/${bodaDeAna}/guests/no-es-uuid`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ rsvp: 'CONFIRMED' })
+      .expect(404)
+    expect((respuestaPatch.body as CuerpoError).code).toBe('GUEST_NOT_FOUND')
+
+    const respuestaDelete = await request(url)
+      .delete(`/events/${bodaDeAna}/guests/no-es-uuid`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(404)
+    expect((respuestaDelete.body as CuerpoError).code).toBe('GUEST_NOT_FOUND')
+  })
+
+  it('un cursor con un id que no es UUID es 400, con el mismo cuerpo que cualquier cursor inválido', async () => {
+    const cursorConIdInvalido = Buffer.from(
+      JSON.stringify({ c: new Date().toISOString(), i: 'x' }),
+    ).toString('base64url')
+
+    const respuesta = await request(url)
+      .get(`/events/${bodaDeAna}/guests?cursor=${cursorConIdInvalido}`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(400)
+
+    expect((respuesta.body as CuerpoError).code).toBe('INVALID_CURSOR')
+  })
+
+  it('PATCH con {} es 400: no hay ningún cambio que aplicar', async () => {
+    const creado = (
+      await request(url)
+        .post(`/events/${bodaDeAna}/guests`)
+        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .send({ name: 'Vacío', group: 'Friends' })
+        .expect(201)
+    ).body as CuerpoInvitado
+
+    const respuesta = await request(url)
+      .patch(`/events/${bodaDeAna}/guests/${creado.id}`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({})
+      .expect(400)
+
+    expect((respuesta.body as CuerpoError).message).toContain('Indica al menos un cambio')
+  })
+
+  it('PATCH con email: null borra el correo del invitado', async () => {
+    const creado = (
+      await request(url)
+        .post(`/events/${bodaDeAna}/guests`)
+        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .send({
+          name: 'Con correo a borrar',
+          email: `borrar-${randomUUID()}@test.com`,
+          group: 'Friends',
+        })
+        .expect(201)
+    ).body as CuerpoInvitado
+    expect(creado.email).not.toBeNull()
+
+    const actualizado = (
+      await request(url)
+        .patch(`/events/${bodaDeAna}/guests/${creado.id}`)
+        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .send({ email: null })
+        .expect(200)
+    ).body as CuerpoInvitado
+
+    expect(actualizado.email).toBeNull()
+  })
+
   it('el envío masivo devuelve 202 y REPORTA a quién no se le manda nada', async () => {
     // Boda aparte, con los tres casos exactos: con correo, sin correo y con
     // respuesta ya dada. Así el recuento no depende de lo que hicieron los
@@ -612,8 +689,8 @@ describe('Invitados e2e', () => {
     expect(sigueIgual?.rsvp).toBe(victima.rsvp)
     expect(await prisma.guest.count({ where: { eventId: bodaPropia, name: 'Colado' } })).toBe(0)
     // Y que el vendor no haya conseguido encolar ni una invitación.
-    expect(
-      await prisma.guestInvitation.count({ where: { guest: { eventId: bodaPropia } } }),
-    ).toBe(0)
+    expect(await prisma.guestInvitation.count({ where: { guest: { eventId: bodaPropia } } })).toBe(
+      0,
+    )
   })
 })

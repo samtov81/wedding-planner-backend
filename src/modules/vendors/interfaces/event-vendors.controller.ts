@@ -8,6 +8,7 @@ import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
 import { EventAccessGuard } from '@/modules/events/interfaces/event-access.guard'
 import { RequireEventAccess } from '@/modules/events/interfaces/require-event-access.decorator'
 import { UnauthorizedError } from '@/shared/domain'
+import { idDeRuta } from '@/shared/http/id-de-ruta'
 import { validarCon } from '@/shared/http/validar-con'
 
 import { AddEventVendorUseCase } from '../application/add-event-vendor.use-case'
@@ -15,6 +16,7 @@ import type { EventVendorVista } from '../application/event-vendor.repository'
 import { ListEventVendorsUseCase } from '../application/list-event-vendors.use-case'
 import { RemoveEventVendorUseCase } from '../application/remove-event-vendor.use-case'
 import { UpdateEventVendorUseCase } from '../application/update-event-vendor.use-case'
+import { EventVendorNoEncontradoError } from '../domain/vendor-errors'
 import { createEventVendorSchema, updateEventVendorSchema } from './event-vendor.dto'
 
 interface EventVendorRespuesta {
@@ -75,8 +77,9 @@ export class EventVendorsController {
     @Param('eventVendorId') eventVendorId: string,
     @Body() body: unknown,
   ): Promise<EventVendorRespuesta> {
+    const id = idDeRuta(eventVendorId, () => new EventVendorNoEncontradoError())
     const datos = validarCon(updateEventVendorSchema, body)
-    const vendor = await this.actualizar.ejecutar(eventId, eventVendorId, datos)
+    const vendor = await this.actualizar.ejecutar(eventId, id, datos)
     return this.aRespuesta(vendor)
   }
 
@@ -86,7 +89,8 @@ export class EventVendorsController {
     @Param('eventId') eventId: string,
     @Param('eventVendorId') eventVendorId: string,
   ): Promise<{ ok: true }> {
-    await this.eliminar.ejecutar(eventId, eventVendorId)
+    const id = idDeRuta(eventVendorId, () => new EventVendorNoEncontradoError())
+    await this.eliminar.ejecutar(eventId, id)
     return { ok: true }
   }
 

@@ -39,6 +39,12 @@ export type CrearInvitadoDto = z.infer<typeof crearInvitadoSchema>
 
 export const actualizarInvitadoSchema = crearInvitadoSchema
   .partial()
-  .extend({ rsvp: rsvpSchema.optional() })
+  .extend({
+    rsvp: rsvpSchema.optional(),
+    // A diferencia de `crearInvitadoSchema.email` (sólo ausente u ok), el PATCH
+    // también acepta `null` explícito: es cómo se borra un correo ya puesto.
+    // Ausente (`undefined`) sigue significando "no toques este campo".
+    email: z.email().nullable().optional(),
+  })
   .refine((datos) => Object.keys(datos).length > 0, { message: 'Indica al menos un cambio' })
 export type ActualizarInvitadoDto = z.infer<typeof actualizarInvitadoSchema>

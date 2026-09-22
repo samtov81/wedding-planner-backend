@@ -24,11 +24,29 @@ async function bootstrap(): Promise<void> {
   // trabajos a medias.
   app.enableShutdownHooks()
 
-  await configurarApp(app, env)
-  await app.listen(env.PORT)
+  try {
+    await configurarApp(app, env)
+    await app.listen(env.PORT)
+  } catch (error) {
+    // Cuando `listen` falla, la aplicación YA ESTÁ construida y viva: sus
+    // workers de BullMQ están consumiendo las colas y Prisma y Redis tienen
+    // conexiones abiertas. Sin este cierre el proceso no termina —esos handles
+    // mantienen vivo el bucle de eventos— y se queda de WORKER FANTASMA:
+    // invisible (no escucha en ningún puerto) pero robándole los jobs al
+    // proceso que sí arrancó, y ejecutándolos con el código de ESTE build.
+    // En desarrollo, donde el `EADDRINUSE` de un `npm run dev` repetido es
+    // rutina, eso se traduce en jobs procesados por una versión vieja mientras
+    // se depura la nueva. Cerrar antes de propagar el error lo evita.
+    await app.close()
+    throw error
+  }
 }
 
 bootstrap().catch((error: unknown) => {
   console.error(error)
-  process.exitCode = 1
+  // `process.exitCode` a secas NO basta: sólo fija el código con el que el
+  // proceso saldrá *cuando* salga, y basta un handle vivo para que no salga
+  // nunca. El `app.close()` de arriba debería haberlos soltado todos, pero un
+  // arranque fallido no puede depender de eso: lo que no arrancó, termina.
+  process.exit(1)
 })

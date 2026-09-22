@@ -57,6 +57,29 @@ describe('build compilado', () => {
     throw new Error(`/health no respondió en ${ms} ms:\n${salida}`)
   }
 
+  /** El entorno explícito del hijo, compartido por los dos procesos que se arrancan. */
+  function entorno(puerto: number): NodeJS.ProcessEnv {
+    return {
+      PATH: process.env.PATH ?? '',
+      // Como en producción: pino en JSON, sin pino-pretty (que es devDependency).
+      NODE_ENV: 'production',
+      PORT: String(puerto),
+      DATABASE_URL: pg.url,
+      REDIS_URL: redis.getConnectionUrl(),
+      JWT_ACCESS_SECRET: 's'.repeat(48),
+      MAIL_DRIVER: 'resend',
+      // En producción el remitente por defecto (`.test`) se rechaza al arrancar.
+      MAIL_FROM: 'no-reply@weddingplanner.app',
+      RESEND_API_KEY: 're_humo_no_se_usa',
+      RESEND_WEBHOOK_SECRET: `whsec_${Buffer.from('secreto-del-test-de-humo').toString('base64')}`,
+      APP_URL: 'http://localhost:5173',
+      TRUST_PROXY: '1',
+      // Swagger se apaga por defecto en producción (ver `env.schema.ts`); este
+      // smoke SÍ quiere comprobar que `/openapi.json` se publica.
+      DOCS_ENABLED: 'true',
+    }
+  }
+
   beforeAll(async () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
@@ -64,25 +87,7 @@ describe('build compilado', () => {
     base = `http://127.0.0.1:${puerto}`
 
     proceso = spawn(process.execPath, [MAIN], {
-      env: {
-        PATH: process.env.PATH ?? '',
-        // Como en producción: pino en JSON, sin pino-pretty (que es devDependency).
-        NODE_ENV: 'production',
-        PORT: String(puerto),
-        DATABASE_URL: pg.url,
-        REDIS_URL: redis.getConnectionUrl(),
-        JWT_ACCESS_SECRET: 's'.repeat(48),
-        MAIL_DRIVER: 'resend',
-        // En producción el remitente por defecto (`.test`) se rechaza al arrancar.
-        MAIL_FROM: 'no-reply@weddingplanner.app',
-        RESEND_API_KEY: 're_humo_no_se_usa',
-        RESEND_WEBHOOK_SECRET: `whsec_${Buffer.from('secreto-del-test-de-humo').toString('base64')}`,
-        APP_URL: 'http://localhost:5173',
-        TRUST_PROXY: '1',
-        // Swagger se apaga por defecto en producción (ver `env.schema.ts`); este
-        // smoke SÍ quiere comprobar que `/openapi.json` se publica.
-        DOCS_ENABLED: 'true',
-      },
+      env: entorno(puerto),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     proceso.stdout?.on('data', (trozo: Buffer) => (salida += trozo.toString()))
@@ -130,6 +135,41 @@ describe('build compilado', () => {
     expect(lineas.length).toBeGreaterThan(0)
     for (const linea of lineas) expect(() => JSON.parse(linea) as unknown).not.toThrow()
   })
+
+  it('si el puerto está ocupado TERMINA, en vez de quedarse de worker fantasma', async () => {
+    // El segundo `npm run dev` es rutina en desarrollo, y `listen` falla con
+    // EADDRINUSE. Lo que NO puede pasar es que el proceso sobreviva al fallo:
+    // para cuando `listen` se ejecuta, la aplicación ya está construida y sus
+    // workers de BullMQ ya están consumiendo las colas. Un proceso así no
+    // escucha en ningún puerto —es invisible para `lsof`— pero le roba los
+    // jobs al servidor bueno y los ejecuta con SU build, que es viejo. Se
+    // detectó exactamente así: correos de verificación procesados por un
+    // arranque fallido de minutos antes, sin rastro en los logs del servidor
+    // que sí estaba escuchando.
+    const puerto = Number(new URL(base).port)
+    let salidaSegundo = ''
+    const segundo = spawn(process.execPath, [MAIN], {
+      env: entorno(puerto),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    segundo.stdout?.on('data', (trozo: Buffer) => (salidaSegundo += trozo.toString()))
+    segundo.stderr?.on('data', (trozo: Buffer) => (salidaSegundo += trozo.toString()))
+
+    try {
+      const fin = new Promise<number | null>((ok) => segundo.once('exit', (code) => ok(code)))
+      const plazo = new Promise<'colgado'>((ok) => setTimeout(() => ok('colgado'), 25_000))
+      const resultado = await Promise.race([fin, plazo])
+
+      // `toBe(1)` y no "distinto de null": salir con 0 diría que todo fue bien.
+      expect(resultado).toBe(1)
+      expect(salidaSegundo).toContain('EADDRINUSE')
+    } finally {
+      if (segundo.exitCode === null && segundo.signalCode === null) segundo.kill('SIGKILL')
+    }
+
+    // Y el primero sigue vivo y sirviendo: el intento fallido no se lo llevó.
+    expect((await fetch(`${base}/health`)).status).toBe(200)
+  }, 40_000)
 
   it('con SIGTERM corre los hooks de cierre y sale por la señal', async () => {
     // Que el proceso muera por SIGTERM NO prueba un cierre ordenado: sin

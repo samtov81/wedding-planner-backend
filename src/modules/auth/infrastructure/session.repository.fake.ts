@@ -75,6 +75,11 @@ export class SessionRepositoryEnMemoria implements SessionRepository {
     return { ip: sesion.ip, userAgent: sesion.userAgent }
   }
 
+  /** Helper de test: cuántas sesiones se han creado en total. */
+  cantidad(): number {
+    return this.sesiones.length
+  }
+
   private insertar(datos: DatosNuevaSesion): void {
     this.sesiones.push({
       id: randomUUID(),

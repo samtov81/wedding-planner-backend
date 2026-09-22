@@ -1,5 +1,6 @@
 import type { NestExpressApplication } from '@nestjs/platform-express'
 import { Test } from '@nestjs/testing'
+import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import { Logger } from 'nestjs-pino'
 import request from 'supertest'
@@ -30,6 +31,7 @@ describe('Logs de peticiones (pino-http) e2e', () => {
   let redis: StartedRedisContainer
   let app: NestExpressApplication
   let url: string
+  let prisma: PrismaClient
   const logs = new LogsCapturados()
 
   beforeAll(async () => {
@@ -54,10 +56,12 @@ describe('Logs de peticiones (pino-http) e2e', () => {
     // POR PETICIÓN, y bajo la suite completa alguna acaba en otro proceso.
     await app.listen(0, '127.0.0.1')
     url = (await app.getUrl()).replace('[::1]', '127.0.0.1')
+    prisma = new PrismaClient({ datasources: { db: { url: pg.url } } })
   }, 240_000)
 
   afterAll(async () => {
     delete process.env.LOG_LEVEL
+    await prisma.$disconnect()
     await app.close()
     await redis.stop()
     await pg.stop()
@@ -140,6 +144,14 @@ describe('Logs de peticiones (pino-http) e2e', () => {
       .post('/auth/register')
       .send({ ...credenciales, fullName: 'Logs' })
       .expect(201)
+
+    // El login exige el email verificado (Tarea 2): este test no ejercita ese
+    // flujo, así que se marca directo en base de datos.
+    await prisma.user.update({
+      where: { email: credenciales.email },
+      data: { emailVerifiedAt: new Date() },
+    })
+
     const { headers } = await request(url).post('/auth/login').send(credenciales).expect(200)
 
     const cookies = ([] as string[]).concat(headers['set-cookie'] ?? [])

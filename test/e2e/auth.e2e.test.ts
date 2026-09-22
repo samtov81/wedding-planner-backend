@@ -97,6 +97,14 @@ describe('Auth e2e', () => {
       .send({ email: 'ana@test.com', password: 'una-contraseña-larga', fullName: 'Ana' })
       .expect(201)
 
+    // El login exige el email verificado desde esta tarea: sin este paso el
+    // 200 de más abajo pasaría a ser un 403 EMAIL_NOT_VERIFIED.
+    const { html: htmlAna } = await esperarCorreoA('ana@test.com')
+    await request(url)
+      .post('/auth/verify-email')
+      .send({ token: tokenDelEnlace(htmlAna) })
+      .expect(200)
+
     const login = await request(url)
       .post('/auth/login')
       .send({ email: 'ana@test.com', password: 'una-contraseña-larga' })
@@ -213,6 +221,14 @@ describe('Auth e2e', () => {
       .expect(201)
 
     expect(segundo.body).toEqual(primero.body)
+
+    // El correo de verificación del primer registro es el válido: el segundo
+    // intento no genera cuenta nueva, así que no hay un segundo token que valga.
+    const { html } = await esperarCorreoA('duplicado@test.com')
+    await request(url)
+      .post('/auth/verify-email')
+      .send({ token: tokenDelEnlace(html) })
+      .expect(200)
 
     // Y la cuenta original sigue siendo la suya: ni nombre ni contraseña nuevos.
     await request(url)

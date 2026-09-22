@@ -1,7 +1,7 @@
 import type { PasswordHasher } from '@/modules/users/application/password-hasher.port'
 import { UserRepositoryEnMemoria } from '@/modules/users/infrastructure/user.repository.fake'
 
-import { CredencialesInvalidasError } from '../domain/auth-errors'
+import { CredencialesInvalidasError, EmailNoVerificadoError } from '../domain/auth-errors'
 import { SessionRepositoryEnMemoria } from '../infrastructure/session.repository.fake'
 import { LoginUseCase } from './login.use-case'
 import { hashToken, TokenService } from './token.service'
@@ -42,6 +42,16 @@ describe('LoginUseCase', () => {
         id: 'user-1',
         email: 'ana@test.com',
         fullName: 'Ana',
+        systemRole: 'USER',
+        emailVerifiedAt: new Date('2026-01-01'),
+        passwordHash: 'hash:clave-correcta',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+      {
+        id: 'user-2',
+        email: 'sinverificar@test.com',
+        fullName: 'Sin Verificar',
         systemRole: 'USER',
         emailVerifiedAt: null,
         passwordHash: 'hash:clave-correcta',
@@ -118,5 +128,36 @@ describe('LoginUseCase', () => {
     // La llamada a verify() ocurrió igual: el coste de Argon2 se paga tanto
     // si el usuario existe como si no, que es lo que igualo el tiempo.
     expect(hasher.llamadasAVerify).toBe(1)
+  })
+
+  it('rechaza el login si el email no está verificado', async () => {
+    await expect(
+      caso.ejecutar({ email: 'sinverificar@test.com', password: 'clave-correcta' }),
+    ).rejects.toBeInstanceOf(EmailNoVerificadoError)
+  })
+
+  it('no crea sesión cuando el email no está verificado', async () => {
+    await expect(
+      caso.ejecutar({ email: 'sinverificar@test.com', password: 'clave-correcta' }),
+    ).rejects.toThrow()
+
+    expect(sesiones.cantidad()).toBe(0)
+  })
+
+  /**
+   * El orden importa: si la comprobación de verificación fuese ANTES que la de
+   * contraseña, responder EMAIL_NOT_VERIFIED a cualquiera que escriba un correo
+   * confirmaría que esa cuenta existe. Este test es el que fija ese orden.
+   */
+  it('con contraseña incorrecta sobre una cuenta sin verificar devuelve INVALID_CREDENTIALS', async () => {
+    await expect(
+      caso.ejecutar({ email: 'sinverificar@test.com', password: 'clave-equivocada' }),
+    ).rejects.toBeInstanceOf(CredencialesInvalidasError)
+  })
+
+  it('un email inexistente sigue dando INVALID_CREDENTIALS, nunca EMAIL_NOT_VERIFIED', async () => {
+    await expect(
+      caso.ejecutar({ email: 'nadie@test.com', password: 'lo-que-sea' }),
+    ).rejects.toBeInstanceOf(CredencialesInvalidasError)
   })
 })

@@ -329,6 +329,18 @@ describe('Auth e2e', () => {
 
       expect(res.status).toBe(400)
     })
+
+    it('el cuarto intento en una hora contra el mismo IP+correo da 429', async () => {
+      function pedir(): request.Test {
+        return request(url).post('/auth/resend-verification').send({ email: 'limite-resend@test.com' })
+      }
+
+      for (let i = 0; i < 3; i += 1) await pedir().expect(202)
+
+      const cortado = await pedir()
+
+      expect(cortado.status).toBe(429)
+    })
   })
 
   describe('límite de intentos de login', () => {

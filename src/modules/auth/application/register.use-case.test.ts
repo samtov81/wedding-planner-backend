@@ -31,6 +31,7 @@ const ENV_DE_PRUEBA = { EMAIL_VERIFICATION_TTL_HOURS: 48 } as Env
 
 interface PayloadVerificacion {
   userId: string
+  tokenId: string
   email: string
   fullName: string
   token: string
@@ -88,14 +89,27 @@ describe('RegisterUseCase', () => {
     })
 
     const encolado = cola.encolados[0]
+    const datos = encolado?.datos as PayloadVerificacion
     expect(cola.encolados).toHaveLength(1)
     expect(encolado?.cola).toBe('email')
     expect(encolado?.nombre).toBe('send-verification-email')
     // BullMQ usa `:` como separador de claves de Redis y RECHAZA un customId
-    // que lo contenga: `verify-email:<id>` lanzaría en `Queue.add`.
-    expect(encolado?.jobId).toBe(`verify-email-${usuario.id}`)
+    // que lo contenga: `verify-email:<id>` lanzaría en `Queue.add`. La clave
+    // va por el id del TOKEN, no del usuario: ver el comentario en el caso de
+    // uso y en EmailProcessor.
+    expect(encolado?.jobId).toBe(`verify-email-${datos.tokenId}`)
     expect(encolado?.jobId).not.toContain(':')
     expect(encolado?.opciones.removeOnComplete).toBe(true)
+    expect(datos.userId).toBe(usuario.id)
+  })
+
+  it('encola la verificación con el id del token en jobId y payload', async () => {
+    await caso.ejecutar({ email: 'nueva@test.com', password: 'clave-larga', fullName: 'Nueva' })
+
+    const encolado = cola.encolados.find((e) => e.nombre === 'send-verification-email')
+    const datos = encolado?.datos as { tokenId?: string; token?: string }
+    expect(datos.tokenId).toBeDefined()
+    expect(encolado?.jobId).toBe(`verify-email-${datos.tokenId}`)
   })
 
   it('el job lleva el email ya normalizado y un token de verificación', async () => {

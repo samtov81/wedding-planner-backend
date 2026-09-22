@@ -291,6 +291,46 @@ describe('Auth e2e', () => {
     await request(url).post('/auth/verify-email').send({}).expect(400)
   })
 
+  describe('reenvío del correo de verificación', () => {
+    it('devuelve el MISMO 202 y el mismo cuerpo exista la cuenta o no', async () => {
+      await request(url)
+        .post('/auth/register')
+        .send({ email: 'sinverificar@test.com', password: 'una-contraseña-larga', fullName: 'Sin Verificar' })
+        .expect(201)
+
+      await request(url)
+        .post('/auth/register')
+        .send({ email: 'verificada@test.com', password: 'una-contraseña-larga', fullName: 'Verificada' })
+        .expect(201)
+      const { html } = await esperarCorreoA('verificada@test.com')
+      await request(url).post('/auth/verify-email').send({ token: tokenDelEnlace(html) }).expect(200)
+
+      const pendiente = await request(url)
+        .post('/auth/resend-verification')
+        .send({ email: 'sinverificar@test.com' })
+      const inexistente = await request(url)
+        .post('/auth/resend-verification')
+        .send({ email: 'nadie@test.com' })
+      const verificada = await request(url)
+        .post('/auth/resend-verification')
+        .send({ email: 'verificada@test.com' })
+
+      // Este test es la defensa contra la enumeración de cuentas: si alguna vez
+      // divergen status o cuerpo, el endpoint dice quién tiene cuenta aquí.
+      expect(pendiente.status).toBe(202)
+      expect(inexistente.status).toBe(202)
+      expect(verificada.status).toBe(202)
+      expect(inexistente.body).toEqual(pendiente.body)
+      expect(verificada.body).toEqual(pendiente.body)
+    })
+
+    it('rechaza un email mal formado con 400', async () => {
+      const res = await request(url).post('/auth/resend-verification').send({ email: 'no-es-un-email' })
+
+      expect(res.status).toBe(400)
+    })
+  })
+
   describe('límite de intentos de login', () => {
     function intentar(email: string): request.Test {
       return request(url).post('/auth/login').send({ email, password: 'no-es-esta' })

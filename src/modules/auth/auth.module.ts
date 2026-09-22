@@ -9,6 +9,7 @@ import { LoginUseCase } from './application/login.use-case'
 import { LogoutUseCase } from './application/logout.use-case'
 import { RefreshUseCase } from './application/refresh.use-case'
 import { RegisterUseCase } from './application/register.use-case'
+import { ResendVerificationUseCase } from './application/resend-verification.use-case'
 import { VerifyEmailUseCase } from './application/verify-email.use-case'
 import { SESSION_REPOSITORY } from './application/session.repository'
 import { TokenService } from './application/token.service'
@@ -40,6 +41,7 @@ import { EmailProcessor } from './interfaces/email.processor'
     RefreshUseCase,
     LogoutUseCase,
     VerifyEmailUseCase,
+    ResendVerificationUseCase,
     EmailProcessor,
   ],
   exports: [TokenService, JwtAuthGuard],

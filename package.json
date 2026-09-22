@@ -16,7 +16,16 @@
     "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "tsc -p tsconfig.build.json && node scripts/reescribir-alias.mjs",
     "start": "node dist/main.js",
-    "dev": "npm run build && node --env-file=.env --enable-source-maps dist/main.js"
+    "dev": "npm run build && node --env-file=.env --enable-source-maps dist/main.js",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:migrate:deploy": "prisma migrate deploy",
+    "db:migrate:reset": "prisma migrate reset --force",
+    "db:seed": "node --env-file=.env dist/scripts/seed.js",
+    "db:docker:migrate": "docker-compose run --rm backend npx prisma migrate deploy",
+    "db:docker:reset": "docker-compose down -v && docker-compose up -d postgres redis"
   },
   "keywords": [],
   "author": "",

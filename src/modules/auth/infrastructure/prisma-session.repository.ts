@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import type { Prisma } from '@prisma/client'
 
+import { clienteDe } from '@/modules/database/transaccion'
 import { PrismaService } from '@/modules/database/prisma.service'
 
 import type {
@@ -74,6 +75,34 @@ export class PrismaSessionRepository implements SessionRepository {
       expiresAt: fila.expiresAt,
       revokedAt: fila.revokedAt,
     }
+  }
+
+  async revocarTodasDeUsuario(userId: string): Promise<void> {
+    const revocar = async (tx: Prisma.TransactionClient): Promise<void> => {
+      // Mismo cerrojo que `rotar`, familia a familia y en orden estable (evita
+      // interbloqueos entre dos revocaciones concurrentes). Una rotación que
+      // tenía el cerrojo al leer esta lista ya aparece aquí porque su sesión
+      // madre seguía viva; el `updateMany` de abajo corre tras su COMMIT y ve
+      // a la hija.
+      const familias = await tx.session.findMany({
+        where: { userId, revokedAt: null },
+        select: { familyId: true },
+        distinct: ['familyId'],
+        orderBy: { familyId: 'asc' },
+      })
+      for (const { familyId } of familias) await this.bloquearFamilia(tx, familyId)
+
+      await tx.session.updateMany({
+        where: { userId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      })
+    }
+
+    // Dentro de una unidad de trabajo se une a ella; fuera, abre la suya: el
+    // cerrojo consultivo sólo existe dentro de una transacción.
+    const actual = clienteDe(this.prisma)
+    if (actual !== this.prisma) return await revocar(actual)
+    await this.prisma.$transaction(revocar)
   }
 
   /**

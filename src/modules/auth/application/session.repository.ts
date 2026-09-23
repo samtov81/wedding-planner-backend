@@ -51,6 +51,13 @@ export interface SessionRepository {
    * modelo.
    */
   buscarSesionVivaDeFamilia(familyId: string): Promise<SesionPersistida | null>
+  /**
+   * Revoca TODAS las sesiones vivas del usuario (todas sus familias). Tras un
+   * cambio de contraseña, cualquier refresh emitido antes deja de servir. Se
+   * serializa con `rotar` de cada familia: ninguna hija de una rotación
+   * concurrente sobrevive. Participa en la unidad de trabajo si hay una.
+   */
+  revocarTodasDeUsuario(userId: string): Promise<void>
 }
 
 export const SESSION_REPOSITORY = Symbol('SESSION_REPOSITORY')

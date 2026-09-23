@@ -66,4 +66,13 @@ export class UserRepositoryEnMemoria implements UserRepository {
     }
     await Promise.resolve()
   }
+
+  async actualizarPassword(id: string, passwordHash: string): Promise<void> {
+    const usuario = this.usuarios.find((u) => u.id === id)
+    if (usuario) {
+      usuario.passwordHash = passwordHash
+      usuario.emailVerifiedAt ??= new Date()
+    }
+    await Promise.resolve()
+  }
 }

@@ -93,4 +93,39 @@ describe('PrismaSessionRepository', () => {
 
     expect(encontrada).toBeNull()
   })
+
+  it('revocarTodasDeUsuario revoca todas las familias vivas del usuario y ninguna ajena', async () => {
+    const ajeno = await prisma.user.create({
+      data: { email: `ajeno-${randomUUID()}@test.com`, passwordHash: 'x', fullName: 'Ajeno' },
+    })
+    const a = await crearSesion({ familyId: randomUUID() })
+    const b = await crearSesion({ familyId: randomUUID() })
+    const deOtro = await prisma.session.create({
+      data: { ...datosNueva(randomUUID()), userId: ajeno.id },
+      select: { id: true },
+    })
+
+    await repo.revocarTodasDeUsuario(userId)
+
+    const filas = await prisma.session.findMany({ where: { id: { in: [a.id, b.id, deOtro.id] } } })
+    const porId = new Map(filas.map((f) => [f.id, f.revokedAt]))
+    expect(porId.get(a.id)).not.toBeNull()
+    expect(porId.get(b.id)).not.toBeNull()
+    expect(porId.get(deOtro.id)).toBeNull()
+  })
+
+  it('revocarTodasDeUsuario no deja viva a la hija de una rotación concurrente', async () => {
+    for (let vuelta = 0; vuelta < VUELTAS; vuelta += 1) {
+      const familyId = randomUUID()
+      const madre = await crearSesion({ familyId })
+
+      await Promise.all([
+        repo.rotar({ sesionARevocar: madre.id, nueva: datosNueva(familyId) }),
+        repo.revocarTodasDeUsuario(userId),
+      ])
+
+      const vivas = await prisma.session.count({ where: { userId, revokedAt: null } })
+      expect(vivas).toBe(0)
+    }
+  })
 })

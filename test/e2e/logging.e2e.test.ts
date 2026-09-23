@@ -174,4 +174,16 @@ describe('Logs de peticiones (pino-http) e2e', () => {
     await request(url).get('/auth/me').set('x-request-id', 'sigue-me-2').expect(401)
     expect(logs.todo()).toContain('"id":"sigue-me-2"')
   })
+
+  it('ni el token de recuperación ni la contraseña nueva llegan al log', async () => {
+    await request(url)
+      .post('/auth/reset-password')
+      .send({ token: 'token-secreto-de-reset', password: 'contraseña-secreta-nueva' })
+      .expect(422)
+
+    const todo = logs.todo()
+    expect(todo).toContain('/auth/reset-password')
+    expect(todo).not.toContain('token-secreto-de-reset')
+    expect(todo).not.toContain('contraseña-secreta-nueva')
+  })
 })

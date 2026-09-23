@@ -53,35 +53,69 @@ describe('RefreshUseCase', () => {
     expect(sesiones.estaRevocado(primero)).toBe(true)
   })
 
-  it('detecta el reuso y revoca LA FAMILIA ENTERA', async () => {
+  // Fix crítico #1 (revisión final de rama): sin ventana de gracia, dos
+  // pestañas con la misma cookie de refresh (o un doble-reload en red lenta)
+  // se trataban como ladrón + víctima y las dos acababan deslogueadas. Este
+  // test ya NO simula reuso genuino instantáneo — eso ahora vive en el test
+  // "pasada la ventana de gracia" de más abajo, con el reloj adelantado de
+  // verdad — sino el caso que la ventana existe para cubrir: la revocación es
+  // recientísima y la sucesora sigue viva.
+  it('presentar el token justo tras rotarlo (sucesora viva y reciente) NO tumba la familia', async () => {
     const primero = await emitirPrimero()
-    const { refreshToken: segundo } = await caso.ejecutar(primero)
+    await caso.ejecutar(primero)
 
-    // Presentar de nuevo el primero sólo puede significar que alguien lo robó:
-    // el cliente legítimo ya tiene el segundo y nunca volvería al anterior.
-    await expect(caso.ejecutar(primero)).rejects.toThrow(RefreshReutilizadoError)
+    // El "ladrón" aquí es en realidad la segunda pestaña del mismo cliente:
+    // llega inmediatamente después de que la primera ya rotó.
+    const resultado = await caso.ejecutar(primero)
 
-    // Y el ladrón no puede seguir usando el que sí es válido.
-    await expect(caso.ejecutar(segundo)).rejects.toThrow()
-    expect(sesiones.familiaRevocada('familia-1')).toBe(true)
+    expect(resultado.accessToken).toMatch(/^eyJ/)
+    expect(resultado.refreshToken).toEqual(expect.any(String))
+    expect(sesiones.familiaRevocada('familia-1')).toBe(false)
   })
 
-  it('dos rotaciones CONCURRENTES del mismo token: una gana, la otra es reuso', async () => {
+  it('pasada la ventana de gracia, presentar un token ya rotado SÍ es reuso y tumba la familia', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date(2026, 0, 1, 12, 0, 0))
+      const primero = await emitirPrimero()
+      const { refreshToken: segundo } = await caso.ejecutar(primero)
+
+      // Once segundos después: fuera de los diez de la ventana de gracia. Ya
+      // no es plausible que sea la pestaña gemela del mismo arranque — es
+      // reuso de verdad.
+      vi.setSystemTime(new Date(2026, 0, 1, 12, 0, 11))
+      await expect(caso.ejecutar(primero)).rejects.toThrow(RefreshReutilizadoError)
+
+      // Y el ladrón no puede seguir usando el que sí era válido: cae la
+      // familia entera, incluida la sesión que de verdad era legítima.
+      await expect(caso.ejecutar(segundo)).rejects.toThrow()
+      expect(sesiones.familiaRevocada('familia-1')).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('dos rotaciones CONCURRENTES del mismo token: las dos obtienen tokens válidos, la familia sigue viva', async () => {
     const primero = await emitirPrimero()
 
     // Las dos peticiones leen la sesión ANTES de que ninguna la revoque, así
     // que ambas ven `revokedAt === null`: la comprobación de reuso por lectura
     // no las distingue. Lo único que puede hacerlo es el compare-and-swap de
-    // `rotar`, que sólo una de las dos puede ganar.
+    // `rotar`, que sólo una de las dos puede ganar — pero perder esa carrera
+    // ya no es, por sí solo, la firma de un robo: dentro de la ventana de
+    // gracia, la perdedora simplemente rota la sucesora una vez más y sigue.
     const resultados = await Promise.allSettled([caso.ejecutar(primero), caso.ejecutar(primero)])
 
-    const rechazados = resultados.filter((r) => r.status === 'rejected')
-    expect(rechazados).toHaveLength(1)
-    expect((rechazados[0] as PromiseRejectedResult).reason).toBeInstanceOf(RefreshReutilizadoError)
+    const cumplidos = resultados.filter(
+      (r): r is PromiseFulfilledResult<{ accessToken: string; refreshToken: string }> =>
+        r.status === 'fulfilled',
+    )
+    expect(cumplidos).toHaveLength(2)
+    const [primeroCumplido, segundoCumplido] = cumplidos
+    expect(primeroCumplido?.value.refreshToken).not.toBe(segundoCumplido?.value.refreshToken)
 
-    // Y perder la carrera no es un incidente menor: es la firma de un token
-    // robado, así que cae la familia entera, incluido el hijo recién emitido.
-    expect(sesiones.familiaRevocada('familia-1')).toBe(true)
+    // Ninguna de las dos pestañas hizo nada malo: la familia sigue en pie.
+    expect(sesiones.familiaRevocada('familia-1')).toBe(false)
   })
 
   it('rechaza un refresh que no existe', async () => {

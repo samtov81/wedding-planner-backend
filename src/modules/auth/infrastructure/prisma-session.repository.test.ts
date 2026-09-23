@@ -66,4 +66,31 @@ describe('PrismaSessionRepository', () => {
       expect(vivas, `vuelta ${vuelta}`).toBe(0)
     }
   })
+
+  // Fix crítico #1 (revisión final de rama): `RefreshUseCase` usa este método
+  // para la ventana de gracia del refresh concurrente — sin él en el
+  // adaptador de Prisma, el doble en memoria (`session.repository.fake.ts`)
+  // sería la única implementación real, y el comportamiento en producción
+  // (contra Postgres de verdad) quedaría sin cubrir.
+  it('buscarSesionVivaDeFamilia devuelve la única sesión no revocada de la familia', async () => {
+    const familyId = randomUUID()
+    const muerta = await crearSesion({ familyId })
+    await prisma.session.update({ where: { id: muerta.id }, data: { revokedAt: new Date() } })
+    const viva = await crearSesion({ familyId })
+
+    const encontrada = await repo.buscarSesionVivaDeFamilia(familyId)
+
+    expect(encontrada?.id).toBe(viva.id)
+    expect(encontrada?.revokedAt).toBeNull()
+  })
+
+  it('buscarSesionVivaDeFamilia devuelve null cuando toda la familia está revocada', async () => {
+    const familyId = randomUUID()
+    const sesion = await crearSesion({ familyId })
+    await prisma.session.update({ where: { id: sesion.id }, data: { revokedAt: new Date() } })
+
+    const encontrada = await repo.buscarSesionVivaDeFamilia(familyId)
+
+    expect(encontrada).toBeNull()
+  })
 })

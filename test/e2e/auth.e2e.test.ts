@@ -145,26 +145,40 @@ describe('Auth e2e', () => {
     expect(cookieRotada).toBeDefined()
     expect(cookieRotada).not.toBe(cookie)
 
-    // El primer refresh token ya fue rotado: presentarlo de nuevo es un reuso
-    // y tiene que caer con 401, no colarse. 401 y no 403 porque un refresh
-    // muerto es un fallo de IDENTIDAD, no de permiso sobre un recurso: es lo
-    // que hace que el cliente dispare "re-autenticar".
-    const reuso = await request(url)
+    // Fix crítico #1 (revisión final de rama): presentar el primer refresh
+    // token INMEDIATAMENTE después de que ya fue rotado ya no cae como reuso.
+    // Es exactamente el caso que la ventana de gracia de `RefreshUseCase`
+    // existe para cubrir — dos pestañas con la misma cookie, o (como aquí)
+    // dos peticiones seguidas contra el mismo token sin que medie tiempo real
+    // entre ellas — así que responde 200 con un par de tokens NUEVO en vez de
+    // tumbar la familia. El reuso genuino, pasada la ventana de diez
+    // segundos, está cubierto a nivel de unidad en
+    // `refresh.use-case.test.ts` con el reloj adelantado de verdad; repetirlo
+    // aquí exigiría un `sleep` real de más de diez segundos sólo para este
+    // test, que no compensa frente a la cobertura que ya existe.
+    const graciaConcurrente = await request(url)
       .post('/auth/refresh')
       .set('Cookie', cookie ?? '')
-      .expect(401)
-    expect((reuso.body as CuerpoError).code).toBe('REFRESH_REUSED')
+      .expect(200)
+    const cuerpoGracia = graciaConcurrente.body as CuerpoLogin
+    expect(cuerpoGracia.accessToken).toBeDefined()
+    const cookieDeGracia = primeraCookie(graciaConcurrente)
+    expect(cookieDeGracia).toBeDefined()
+    // Y la rotación normal SÍ revocó a `cookieRotada`: la ventana de gracia la
+    // avanzó una vez más, no le devolvió el mismo token que ya tenía.
+    expect(cookieDeGracia).not.toBe(cookieRotada)
 
-    // Logout con la cookie vigente (la rotada) revoca la familia entera.
+    // Logout con la cookie vigente (la de la ventana de gracia) revoca la
+    // familia entera.
     await request(url)
       .post('/auth/logout')
-      .set('Cookie', cookieRotada ?? '')
+      .set('Cookie', cookieDeGracia ?? '')
       .expect(200)
 
     // Y ya no se puede refrescar con lo que quedó vivo: la familia está muerta.
     await request(url)
       .post('/auth/refresh')
-      .set('Cookie', cookieRotada ?? '')
+      .set('Cookie', cookieDeGracia ?? '')
       .expect(401)
   })
 

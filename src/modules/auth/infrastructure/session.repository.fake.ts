@@ -54,6 +54,13 @@ export class SessionRepositoryEnMemoria implements SessionRepository {
     return Promise.resolve()
   }
 
+  buscarSesionVivaDeFamilia(familyId: string): Promise<SesionPersistida | null> {
+    const viva = this.sesiones.find((s) => s.familyId === familyId && s.revokedAt === null)
+    if (viva === undefined) return Promise.resolve(null)
+    const { tokenHash: _oculto, ip: _ip, userAgent: _ua, ...publica } = viva
+    return Promise.resolve({ ...publica })
+  }
+
   /** Helper de test: ¿la sesión que emitió este token en claro está revocada? */
   estaRevocado(token: string): boolean {
     const hash = hashToken(token)

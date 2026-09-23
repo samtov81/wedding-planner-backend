@@ -118,6 +118,57 @@ describe('RefreshUseCase', () => {
     expect(sesiones.familiaRevocada('familia-1')).toBe(false)
   })
 
+  // Fix crítico #2 (revisión final de rama): la ventana de gracia comprueba
+  // que la SUCESORA siga viva y sin caducar, pero nunca comprobaba que el
+  // token PRESENTADO no estuviera él mismo caducado. Es un caso estrecho —
+  // exige que el token se haya rotado dentro de los diez segundos previos a
+  // SU PROPIA caducidad— pero es real: si alguien presenta un refresh que
+  // está a la vez revocado (dentro de la ventana) y caducado, hoy se le
+  // canjea igualmente por un refresh nuevo de 30 días, porque
+  // `intentarContinuarComoConcurrente` sólo mira la caducidad de la sucesora,
+  // nunca la del propio token presentado. Un token caducado no debe ser
+  // canjeable NUNCA, sea cual sea el estado de su familia.
+  it('un token revocado dentro de la ventana de gracia pero YA CADUCADO no se canjea', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date(2026, 0, 1, 12, 0, 0))
+
+      // Se crea directamente (sin `emitirPrimero`) para poder darle una
+      // caducidad artificialmente corta: cinco segundos, en vez de los 30
+      // días reales, de forma que pueda quedar en el pasado sin tener que
+      // avanzar el reloj más allá de la ventana de gracia de diez segundos.
+      const { token: primero, hash } = tokens.generarRefresh()
+      await sesiones.crear({
+        userId: 'user-1',
+        tokenHash: hash,
+        familyId: 'familia-2',
+        expiresAt: new Date(Date.now() + 5_000),
+      })
+
+      // Se rota una vez: esto revoca `primero` y crea una sucesora viva con
+      // caducidad de 30 días, exactamente el escenario que activa la
+      // ventana de gracia.
+      await caso.ejecutar(primero)
+
+      // Seis segundos después: la revocación de `primero` sigue dentro de la
+      // ventana de gracia (10s), pero su propia `expiresAt` (a los 5s) ya
+      // quedó atrás. La sucesora, en cambio, sigue viva y muy lejos de
+      // caducar.
+      vi.setSystemTime(new Date(2026, 0, 1, 12, 0, 6))
+
+      await expect(caso.ejecutar(primero)).rejects.toThrow(RefreshInvalidoError)
+
+      // Un token caducado no es, por sí solo, evidencia de robo — el mismo
+      // criterio que ya aplica el camino sin ventana de gracia (test
+      // "rechaza un refresh caducado" más abajo), que tampoco tumba la
+      // familia. Tumbar la familia aquí penalizaría al cliente legítimo por
+      // no haber refrescado a tiempo, no por haber sido robado.
+      expect(sesiones.familiaRevocada('familia-2')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('rechaza un refresh que no existe', async () => {
     await expect(caso.ejecutar('inventado')).rejects.toThrow(RefreshInvalidoError)
   })

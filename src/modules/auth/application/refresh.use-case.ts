@@ -113,6 +113,28 @@ export class RefreshUseCase {
       return null
     }
 
+    // La ventana de gracia sólo perdona una CARRERA (dos pestañas legítimas
+    // llegando casi a la vez), nunca una CADUCIDAD: que la revocación sea
+    // reciente y la sucesora esté viva no dice nada sobre si el token
+    // PRESENTADO seguía siendo válido en el instante en que se presentó. Sin
+    // esta comprobación, un token revocado hace pocos segundos Y caducado
+    // hace pocos segundos (caso estrecho: se rotó justo antes de caducar)
+    // se colaba por la ventana y se canjeaba por un refresh nuevo de 30
+    // días — un crédito que su propia caducidad ya le había negado.
+    //
+    // Se lanza el error AQUÍ, en vez de devolver `null` como en el resto de
+    // esta función, a propósito: devolver `null` hace que el llamante trate
+    // la petición como reuso genuino y tumbe la familia entera. Pero un
+    // token caducado NO es, por sí solo, evidencia de robo — es sólo
+    // evidencia de que ESTA petición en concreto llegó tarde. Tumbar la
+    // familia aquí castigaría al cliente legítimo (la pestaña que sí rotó a
+    // tiempo, y cuya sucesora sigue viva) por culpa de una segunda pestaña
+    // que simplemente tardó demasiado, exactamente el mismo daño colateral
+    // que la ventana de gracia existe para evitar. El criterio es el mismo
+    // que ya aplica el camino sin ventana de gracia más abajo: caducado se
+    // rechaza sin más, sin revocar nada.
+    if (sesion.expiresAt.getTime() <= Date.now()) throw new RefreshInvalidoError()
+
     const viva = await this.sesiones.buscarSesionVivaDeFamilia(sesion.familyId)
     if (viva === null || viva.expiresAt.getTime() <= Date.now()) return null
 

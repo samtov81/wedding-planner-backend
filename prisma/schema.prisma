@@ -55,6 +55,11 @@ enum EmailVerificationStatus {
   CONSUMED
 }
 
+enum PasswordResetStatus {
+  PENDING
+  CONSUMED
+}
+
 model User {
   id              String     @id @default(uuid()) @db.Uuid
   email           String     @unique
@@ -71,6 +76,7 @@ model User {
   vendorProfile               VendorProfile?
   notifications               Notification[]
   emailVerificationTokens     EmailVerificationToken[]
+  passwordResetTokens         PasswordResetToken[]
 
   @@map("users")
 }
@@ -243,6 +249,23 @@ model EmailVerificationToken {
 
   @@index([userId])
   @@map("email_verification_tokens")
+}
+
+/// Tokens de "olvidé mi contraseña". Se guarda el HASH, nunca el token. Un solo
+/// uso (PENDING→CONSUMED por compare-and-swap) y vida corta (30 min por defecto).
+model PasswordResetToken {
+  id         String              @id @default(uuid()) @db.Uuid
+  userId     String              @db.Uuid
+  tokenHash  String              @unique
+  status     PasswordResetStatus @default(PENDING)
+  consumedAt DateTime?
+  expiresAt  DateTime
+  createdAt  DateTime            @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
 }
 
 model Notification {

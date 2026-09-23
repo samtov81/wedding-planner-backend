@@ -1,4 +1,4 @@
-import { ForbiddenError, UnauthorizedError } from '@/shared/domain'
+import { ForbiddenError, UnauthorizedError, UnprocessableError } from '@/shared/domain'
 
 /**
  * Mismo error para "el email no existe" y "la contraseña es incorrecta".
@@ -20,5 +20,16 @@ export class CredencialesInvalidasError extends UnauthorizedError {
 export class EmailNoVerificadoError extends ForbiddenError {
   constructor() {
     super('Verifica tu correo antes de iniciar sesión', 'EMAIL_NOT_VERIFIED')
+  }
+}
+
+/**
+ * Token de recuperación inexistente, caducado o ya usado: el MISMO error para
+ * los tres. Distinguirlos no ayuda al usuario (la salida es la misma: pedir otro
+ * enlace) y sí a quien prueba tokens.
+ */
+export class TokenResetInvalidoError extends UnprocessableError {
+  constructor() {
+    super('El enlace de recuperación no es válido o ha caducado', 'RESET_TOKEN_INVALID')
   }
 }

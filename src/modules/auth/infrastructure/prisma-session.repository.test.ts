@@ -109,8 +109,8 @@ describe('PrismaSessionRepository', () => {
 
     const filas = await prisma.session.findMany({ where: { id: { in: [a.id, b.id, deOtro.id] } } })
     const porId = new Map(filas.map((f) => [f.id, f.revokedAt]))
-    expect(porId.get(a.id)).not.toBeNull()
-    expect(porId.get(b.id)).not.toBeNull()
+    expect(porId.get(a.id)).toBeInstanceOf(Date)
+    expect(porId.get(b.id)).toBeInstanceOf(Date)
     expect(porId.get(deOtro.id)).toBeNull()
   })
 

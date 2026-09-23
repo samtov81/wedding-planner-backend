@@ -38,7 +38,10 @@ const plantillaReset: PasswordResetRenderer = {
 
 const plantillaCambio: PasswordChangedRenderer = {
   render: (datos) =>
-    Promise.resolve({ html: `<p>Changed ${datos.recoverUrl}</p>`, text: `Changed ${datos.recoverUrl}` }),
+    Promise.resolve({
+      html: `<p>Changed ${datos.recoverUrl} ${datos.cambiadoEn.toISOString()}</p>`,
+      text: `Changed ${datos.recoverUrl} ${datos.cambiadoEn.toISOString()}`,
+    }),
 }
 
 const ENV_DE_PRUEBA = { APP_URL: 'https://app.test', PASSWORD_RESET_TTL_MINUTES: 30 } as Env
@@ -193,16 +196,22 @@ describe('EmailProcessor', () => {
       expect(enviado?.idempotencyKey).toBe('password-reset-r-1')
     })
 
-    it('descarta sin reintentar un payload inválido', async () => {
+    it('descarta sin reintentar un payload inválido, con el mensaje concreto', async () => {
       await expect(
         procesador.process(jobFalso('send-password-reset-email', { ...PAYLOAD, token: '' })),
-      ).rejects.toBeInstanceOf(UnrecoverableError)
+      ).rejects.toThrow('Payload de recuperación inválido')
       expect(mail.enviados).toHaveLength(0)
     })
   })
 
   describe('send-password-changed-notice', () => {
-    const PAYLOAD = { userId: 'u-1', tokenId: 'r-1', email: 'ana@test.com', fullName: 'Ana' }
+    const PAYLOAD = {
+      userId: 'u-1',
+      tokenId: 'r-1',
+      email: 'ana@test.com',
+      fullName: 'Ana',
+      cambiadoEn: '2026-09-22T10:00:00.000Z',
+    }
 
     it('manda el aviso con enlace a /forgot-password y clave por token', async () => {
       await procesador.process(jobFalso('send-password-changed-notice', PAYLOAD))
@@ -213,10 +222,28 @@ describe('EmailProcessor', () => {
       expect(enviado?.idempotencyKey).toBe('password-changed-r-1')
     })
 
-    it('descarta sin reintentar un payload inválido', async () => {
+    it('pasa `cambiadoEn` del payload al renderer, no la hora de proceso', async () => {
+      await procesador.process(jobFalso('send-password-changed-notice', PAYLOAD))
+
+      // La plantilla local de este test compone la fecha con `toISOString()`
+      // (ver arriba): si el worker usara `new Date()` en vez del payload, esta
+      // hora fija de 2026 nunca aparecería en el correo.
+      expect(mail.enviados[0]?.html).toContain('2026-09-22T10:00:00.000Z')
+    })
+
+    it('descarta sin reintentar un payload inválido, con el mensaje concreto', async () => {
       await expect(
         procesador.process(jobFalso('send-password-changed-notice', { userId: 'u-1' })),
+      ).rejects.toThrow('Payload de aviso de cambio inválido')
+    })
+
+    it('un payload sin `cambiadoEn` es UnrecoverableError', async () => {
+      const { cambiadoEn: _sin, ...sinCambiadoEn } = PAYLOAD
+
+      await expect(
+        procesador.process(jobFalso('send-password-changed-notice', sinCambiadoEn)),
       ).rejects.toBeInstanceOf(UnrecoverableError)
+      expect(mail.enviados).toHaveLength(0)
     })
   })
 

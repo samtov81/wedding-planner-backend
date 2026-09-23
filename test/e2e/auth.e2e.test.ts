@@ -483,14 +483,23 @@ describe('Auth e2e', () => {
         .expect(200)
     })
 
-    it('forgot-password responde lo MISMO exista la cuenta o no', async () => {
+    it('forgot-password responde lo MISMO exista la cuenta o no, verificada o pendiente', async () => {
       await cuentaConSesion('existe-reset@test.com', 'contraseña-vieja-1')
+      await request(url)
+        .post('/auth/register')
+        .send({ email: 'sin-verificar-reset@test.com', password: 'contraseña-vieja-1', fullName: 'Reset' })
+        .expect(201)
 
       const existe = await request(url).post('/auth/forgot-password').send({ email: 'existe-reset@test.com' })
+      const sinVerificar = await request(url)
+        .post('/auth/forgot-password')
+        .send({ email: 'sin-verificar-reset@test.com' })
       const noExiste = await request(url).post('/auth/forgot-password').send({ email: 'nadie-reset@test.com' })
 
       expect(existe.status).toBe(202)
+      expect(sinVerificar.status).toBe(202)
       expect(noExiste.status).toBe(202)
+      expect(sinVerificar.body).toEqual(existe.body)
       expect(noExiste.body).toEqual(existe.body)
     })
 

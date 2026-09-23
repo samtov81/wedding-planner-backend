@@ -63,8 +63,16 @@ export class ForgotPasswordUseCase {
       'email',
       'send-password-reset-email',
       { userId: usuario.id, tokenId, email: usuario.email, fullName: usuario.fullName, token: tokenEnClaro },
-      // removeOnComplete obligatorio: el payload lleva el token en claro.
-      { jobId: `password-reset-${tokenId}`, removeOnComplete: true },
+      {
+        jobId: `password-reset-${tokenId}`,
+        // removeOnComplete obligatorio: el payload lleva el token en claro.
+        removeOnComplete: true,
+        // NO es una cota dura (ver el docblock de `removeOnFailAfterMs` en
+        // `queue.port.ts`): el control real de la exposición del token es su
+        // propia caducidad, no este recorte. Se fija al mismo TTL igualmente,
+        // para que un job fallido no sobreviva en Redis más que el token.
+        removeOnFailAfterMs: this.env.PASSWORD_RESET_TTL_MINUTES * 60_000,
+      },
     )
   }
 }

@@ -65,8 +65,19 @@ describe('ResetPasswordUseCase', () => {
     expect(cola.encolados).toHaveLength(1)
     const aviso = cola.encolados[0]
     expect(aviso?.nombre).toBe('send-password-changed-notice')
-    expect(aviso?.datos).toEqual({ userId: 'u-1', tokenId: 'reset-1', email: 'ana@test.com', fullName: 'Ana' })
+    const datos = aviso?.datos as { userId: string; tokenId: string; email: string; fullName: string; cambiadoEn: string }
+    expect(datos).toEqual({
+      userId: 'u-1',
+      tokenId: 'reset-1',
+      email: 'ana@test.com',
+      fullName: 'Ana',
+      cambiadoEn: expect.any(String) as string,
+    })
+    // ISO, no `new Date()` en el worker: la hora es la de la transacción, no la
+    // de cuando la cola llegue a procesar el job.
+    expect(new Date(datos.cambiadoEn).toISOString()).toBe(datos.cambiadoEn)
     expect(aviso?.jobId).toBe('password-changed-reset-1')
+    expect(aviso?.opciones.removeOnComplete).toBe(true)
   })
 
   it('el mismo token no sirve dos veces', async () => {

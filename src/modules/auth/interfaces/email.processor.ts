@@ -38,6 +38,9 @@ const payloadCambioSchema = z.object({
   tokenId: z.string().min(1),
   email: z.string().email(),
   fullName: z.string().min(1),
+  // Hora de la transacción que cambió la contraseña, no de cuando este worker
+  // la procese (ver `ResetPasswordUseCase.avisarDelCambio`).
+  cambiadoEn: z.iso.datetime(),
 })
 
 @Processor('email')
@@ -132,11 +135,12 @@ export class EmailProcessor extends WorkerHost {
     const leido = payloadCambioSchema.safeParse(job.data)
     if (!leido.success) throw new UnrecoverableError('Payload de aviso de cambio inválido')
 
-    const { email, fullName, userId, tokenId } = leido.data
+    const { email, fullName, userId, tokenId, cambiadoEn } = leido.data
     const { html, text } = await this.plantillaCambio.render({
       fullName,
-      // Momento de envío, no de cambio: la cola lo procesa en segundos.
-      cambiadoEn: new Date(),
+      // Momento del cambio (payload), no el del proceso: la cola puede tardar
+      // segundos en llegar a este job.
+      cambiadoEn: new Date(cambiadoEn),
       recoverUrl: `${this.env.APP_URL}/forgot-password`,
     })
 

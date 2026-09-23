@@ -46,8 +46,10 @@ export class ResetPasswordUseCase {
   async ejecutar(datos: { token: string; password: string }): Promise<void> {
     const passwordHash = await this.hasher.hash(datos.password)
 
+    let cambiadoEn = ''
     const consumido = await this.uow.ejecutar(async () => {
       const ahora = new Date()
+      cambiadoEn = ahora.toISOString()
       const token = await this.tokens.consumirPorHash(hashToken(datos.token), ahora)
       // eslint-disable-next-line security/detect-possible-timing-attacks -- no se compara un secreto: sólo se mira si `consumirPorHash` devolvió fila o no
       if (token === null) throw new TokenResetInvalidoError()
@@ -58,21 +60,24 @@ export class ResetPasswordUseCase {
       return token
     })
 
-    await this.avisarDelCambio(consumido.userId, consumido.tokenId)
+    await this.avisarDelCambio(consumido.userId, consumido.tokenId, cambiadoEn)
   }
 
   /**
    * Fuera de la transacción y sin propagar el error: la contraseña YA cambió;
    * contestar 500 haría que el usuario reintentase con un token ya gastado.
    */
-  private async avisarDelCambio(userId: string, tokenId: string): Promise<void> {
+  private async avisarDelCambio(userId: string, tokenId: string, cambiadoEn: string): Promise<void> {
     try {
       const usuario = await this.usuarios.findById(userId)
       if (usuario === null) return
       await this.cola.enqueue(
         'email',
         'send-password-changed-notice',
-        { userId, tokenId, email: usuario.email, fullName: usuario.fullName },
+        // `cambiadoEn` es la hora de la transacción, no la de cuando el worker
+        // procese el job: la cola puede tardar segundos, y el aviso debe decir
+        // cuándo cambió la contraseña, no cuándo salió el correo.
+        { userId, tokenId, email: usuario.email, fullName: usuario.fullName, cambiadoEn },
         { jobId: `password-changed-${tokenId}`, removeOnComplete: true },
       )
     } catch (error) {

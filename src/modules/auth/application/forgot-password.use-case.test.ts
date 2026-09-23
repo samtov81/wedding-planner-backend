@@ -49,6 +49,9 @@ describe('ForgotPasswordUseCase', () => {
     expect(datos.userId).toBe('u-verif')
     expect(encolado?.jobId).toBe(`password-reset-${datos.tokenId}`)
     expect(encolado?.opciones.removeOnComplete).toBe(true)
+    // No es cota dura (ver el docblock de `removeOnFailAfterMs`): el control
+    // real es la caducidad del token. Aquí sólo se fija al valor del TTL.
+    expect(encolado?.opciones.removeOnFailAfterMs).toBe(30 * 60_000)
     // Lo que se guardó es el hash del token que viaja en el correo.
     expect(await tokens.consumirPorHash(hashToken(datos.token), new Date())).not.toBeNull()
   })

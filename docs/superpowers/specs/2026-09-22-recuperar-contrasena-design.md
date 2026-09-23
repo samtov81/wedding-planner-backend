@@ -68,8 +68,8 @@ Puerto `PasswordResetTokenRepository` (`auth/application/`):
 ```ts
 crear(datos: { userId; tokenHash; expiresAt }): Promise<{ id: string }>
 caducarVigentesDe(userId: string, ahora: Date): Promise<void>
-/** CAS PENDING→CONSUMED si expiresAt > ahora. Devuelve el userId o null. */
-consumirPorHash(tokenHash: string, ahora: Date): Promise<{ userId: string } | null>
+/** CAS PENDING→CONSUMED si expiresAt > ahora. Devuelve userId y tokenId, o null. */
+consumirPorHash(tokenHash: string, ahora: Date): Promise<{ userId: string; tokenId: string } | null>
 ```
 
 A diferencia de la verificación, aquí no hay resultado `YA_CONSUMIDO` amigable:

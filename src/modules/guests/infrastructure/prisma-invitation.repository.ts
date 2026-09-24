@@ -157,9 +157,7 @@ function aInvitacion(fila: FilaCompleta): InvitacionCompleta {
     event: {
       id: fila.guest.event.id,
       name: fila.guest.event.name,
-      // Tarea 2 lo vuelve nullable de verdad; hasta entonces un evento sin
-      // fecha no puede tener invitaciones porque solo existían eventos ACTIVE.
-      weddingDate: fila.guest.event.weddingDate ?? new Date(0),
+      weddingDate: fila.guest.event.weddingDate,
       rsvpDeadlineDays: fila.guest.event.rsvpDeadlineDays,
     },
   }

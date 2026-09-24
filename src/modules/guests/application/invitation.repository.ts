@@ -17,7 +17,7 @@ export interface InvitacionCompleta {
   resendMessageId: string | null
   guest: { id: string; eventId: string; name: string; email: string | null }
   /** `rsvpDeadlineDays` fija el cierre del RSVP (`cierreRsvp`, bloque A §2). */
-  event: { id: string; name: string; weddingDate: Date; rsvpDeadlineDays: number }
+  event: { id: string; name: string; weddingDate: Date | null; rsvpDeadlineDays: number }
 }
 
 export interface DatosCrearInvitacion {

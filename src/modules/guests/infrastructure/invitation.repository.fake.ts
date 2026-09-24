@@ -110,9 +110,9 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
         // Relativa a hoy: con una fecha fija, todo test que respondiera sobre el
         // evento por defecto empezaría a dar RSVP_CLOSED al pasar su cierre.
         weddingDate:
-          datos.event?.weddingDate ??
-          previo?.event.weddingDate ??
-          new Date(Date.now() + 180 * 86_400_000),
+          datos.event?.weddingDate !== undefined
+            ? datos.event.weddingDate
+            : (previo?.event.weddingDate ?? new Date(Date.now() + 180 * 86_400_000)),
         // El `@default(14)` de la columna. Literal y no la constante de
         // `events/domain`: un módulo no importa el dominio de otro.
         rsvpDeadlineDays: datos.event?.rsvpDeadlineDays ?? previo?.event.rsvpDeadlineDays ?? 14,

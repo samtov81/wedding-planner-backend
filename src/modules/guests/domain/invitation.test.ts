@@ -26,11 +26,11 @@ describe('plazo del RSVP', () => {
   const evento = { weddingDate: new Date('2027-06-20T00:00:00Z'), rsvpDeadlineDays: 14 }
 
   it('cierra rsvpDeadlineDays días antes de la boda', () => {
-    expect(cierreRsvp(evento).toISOString()).toBe('2027-06-06T00:00:00.000Z')
+    expect(cierreRsvp(evento)?.toISOString()).toBe('2027-06-06T00:00:00.000Z')
   })
 
   it('con 0 días cierra el mismo día de la boda', () => {
-    expect(cierreRsvp({ ...evento, rsvpDeadlineDays: 0 }).toISOString()).toBe(
+    expect(cierreRsvp({ ...evento, rsvpDeadlineDays: 0 })?.toISOString()).toBe(
       '2027-06-20T00:00:00.000Z',
     )
   })
@@ -61,5 +61,16 @@ describe('plazo del RSVP', () => {
     // Es lo que hace efectivo el ruling C18: caducar pone `expiresAt = ahora`.
     const ahora = new Date('2027-01-02T00:00:00Z')
     expect(admiteLectura({ expiresAt: ahora }, ahora)).toBe(false)
+  })
+
+  it('sin fecha de boda no hay cierre de RSVP', () => {
+    expect(cierreRsvp({ weddingDate: null, rsvpDeadlineDays: 14 })).toBeNull()
+  })
+
+  it('sin fecha de boda se puede responder mientras el token viva', () => {
+    const inv = { expiresAt: new Date('2027-01-01T00:00:00Z') }
+    const evento = { weddingDate: null, rsvpDeadlineDays: 14 }
+    expect(admiteRespuesta(inv, evento, new Date('2026-12-31T00:00:00Z'))).toBe(true)
+    expect(admiteRespuesta(inv, evento, new Date('2027-01-02T00:00:00Z'))).toBe(false)
   })
 })

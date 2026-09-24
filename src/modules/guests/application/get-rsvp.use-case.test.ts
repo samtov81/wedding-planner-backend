@@ -44,7 +44,11 @@ describe('GetRsvpUseCase', () => {
   }
 
   function prepararInvitacion(
-    parcial: { expiresAt?: Date; status?: InvitationStatus; weddingDate?: Date } = {},
+    parcial: {
+      expiresAt?: Date
+      status?: InvitationStatus
+      weddingDate?: Date | null
+    } = {},
   ): string {
     secuencia += 1
     const { token, hash } = generarTokenInvitacion()
@@ -54,7 +58,10 @@ describe('GetRsvpUseCase', () => {
       expiresAt: parcial.expiresAt ?? new Date(Date.now() + 86_400_000),
       status: parcial.status ?? 'DELIVERED',
       guest: { id: 'g1', eventId: 'ev-1', name: 'Ana Invitada', email: 'ana@test.com' },
-      event: { ...evento, weddingDate: parcial.weddingDate ?? evento.weddingDate },
+      event: {
+        ...evento,
+        weddingDate: parcial.weddingDate !== undefined ? parcial.weddingDate : evento.weddingDate,
+      },
     })
     return token
   }
@@ -100,6 +107,15 @@ describe('GetRsvpUseCase', () => {
     })
   })
 
+  it('con el evento sin fecha devuelve fecha y cierre nulos', async () => {
+    // Mismo arrange que "devuelve EXACTAMENTE la vista pública", sólo que el
+    // evento (un DRAFT sin fecha) no tiene `weddingDate`.
+    const vista = await caso.ejecutar(prepararInvitacion({ weddingDate: null }))
+
+    expect(vista.weddingDate).toBeNull()
+    expect(vista.rsvpClosesAt).toBeNull()
+  })
+
   it('refleja el estado ACTUAL del invitado, no el de cuando se envió la invitación', async () => {
     const token = prepararInvitacion()
     await invitados.actualizar('ev-1', 'g1', { rsvp: 'CONFIRMED', dietary: null })
@@ -118,7 +134,7 @@ describe('GetRsvpUseCase', () => {
 
     expect(vista.rsvp).toBe('CONFIRMED')
     expect(vista.dietary).toBe('Vegan')
-    expect(vista.rsvpClosesAt).toBe(cierreRsvp(evento).toISOString())
+    expect(vista.rsvpClosesAt).toBe(cierreRsvp(evento)?.toISOString())
   })
 
   it('pasado el cierre se sigue pudiendo leer mientras el token no caduque', async () => {
@@ -130,7 +146,8 @@ describe('GetRsvpUseCase', () => {
     const vista = await caso.ejecutar(token)
 
     expect(vista.rsvp).toBe('PENDING')
-    expect(Date.parse(vista.rsvpClosesAt)).toBeLessThan(Date.now())
+    expect(vista.rsvpClosesAt).not.toBeNull()
+    expect(Date.parse(vista.rsvpClosesAt as string)).toBeLessThan(Date.now())
   })
 
   it('devuelve el MISMO error para token inexistente, caducado y caducado por el worker', async () => {

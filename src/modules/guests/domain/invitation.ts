@@ -68,8 +68,16 @@ export function estadosQuePuedenAvanzarA(destino: InvitationStatus): InvitationS
   return [...RANGO].filter(([, rango]) => rango < tope).map(([estado]) => estado)
 }
 
-/** Momento a partir del cual el invitado ya no puede cambiar su respuesta. */
-export function cierreRsvp(evento: { weddingDate: Date; rsvpDeadlineDays: number }): Date {
+/**
+ * Momento a partir del cual el invitado ya no puede cambiar su respuesta.
+ * `null` cuando el evento es un borrador sin fecha: no hay nada contra lo que
+ * contar los días, así que el RSVP queda abierto mientras el token viva.
+ */
+export function cierreRsvp(evento: {
+  weddingDate: Date | null
+  rsvpDeadlineDays: number
+}): Date | null {
+  if (evento.weddingDate === null) return null
   return new Date(evento.weddingDate.getTime() - evento.rsvpDeadlineDays * 86_400_000)
 }
 
@@ -90,8 +98,9 @@ export function admiteLectura(invitacion: { expiresAt: Date }, ahora: Date): boo
  */
 export function admiteRespuesta(
   invitacion: { expiresAt: Date },
-  evento: { weddingDate: Date; rsvpDeadlineDays: number },
+  evento: { weddingDate: Date | null; rsvpDeadlineDays: number },
   ahora: Date,
 ): boolean {
-  return admiteLectura(invitacion, ahora) && ahora.getTime() < cierreRsvp(evento).getTime()
+  const cierre = cierreRsvp(evento)
+  return admiteLectura(invitacion, ahora) && (cierre === null || ahora.getTime() < cierre.getTime())
 }

@@ -16,15 +16,16 @@ import { INVITATION_REPOSITORY, type InvitationRepository } from './invitation.r
 export interface VistaPublicaRsvp {
   guestName: string
   eventName: string
-  /** ISO 8601, como el resto de fechas de la API. */
-  weddingDate: string
+  /** ISO 8601, como el resto de fechas de la API. `null` en un borrador sin fecha. */
+  weddingDate: string | null
   rsvp: RsvpStatus
   dietary: string | null
   /**
    * ISO 8601. Desde este instante el POST responde `RSVP_CLOSED`; antes, el
-   * invitado puede cambiar su respuesta (bloque A §2).
+   * invitado puede cambiar su respuesta (bloque A §2). `null` cuando el evento
+   * no tiene fecha: sin ella no hay cierre y el RSVP queda abierto.
    */
-  rsvpClosesAt: string
+  rsvpClosesAt: string | null
 }
 
 @Injectable()
@@ -58,10 +59,10 @@ export class GetRsvpUseCase {
     return {
       guestName: invitado.name,
       eventName: invitacion.event.name,
-      weddingDate: invitacion.event.weddingDate.toISOString(),
+      weddingDate: invitacion.event.weddingDate?.toISOString() ?? null,
       rsvp: invitado.rsvp,
       dietary: invitado.dietary,
-      rsvpClosesAt: cierreRsvp(invitacion.event).toISOString(),
+      rsvpClosesAt: cierreRsvp(invitacion.event)?.toISOString() ?? null,
     }
   }
 }

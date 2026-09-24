@@ -271,6 +271,8 @@ function esIrrecuperable(error: unknown): boolean {
 }
 
 /** Fecha legible en el correo. UTC explícito: el worker no está en la zona de la boda. */
-function formatearFecha(fecha: Date): string {
+function formatearFecha(fecha: Date | null): string {
+  // Borrador sin fecha: el correo se envía igual; la plantilla dice "on {weddingDate}".
+  if (fecha === null) return 'a date to be confirmed'
   return fecha.toLocaleDateString('en-US', { dateStyle: 'long', timeZone: 'UTC' })
 }

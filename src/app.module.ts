@@ -13,6 +13,7 @@ import { HealthModule } from '@/modules/health/health.module'
 import { MailModule } from '@/modules/mail/mail.module'
 import { NotificationsModule } from '@/modules/notifications/notifications.module'
 import { QueueModule } from '@/modules/queue/queue.module'
+import { ScheduleModule } from '@/modules/schedule/schedule.module'
 import { UsersModule } from '@/modules/users/users.module'
 import { VendorsModule } from '@/modules/vendors/vendors.module'
 import { crearLimitadores } from '@/shared/http/limitadores'
@@ -51,6 +52,7 @@ import { RegistroModule } from '@/shared/logging/registro.module'
     AuthModule,
     EventsModule,
     VendorsModule,
+    ScheduleModule,
     GuestsModule,
     NotificationsModule,
     HealthModule,

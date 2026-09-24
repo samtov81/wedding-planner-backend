@@ -1,5 +1,7 @@
 import { ConflictError, NotFoundError, UnprocessableError } from '@/shared/domain'
 
+import type { CampoPublicable } from './publicacion'
+
 /**
  * El MISMO error que produce el guard para un evento ajeno. Se comparte el
  * código y el mensaje a propósito: si el 404 de "no es tuyo" se distinguiera
@@ -35,5 +37,15 @@ export class YaEsMiembroError extends ConflictError {
       'Esa persona ya es miembro de este evento o tiene una invitación pendiente',
       'ALREADY_MEMBER',
     )
+  }
+}
+
+/**
+ * 422 con la lista de lo que falta: la UI la pinta en el paso Revisión (al
+ * publicar) o en el campo que se intentó vaciar (al editar un ACTIVE).
+ */
+export class EventoIncompletoError extends UnprocessableError {
+  constructor(faltantes: CampoPublicable[]) {
+    super('Faltan datos obligatorios para publicar el evento', 'EVENT_INCOMPLETE', { faltantes })
   }
 }

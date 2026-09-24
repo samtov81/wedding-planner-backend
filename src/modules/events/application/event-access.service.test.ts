@@ -112,4 +112,20 @@ describe('EventAccessService', () => {
   it('un desconocido no obtiene acceso', async () => {
     expect(await servicio.resolve('nadie', 'USER', 'ev-1')).toEqual({ kind: 'none' })
   })
+
+  it('un vendor BOOKED en un evento DRAFT no tiene acceso', async () => {
+    const EVENTO = '11111111-1111-4111-8111-111111111111'
+    const repoDraft = new EventRepositoryEnMemoria()
+    repoDraft.eventos.push({ id: EVENTO, ownerId: 'pareja', status: 'DRAFT' })
+    repoDraft.perfiles.push({ id: 'perfil-1', userId: 'vendor-1' })
+    repoDraft.eventVendors.push({
+      id: 'ev-1',
+      eventId: EVENTO,
+      vendorProfileId: 'perfil-1',
+      status: 'BOOKED',
+    })
+
+    expect(await repoDraft.buscarContratacionReservada(EVENTO, 'vendor-1')).toBeNull()
+    expect(await repoDraft.listarAccesiblesPor('vendor-1')).toEqual([])
+  })
 })

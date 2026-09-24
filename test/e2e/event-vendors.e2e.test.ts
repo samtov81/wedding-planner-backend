@@ -287,6 +287,8 @@ describe('Vendors por evento e2e', () => {
       'Fotógrafo Propio',
     )
     const eventoPropio = await crearEvento(ana.accessToken, 'Boda para vendor BOOKED')
+    // Un vendor no ve un DRAFT: se activa para probar la autorización real.
+    await prisma.event.update({ where: { id: eventoPropio }, data: { status: 'ACTIVE' } })
 
     const perfil = await prisma.vendorProfile.create({
       data: {

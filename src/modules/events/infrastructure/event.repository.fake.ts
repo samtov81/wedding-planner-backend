@@ -1,18 +1,27 @@
 import { randomUUID } from 'node:crypto'
 
+import type { Ubicacion } from '@/shared/domain'
+
 import type {
+  CambiosEvento,
   DatosInvitacion,
   DatosNuevoEvento,
   EventRepository,
   MembresiaPersistida,
 } from '../application/event.repository'
-import { DIAS_DE_CIERRE_POR_DEFECTO, type Event } from '../domain/event'
+import {
+  DIAS_DE_CIERRE_POR_DEFECTO,
+  type ConteosEvento,
+  type Event,
+  type EventStatus,
+} from '../domain/event'
 import {
   CONTRATACION_CON_ACCESO,
   MEMBRESIA_CON_ACCESO,
   type EventRole,
   type MembershipStatus,
 } from '../domain/event-access'
+import { EventoNoEncontradoError } from '../domain/event-errors'
 
 /**
  * Un evento tal como lo siembra un test: basta `id` y `ownerId`. El resto de
@@ -23,10 +32,16 @@ export interface EventoEnMemoria {
   id: string
   ownerId: string
   name?: string
-  weddingDate?: Date
+  /** Sembrado a mano = evento ya publicado; `crearConMembresia` crea DRAFT. */
+  status?: EventStatus
+  weddingDate?: Date | null
   timezone?: string
-  venueLocation?: string | null
+  currency?: string
+  totalBudget?: string | null
+  venue?: Ubicacion | null
   rsvpDeadlineDays?: number
+  conteos?: ConteosEvento
+  createdAt?: Date
 }
 
 export interface MembresiaEnMemoria {
@@ -60,8 +75,9 @@ export interface AuditoriaEnMemoria {
  * Doble en memoria de `EventRepository` (ruling H1: el doble vive junto al
  * puerto que implementa). Replica las DOS reglas que de verdad deciden el
  * acceso: sólo `ACTIVE` cuenta como membresía y sólo `BOOKED` con ficha
- * enlazada cuenta como contratación. Si el doble fuera más permisivo que
- * Prisma, los tests del servicio pasarían en verde mintiendo.
+ * enlazada en un evento `ACTIVE` cuenta como contratación. Si el doble fuera
+ * más permisivo que Prisma, los tests del servicio pasarían en verde
+ * mintiendo.
  */
 export class EventRepositoryEnMemoria implements EventRepository {
   readonly eventos: EventoEnMemoria[] = []
@@ -85,7 +101,8 @@ export class EventRepositoryEnMemoria implements EventRepository {
       (v) =>
         v.eventId === eventId &&
         v.vendorProfileId === perfil.id &&
-        v.status === CONTRATACION_CON_ACCESO,
+        v.status === CONTRATACION_CON_ACCESO &&
+        this.estaActivo(v.eventId),
     )
     return Promise.resolve(contratacion === undefined ? null : { id: contratacion.id })
   }
@@ -95,9 +112,15 @@ export class EventRepositoryEnMemoria implements EventRepository {
       id: randomUUID(),
       ownerId: datos.ownerId,
       name: datos.name,
-      weddingDate: datos.weddingDate,
-      // El `@default(14)` de la columna, aplicado igual que Postgres.
+      status: 'DRAFT',
+      weddingDate: datos.weddingDate ?? null,
+      timezone: datos.timezone ?? 'UTC',
+      currency: datos.currency ?? 'USD',
+      totalBudget: datos.totalBudget ?? null,
+      venue: datos.venue ?? null,
       rsvpDeadlineDays: datos.rsvpDeadlineDays ?? DIAS_DE_CIERRE_POR_DEFECTO,
+      conteos: { scheduleItems: 0, vendors: 0 },
+      createdAt: new Date(),
     }
     this.eventos.push(evento)
     this.membresias.push({
@@ -107,6 +130,17 @@ export class EventRepositoryEnMemoria implements EventRepository {
       role: 'COUPLE',
       status: MEMBRESIA_CON_ACCESO,
     })
+    return Promise.resolve(this.materializar(evento))
+  }
+
+  actualizar(eventId: string, cambios: CambiosEvento): Promise<Event> {
+    const evento = this.eventos.find((e) => e.id === eventId)
+    if (evento === undefined) return Promise.reject(new EventoNoEncontradoError())
+    // `undefined` = no tocar; `null` = borrar. Igual que el `updateMany` de Prisma.
+    for (const clave of Object.keys(cambios) as Array<keyof CambiosEvento>) {
+      const valor = cambios[clave]
+      if (valor !== undefined) Object.assign(evento, { [clave]: valor })
+    }
     return Promise.resolve(this.materializar(evento))
   }
 
@@ -120,7 +154,12 @@ export class EventRepositoryEnMemoria implements EventRepository {
       perfil === undefined
         ? []
         : this.eventVendors
-            .filter((v) => v.vendorProfileId === perfil.id && v.status === CONTRATACION_CON_ACCESO)
+            .filter(
+              (v) =>
+                v.vendorProfileId === perfil.id &&
+                v.status === CONTRATACION_CON_ACCESO &&
+                this.estaActivo(v.eventId),
+            )
             .map((v) => v.eventId)
 
     const ids = new Set([...porMembresia, ...porContratacion])
@@ -172,19 +211,30 @@ export class EventRepositoryEnMemoria implements EventRepository {
     return Promise.resolve({ id: membresia.id, role: membresia.role, status: 'INVITED' })
   }
 
+  private estaActivo(eventId: string): boolean {
+    return (this.eventos.find((e) => e.id === eventId)?.status ?? 'ACTIVE') === 'ACTIVE'
+  }
+
   /** Rellena las columnas que un test no siembra, para devolver un `Event`. */
   private materializar(evento: EventoEnMemoria): Event {
     return {
       id: evento.id,
       name: evento.name ?? 'Evento de prueba',
+      status: evento.status ?? 'ACTIVE',
       // Relativa a hoy: con una fecha fija, este evento por defecto habría
       // quedado con su RSVP cerrado en cuanto pasara ese día.
-      weddingDate: evento.weddingDate ?? new Date(Date.now() + 180 * 86_400_000),
+      weddingDate:
+        evento.weddingDate === undefined
+          ? new Date(Date.now() + 180 * 86_400_000)
+          : evento.weddingDate,
       timezone: evento.timezone ?? 'UTC',
-      venueLocation: evento.venueLocation ?? null,
+      currency: evento.currency ?? 'USD',
+      totalBudget: evento.totalBudget ?? null,
+      venue: evento.venue ?? null,
       rsvpDeadlineDays: evento.rsvpDeadlineDays ?? DIAS_DE_CIERRE_POR_DEFECTO,
       ownerId: evento.ownerId,
-      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+      conteos: evento.conteos ?? { scheduleItems: 0, vendors: 0 },
+      createdAt: evento.createdAt ?? new Date('2026-01-01T00:00:00.000Z'),
       updatedAt: new Date('2026-01-01T00:00:00.000Z'),
     }
   }

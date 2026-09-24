@@ -621,6 +621,8 @@ describe('Invitados e2e', () => {
     const anaPropia = await registrarYEntrar(anaEmail, 'Ana Propia')
     const fotografoPropio = await registrarYEntrar(fotografoEmail, 'Fotógrafo Propio')
     const bodaPropia = await crearEvento(anaPropia.accessToken, 'Boda propia')
+    // Un vendor no ve un DRAFT: se activa para probar la autorización real.
+    await prisma.event.update({ where: { id: bodaPropia }, data: { status: 'ACTIVE' } })
 
     const victima = (
       await request(url)

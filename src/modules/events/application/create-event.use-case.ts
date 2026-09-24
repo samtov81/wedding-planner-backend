@@ -1,18 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common'
 
 import type { Event } from '../domain/event'
-import { EVENT_REPOSITORY, type EventRepository } from './event.repository'
+import { EVENT_REPOSITORY, type DatosNuevoEvento, type EventRepository } from './event.repository'
 
-export interface DatosCrearEvento {
-  name: string
-  weddingDate: Date
-  ownerId: string
-  /**
-   * Ausente = default de la columna. Admite `undefined` explícito porque es lo
-   * que el `.optional()` de Zod entrega desde el borde HTTP.
-   */
-  rsvpDeadlineDays?: number | undefined
-}
+/** Se reexporta el tipo del puerto: el caso de uso no añade nada propio. */
+export type DatosCrearEvento = DatosNuevoEvento
 
 @Injectable()
 export class CreateEventUseCase {

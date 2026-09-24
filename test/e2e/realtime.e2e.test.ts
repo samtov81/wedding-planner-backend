@@ -177,6 +177,9 @@ describe('Tiempo real e2e', () => {
     const evento = await prisma.event.create({
       data: {
         name: 'Boda de Ana',
+        // ACTIVE: este fichero prueba, entre otras cosas, que un vendor
+        // BOOKED entra; un DRAFT nunca se lo enseña (regla probada aparte).
+        status: 'ACTIVE',
         // Relativa a hoy: el POST del RSVP exige `ahora < cierre` (bloque A §2),
         // y una fecha fija dejaría los 204 de este fichero en 422 al pasarla.
         weddingDate: new Date(Date.now() + 180 * 86_400_000),

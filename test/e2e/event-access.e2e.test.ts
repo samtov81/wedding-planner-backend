@@ -321,6 +321,9 @@ describe('Acceso a eventos e2e', () => {
   })
 
   it('un vendor sólo entra cuando la contratación está BOOKED', async () => {
+    // Un vendor nunca ve un DRAFT (regla probada aparte); aquí se cubre la
+    // otra mitad, BOOKED vs SHORTLISTED, así que el evento se activa primero.
+    await prisma.event.update({ where: { id: eventoDeAna }, data: { status: 'ACTIVE' } })
     const perfil = await prisma.vendorProfile.create({
       data: { userId: extrano.id, businessName: 'Lumière', category: 'Catering' },
     })

@@ -12,6 +12,7 @@ import { CreateEventUseCase } from '../application/create-event.use-case'
 import { EVENT_REPOSITORY, type EventRepository } from '../application/event.repository'
 import { InviteMemberUseCase } from '../application/invite-member.use-case'
 import { ListEventsUseCase } from '../application/list-events.use-case'
+import type { Event } from '../domain/event'
 import type { EventAccess } from '../domain/event-access'
 import { EventoNoEncontradoError } from '../domain/event-errors'
 import { EventAccessOf } from './event-access-of.decorator'
@@ -19,12 +20,19 @@ import { EventAccessGuard } from './event-access.guard'
 import { createEventSchema, inviteMemberSchema } from './events.dto'
 import { RequireEventAccess } from './require-event-access.decorator'
 
+/**
+ * Forma provisional: la definitiva (con `conteos`, `status`, etc. expuestos
+ * al detalle que necesita el wizard) llega en la Tarea 8.
+ */
 interface EventoRespuesta {
   id: string
   name: string
+  status: Event['status']
   weddingDate: string | null
   timezone: string
-  venueLocation: string | null
+  currency: string
+  totalBudget: string | null
+  venue: Event['venue']
   /** Bloque A §2. La pareja necesita poder leer el plazo que fijó, no sólo escribirlo. */
   rsvpDeadlineDays: number
   ownerId: string
@@ -104,21 +112,16 @@ export class EventsController {
     return usuario
   }
 
-  private aRespuesta(evento: {
-    id: string
-    name: string
-    weddingDate: Date | null
-    timezone: string
-    venueLocation: string | null
-    rsvpDeadlineDays: number
-    ownerId: string
-  }): EventoRespuesta {
+  private aRespuesta(evento: Event): EventoRespuesta {
     return {
       id: evento.id,
       name: evento.name,
+      status: evento.status,
       weddingDate: evento.weddingDate?.toISOString() ?? null,
       timezone: evento.timezone,
-      venueLocation: evento.venueLocation,
+      currency: evento.currency,
+      totalBudget: evento.totalBudget,
+      venue: evento.venue,
       rsvpDeadlineDays: evento.rsvpDeadlineDays,
       ownerId: evento.ownerId,
     }

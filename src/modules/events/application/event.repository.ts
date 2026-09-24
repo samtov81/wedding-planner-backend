@@ -1,12 +1,27 @@
-import type { Event } from '../domain/event'
+import type { Ubicacion } from '@/shared/domain'
+
+import type { Event, EventStatus } from '../domain/event'
 import type { EventRole, MembershipStatus } from '../domain/event-access'
 
 export interface DatosNuevoEvento {
   name: string
-  weddingDate: Date
   ownerId: string
-  /** Ausente = `DIAS_DE_CIERRE_POR_DEFECTO`, el default de la columna. */
   rsvpDeadlineDays?: number | undefined
+  weddingDate?: Date | null | undefined
+  timezone?: string | undefined
+  currency?: string | undefined
+  totalBudget?: string | null | undefined
+  venue?: Ubicacion | null | undefined
+}
+
+export interface CambiosEvento {
+  name?: string | undefined
+  status?: EventStatus | undefined
+  weddingDate?: Date | null | undefined
+  timezone?: string | undefined
+  currency?: string | undefined
+  totalBudget?: string | null | undefined
+  venue?: Ubicacion | null | undefined
 }
 
 export interface DatosInvitacion {
@@ -31,14 +46,22 @@ export interface EventRepository {
   buscarMembresiaActiva(eventId: string, userId: string): Promise<{ role: EventRole } | null>
 
   /**
-   * Contratación BOOKED cuya `VendorProfile` pertenece a este usuario. Un
-   * `EventVendor` externo (`vendorProfileId = null`) nunca casa: no hay cuenta
-   * detrás a la que conceder nada.
+   * Contratación BOOKED cuya `VendorProfile` pertenece a este usuario, en un
+   * evento ACTIVE: un borrador no se enseña a proveedores. Un `EventVendor`
+   * externo (`vendorProfileId = null`) nunca casa: no hay cuenta detrás a la
+   * que conceder nada.
    */
   buscarContratacionReservada(eventId: string, userId: string): Promise<{ id: string } | null>
 
-  /** Evento + membresía COUPLE del creador, en UNA transacción. */
+  /** Evento + membresía COUPLE del creador, en UNA transacción. Nace DRAFT. */
   crearConMembresia(datos: DatosNuevoEvento): Promise<Event>
+
+  /**
+   * Actualización parcial: `undefined` = no tocar, `null` = borrar. La regla
+   * de "un ACTIVE no puede quedar incompleto" NO vive aquí: la aplica el caso
+   * de uso antes de llamar. Lanza `EventoNoEncontradoError` si no existe.
+   */
+  actualizar(eventId: string, cambios: CambiosEvento): Promise<Event>
 
   /** Eventos con membresía ACTIVA, más aquellos donde el usuario está BOOKED. */
   listarAccesiblesPor(userId: string): Promise<Event[]>

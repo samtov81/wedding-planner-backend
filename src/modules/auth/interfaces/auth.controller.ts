@@ -4,22 +4,33 @@ import type { Request, Response } from 'express'
 import { ENV } from '@/config/config.module'
 import type { Env } from '@/config/env.schema'
 import {
+  LIMITADOR_FORGOT_PASSWORD,
   LIMITADOR_LOGIN,
   LIMITADOR_REGISTER,
   LIMITADOR_RESEND_VERIFICATION,
+  LIMITADOR_RESET_PASSWORD,
   LIMITADOR_VERIFY_EMAIL,
   LimiteDeRuta,
 } from '@/shared/http/limitadores'
 import { validarCon } from '@/shared/http/validar-con'
 
+import { ForgotPasswordUseCase } from '../application/forgot-password.use-case'
 import { LoginUseCase } from '../application/login.use-case'
 import { LogoutUseCase } from '../application/logout.use-case'
 import { RefreshUseCase } from '../application/refresh.use-case'
 import { RegisterUseCase } from '../application/register.use-case'
 import { ResendVerificationUseCase } from '../application/resend-verification.use-case'
+import { ResetPasswordUseCase } from '../application/reset-password.use-case'
 import { VerifyEmailUseCase } from '../application/verify-email.use-case'
 import { RefreshInvalidoError } from '../domain/token-errors'
-import { loginSchema, registerSchema, resendVerificationSchema, verifyEmailSchema } from './auth.dto'
+import {
+  forgotPasswordSchema,
+  loginSchema,
+  registerSchema,
+  resendVerificationSchema,
+  resetPasswordSchema,
+  verifyEmailSchema,
+} from './auth.dto'
 import { CurrentUser, type UsuarioAutenticado } from './current-user.decorator'
 import { JwtAuthGuard } from './jwt-auth.guard'
 
@@ -34,6 +45,8 @@ export class AuthController {
     private readonly logoutUseCase: LogoutUseCase,
     private readonly verifyEmailUseCase: VerifyEmailUseCase,
     private readonly resendVerificationUseCase: ResendVerificationUseCase,
+    private readonly forgotPasswordUseCase: ForgotPasswordUseCase,
+    private readonly resetPasswordUseCase: ResetPasswordUseCase,
     @Inject(ENV) private readonly env: Env,
   ) {}
 
@@ -150,6 +163,34 @@ export class AuthController {
   async resendVerification(@Body() body: unknown): Promise<{ ok: true }> {
     const datos = validarCon(resendVerificationSchema, body)
     await this.resendVerificationUseCase.ejecutar(datos)
+    return { ok: true }
+  }
+
+  /**
+   * Pedir el enlace de recuperación. 202 y el mismo cuerpo SIEMPRE, exista la
+   * cuenta o no: cualquier diferencia enumeraría cuentas. 3 por hora por
+   * IP+correo: sin límite es un cañón de correo contra cualquier dirección.
+   */
+  @Post('forgot-password')
+  @HttpCode(202)
+  @LimiteDeRuta(LIMITADOR_FORGOT_PASSWORD, { limit: 3, ttl: 3_600_000, getTracker: rastreoPorIpYCorreo })
+  async forgotPassword(@Body() body: unknown): Promise<{ ok: true }> {
+    const datos = validarCon(forgotPasswordSchema, body)
+    await this.forgotPasswordUseCase.ejecutar(datos)
+    return { ok: true }
+  }
+
+  /**
+   * Fijar la contraseña nueva con el token del correo. No abre sesión ni toca
+   * la cookie: el usuario vuelve al login. 10 cada 15 min por IP: el token de
+   * 32 bytes ya hace inviable adivinarlo; el límite es higiene.
+   */
+  @Post('reset-password')
+  @HttpCode(200)
+  @LimiteDeRuta(LIMITADOR_RESET_PASSWORD, { limit: 10, ttl: 900_000 })
+  async resetPassword(@Body() body: unknown): Promise<{ ok: true }> {
+    const datos = validarCon(resetPasswordSchema, body)
+    await this.resetPasswordUseCase.ejecutar(datos)
     return { ok: true }
   }
 

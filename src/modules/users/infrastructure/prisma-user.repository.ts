@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import { Prisma } from '@prisma/client'
 
+import { clienteDe } from '@/modules/database/transaccion'
 import { PrismaService } from '@/modules/database/prisma.service'
 
 import type { UserRepository } from '../application/user.repository'
@@ -44,5 +45,13 @@ export class PrismaUserRepository implements UserRepository {
 
   async marcarEmailVerificado(id: string): Promise<void> {
     await this.prisma.user.update({ where: { id }, data: { emailVerifiedAt: new Date() } })
+  }
+
+  async actualizarPassword(id: string, passwordHash: string): Promise<void> {
+    // `clienteDe`: corre dentro de la unidad de trabajo de ResetPasswordUseCase.
+    const db = clienteDe(this.prisma)
+    await db.user.update({ where: { id }, data: { passwordHash } })
+    // Condicional en el WHERE: no se pisa la fecha de una verificación previa.
+    await db.user.updateMany({ where: { id, emailVerifiedAt: null }, data: { emailVerifiedAt: new Date() } })
   }
 }

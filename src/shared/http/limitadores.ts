@@ -33,6 +33,8 @@ export const LIMITADOR_REGISTER = 'register'
 export const LIMITADOR_VERIFY_EMAIL = 'verify-email'
 export const LIMITADOR_WEBHOOK = 'webhook'
 export const LIMITADOR_RESEND_VERIFICATION = 'resend-verification'
+export const LIMITADOR_FORGOT_PASSWORD = 'forgot-password'
+export const LIMITADOR_RESET_PASSWORD = 'reset-password'
 
 type LimitadorDeRuta =
   | typeof LIMITADOR_RSVP
@@ -41,6 +43,8 @@ type LimitadorDeRuta =
   | typeof LIMITADOR_VERIFY_EMAIL
   | typeof LIMITADOR_WEBHOOK
   | typeof LIMITADOR_RESEND_VERIFICATION
+  | typeof LIMITADOR_FORGOT_PASSWORD
+  | typeof LIMITADOR_RESET_PASSWORD
 
 const reflector = new Reflector()
 const marca = (nombre: LimitadorDeRuta): string => `limitador-de-ruta:${nombre}`
@@ -114,6 +118,18 @@ export function crearLimitadores(limiteGlobalPorMinuto: number): ThrottlerOption
       ttl: 3_600_000,
       limit: 3,
       skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_RESEND_VERIFICATION),
+    },
+    {
+      name: LIMITADOR_FORGOT_PASSWORD,
+      ttl: 3_600_000,
+      limit: 3,
+      skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_FORGOT_PASSWORD),
+    },
+    {
+      name: LIMITADOR_RESET_PASSWORD,
+      ttl: 900_000,
+      limit: 10,
+      skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_RESET_PASSWORD),
     },
   ]
 }

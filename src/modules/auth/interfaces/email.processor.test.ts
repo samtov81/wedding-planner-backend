@@ -2,6 +2,8 @@ import { UnrecoverableError, type Job } from 'bullmq'
 
 import type { Env } from '@/config/env.schema'
 import type { EmailVerificationRenderer } from '@/modules/mail/application/email-verification-renderer.port'
+import type { PasswordChangedRenderer } from '@/modules/mail/application/password-changed-renderer.port'
+import type { PasswordResetRenderer } from '@/modules/mail/application/password-reset-renderer.port'
 import type { RegistrationNoticeRenderer } from '@/modules/mail/application/registration-notice-renderer.port'
 import { FakeMailAdapter } from '@/modules/mail/infrastructure/mail.adapter.fake'
 
@@ -26,7 +28,23 @@ const plantillaAviso: RegistrationNoticeRenderer = {
     Promise.resolve({ html: `<p>Hi ${datos.fullName}</p>`, text: `Hi ${datos.fullName}` }),
 }
 
-const ENV_DE_PRUEBA = { APP_URL: 'https://app.test' } as Env
+const plantillaReset: PasswordResetRenderer = {
+  render: (datos) =>
+    Promise.resolve({
+      html: `<a href="${datos.resetUrl}">Reset</a> ${datos.minutosDeValidez}`,
+      text: `Reset: ${datos.resetUrl}`,
+    }),
+}
+
+const plantillaCambio: PasswordChangedRenderer = {
+  render: (datos) =>
+    Promise.resolve({
+      html: `<p>Changed ${datos.recoverUrl} ${datos.cambiadoEn.toISOString()}</p>`,
+      text: `Changed ${datos.recoverUrl} ${datos.cambiadoEn.toISOString()}`,
+    }),
+}
+
+const ENV_DE_PRUEBA = { APP_URL: 'https://app.test', PASSWORD_RESET_TTL_MINUTES: 30 } as Env
 
 describe('EmailProcessor', () => {
   let mail: FakeMailAdapter
@@ -47,7 +65,14 @@ describe('EmailProcessor', () => {
 
   beforeEach(() => {
     mail = new FakeMailAdapter()
-    procesador = new EmailProcessor(mail, ENV_DE_PRUEBA, plantillaVerificacion, plantillaAviso)
+    procesador = new EmailProcessor(
+      mail,
+      ENV_DE_PRUEBA,
+      plantillaVerificacion,
+      plantillaAviso,
+      plantillaReset,
+      plantillaCambio,
+    )
   })
 
   describe('send-verification-email', () => {
@@ -152,6 +177,71 @@ describe('EmailProcessor', () => {
     it('un payload incompleto es UnrecoverableError', async () => {
       await expect(
         procesador.process(jobFalso('send-registration-notice', { userId: 'u-1' })),
+      ).rejects.toBeInstanceOf(UnrecoverableError)
+      expect(mail.enviados).toHaveLength(0)
+    })
+  })
+
+  describe('send-password-reset-email', () => {
+    const PAYLOAD = { userId: 'u-1', tokenId: 'r-1', email: 'ana@test.com', fullName: 'Ana', token: 'a+b/c' }
+
+    it('manda el enlace a /reset-password con el token codificado y la caducidad', async () => {
+      await procesador.process(jobFalso('send-password-reset-email', PAYLOAD))
+
+      const enviado = mail.enviados[0]
+      expect(enviado?.to).toBe('ana@test.com')
+      expect(enviado?.subject).toBe('Reset your password')
+      expect(enviado?.html).toContain('https://app.test/reset-password?token=a%2Bb%2Fc')
+      expect(enviado?.html).toContain('30')
+      expect(enviado?.idempotencyKey).toBe('password-reset-r-1')
+    })
+
+    it('descarta sin reintentar un payload inválido, con el mensaje concreto', async () => {
+      await expect(
+        procesador.process(jobFalso('send-password-reset-email', { ...PAYLOAD, token: '' })),
+      ).rejects.toThrow('Payload de recuperación inválido')
+      expect(mail.enviados).toHaveLength(0)
+    })
+  })
+
+  describe('send-password-changed-notice', () => {
+    const PAYLOAD = {
+      userId: 'u-1',
+      tokenId: 'r-1',
+      email: 'ana@test.com',
+      fullName: 'Ana',
+      cambiadoEn: '2026-09-22T10:00:00.000Z',
+    }
+
+    it('manda el aviso con enlace a /forgot-password y clave por token', async () => {
+      await procesador.process(jobFalso('send-password-changed-notice', PAYLOAD))
+
+      const enviado = mail.enviados[0]
+      expect(enviado?.subject).toBe('Your password was changed')
+      expect(enviado?.html).toContain('https://app.test/forgot-password')
+      expect(enviado?.idempotencyKey).toBe('password-changed-r-1')
+    })
+
+    it('pasa `cambiadoEn` del payload al renderer, no la hora de proceso', async () => {
+      await procesador.process(jobFalso('send-password-changed-notice', PAYLOAD))
+
+      // La plantilla local de este test compone la fecha con `toISOString()`
+      // (ver arriba): si el worker usara `new Date()` en vez del payload, esta
+      // hora fija de 2026 nunca aparecería en el correo.
+      expect(mail.enviados[0]?.html).toContain('2026-09-22T10:00:00.000Z')
+    })
+
+    it('descarta sin reintentar un payload inválido, con el mensaje concreto', async () => {
+      await expect(
+        procesador.process(jobFalso('send-password-changed-notice', { userId: 'u-1' })),
+      ).rejects.toThrow('Payload de aviso de cambio inválido')
+    })
+
+    it('un payload sin `cambiadoEn` es UnrecoverableError', async () => {
+      const { cambiadoEn: _sin, ...sinCambiadoEn } = PAYLOAD
+
+      await expect(
+        procesador.process(jobFalso('send-password-changed-notice', sinCambiadoEn)),
       ).rejects.toBeInstanceOf(UnrecoverableError)
       expect(mail.enviados).toHaveLength(0)
     })

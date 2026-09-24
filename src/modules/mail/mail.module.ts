@@ -15,12 +15,22 @@ import {
   REGISTRATION_NOTICE_RENDERER,
   type RegistrationNoticeRenderer,
 } from './application/registration-notice-renderer.port'
+import {
+  PASSWORD_RESET_RENDERER,
+  type PasswordResetRenderer,
+} from './application/password-reset-renderer.port'
+import {
+  PASSWORD_CHANGED_RENDERER,
+  type PasswordChangedRenderer,
+} from './application/password-changed-renderer.port'
 import { MAIL_PORT, type MailPort } from './application/mail.port'
 import { FakeMailAdapter } from './infrastructure/mail.adapter.fake'
 import { ResendMailAdapter } from './infrastructure/resend-mail.adapter'
 import { renderGuestInvitation } from './infrastructure/templates/guest-invitation'
 import { renderEmailVerification } from './infrastructure/templates/email-verification'
 import { renderRegistrationAttemptNotice } from './infrastructure/templates/registration-attempt-notice'
+import { renderPasswordReset } from './infrastructure/templates/password-reset'
+import { renderPasswordChanged } from './infrastructure/templates/password-changed'
 
 @Module({
   providers: [
@@ -44,7 +54,22 @@ import { renderRegistrationAttemptNotice } from './infrastructure/templates/regi
       provide: REGISTRATION_NOTICE_RENDERER,
       useValue: { render: renderRegistrationAttemptNotice } satisfies RegistrationNoticeRenderer,
     },
+    {
+      provide: PASSWORD_RESET_RENDERER,
+      useValue: { render: renderPasswordReset } satisfies PasswordResetRenderer,
+    },
+    {
+      provide: PASSWORD_CHANGED_RENDERER,
+      useValue: { render: renderPasswordChanged } satisfies PasswordChangedRenderer,
+    },
   ],
-  exports: [MAIL_PORT, INVITATION_RENDERER, EMAIL_VERIFICATION_RENDERER, REGISTRATION_NOTICE_RENDERER],
+  exports: [
+    MAIL_PORT,
+    INVITATION_RENDERER,
+    EMAIL_VERIFICATION_RENDERER,
+    REGISTRATION_NOTICE_RENDERER,
+    PASSWORD_RESET_RENDERER,
+    PASSWORD_CHANGED_RENDERER,
+  ],
 })
 export class MailModule {}

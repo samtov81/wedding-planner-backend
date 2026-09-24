@@ -81,6 +81,33 @@ describe('Auth e2e', () => {
     return decodeURIComponent(encontrado[1])
   }
 
+  /** Espera al correo con ESE asunto: los tests comparten el adaptador y los destinatarios reciben varios. */
+  async function esperarCorreoCon(destinatario: string, asunto: string): Promise<{ html: string }> {
+    for (let intento = 0; intento < 100; intento += 1) {
+      const mensaje = correo.enviados.find((m) => m.to === destinatario && m.subject === asunto)
+      if (mensaje !== undefined) return { html: mensaje.html ?? '' }
+      await new Promise((seguir) => setTimeout(seguir, 100))
+    }
+    throw new Error(`No llegó "${asunto}" a ${destinatario} en 10s`)
+  }
+
+  function tokenDeReset(html: string): string {
+    const encontrado = /reset-password\?token=([A-Za-z0-9_%-]+)/.exec(html)
+    if (encontrado?.[1] === undefined) throw new Error('El correo no trae enlace de recuperación')
+    return decodeURIComponent(encontrado[1])
+  }
+
+  /** Registra y verifica una cuenta; devuelve la cookie de una sesión abierta. */
+  async function cuentaConSesion(email: string, password: string): Promise<string> {
+    await request(url).post('/auth/register').send({ email, password, fullName: 'Reset' }).expect(201)
+    const { html } = await esperarCorreoA(email)
+    await request(url).post('/auth/verify-email').send({ token: tokenDelEnlace(html) }).expect(200)
+    const login = await request(url).post('/auth/login').send({ email, password }).expect(200)
+    const cookie = primeraCookie(login)
+    if (cookie === undefined) throw new Error('Sin cookie de refresh')
+    return cookie
+  }
+
   beforeEach(async () => {
     await limpiarContadoresDeRitmo(redis.getConnectionUrl())
   })
@@ -401,6 +428,105 @@ describe('Auth e2e', () => {
       expect(estado).toBe(429)
       expect(intentos).toBeLessThanOrEqual(121)
       expect(respuesta?.headers['retry-after-global']).toBeDefined()
+    })
+  })
+
+  describe('recuperación de contraseña', () => {
+    it('ciclo completo: pedir enlace, fijar contraseña, sesiones cerradas y aviso', async () => {
+      const cookieVieja = await cuentaConSesion('reset@test.com', 'contraseña-vieja-1')
+
+      await request(url).post('/auth/forgot-password').send({ email: 'reset@test.com' }).expect(202)
+      const { html } = await esperarCorreoCon('reset@test.com', 'Reset your password')
+
+      await request(url)
+        .post('/auth/reset-password')
+        .send({ token: tokenDeReset(html), password: 'contraseña-nueva-1' })
+        .expect(200, { ok: true })
+
+      await request(url).post('/auth/login').send({ email: 'reset@test.com', password: 'contraseña-vieja-1' }).expect(401)
+      await request(url).post('/auth/login').send({ email: 'reset@test.com', password: 'contraseña-nueva-1' }).expect(200)
+      await request(url).post('/auth/refresh').set('Cookie', cookieVieja).expect(401)
+      await esperarCorreoCon('reset@test.com', 'Your password was changed')
+    })
+
+    it('el mismo enlace no sirve dos veces: 422 RESET_TOKEN_INVALID', async () => {
+      await cuentaConSesion('reset-dos@test.com', 'contraseña-vieja-1')
+      await request(url).post('/auth/forgot-password').send({ email: 'reset-dos@test.com' }).expect(202)
+      const token = tokenDeReset((await esperarCorreoCon('reset-dos@test.com', 'Reset your password')).html)
+
+      const [a, b] = await Promise.all([
+        request(url).post('/auth/reset-password').send({ token, password: 'nueva-contraseña-a' }),
+        request(url).post('/auth/reset-password').send({ token, password: 'nueva-contraseña-b' }),
+      ])
+
+      expect([a.status, b.status].sort()).toEqual([200, 422])
+      const perdedora = a.status === 422 ? a : b
+      expect((perdedora.body as CuerpoError).code).toBe('RESET_TOKEN_INVALID')
+    })
+
+    it('una cuenta sin verificar puede restablecer y queda verificada', async () => {
+      await request(url)
+        .post('/auth/register')
+        .send({ email: 'sinverif-reset@test.com', password: 'contraseña-vieja-1', fullName: 'SV' })
+        .expect(201)
+      await request(url).post('/auth/forgot-password').send({ email: 'sinverif-reset@test.com' }).expect(202)
+      const { html } = await esperarCorreoCon('sinverif-reset@test.com', 'Reset your password')
+
+      await request(url)
+        .post('/auth/reset-password')
+        .send({ token: tokenDeReset(html), password: 'contraseña-nueva-1' })
+        .expect(200)
+
+      await request(url)
+        .post('/auth/login')
+        .send({ email: 'sinverif-reset@test.com', password: 'contraseña-nueva-1' })
+        .expect(200)
+    })
+
+    it('forgot-password responde lo MISMO exista la cuenta o no, verificada o pendiente', async () => {
+      await cuentaConSesion('existe-reset@test.com', 'contraseña-vieja-1')
+      await request(url)
+        .post('/auth/register')
+        .send({ email: 'sin-verificar-reset@test.com', password: 'contraseña-vieja-1', fullName: 'Reset' })
+        .expect(201)
+
+      const existe = await request(url).post('/auth/forgot-password').send({ email: 'existe-reset@test.com' })
+      const sinVerificar = await request(url)
+        .post('/auth/forgot-password')
+        .send({ email: 'sin-verificar-reset@test.com' })
+      const noExiste = await request(url).post('/auth/forgot-password').send({ email: 'nadie-reset@test.com' })
+
+      expect(existe.status).toBe(202)
+      expect(sinVerificar.status).toBe(202)
+      expect(noExiste.status).toBe(202)
+      expect(sinVerificar.body).toEqual(existe.body)
+      expect(noExiste.body).toEqual(existe.body)
+    })
+
+    it('forgot-password con email mal formado da 400', async () => {
+      await request(url).post('/auth/forgot-password').send({ email: 'no-es-email' }).expect(400)
+    })
+
+    it('reset-password: token falso 422; contraseña corta, larga o token enorme 400; nunca 500', async () => {
+      await request(url).post('/auth/reset-password').send({ token: 'no-existe', password: 'contraseña-larga' }).expect(422)
+      await request(url).post('/auth/reset-password').send({ token: 'x', password: 'corta' }).expect(400)
+      await request(url).post('/auth/reset-password').send({ token: 'x', password: 'a'.repeat(129) }).expect(400)
+      await request(url).post('/auth/reset-password').send({ token: 'a'.repeat(10_000), password: 'contraseña-larga' }).expect(400)
+      await request(url).post('/auth/reset-password').send({ token: ' ¿?%00 ', password: 'contraseña-larga' }).expect(422)
+    })
+
+    it('el cuarto forgot-password en una hora contra el mismo IP+correo da 429', async () => {
+      const pedir = () => request(url).post('/auth/forgot-password').send({ email: 'limite-forgot@test.com' })
+      for (let i = 0; i < 3; i += 1) await pedir().expect(202)
+
+      expect((await pedir()).status).toBe(429)
+    })
+
+    it('el undécimo reset-password en 15 minutos desde la misma IP da 429', async () => {
+      const pedir = () => request(url).post('/auth/reset-password').send({ token: 'falso', password: 'contraseña-larga' })
+      for (let i = 0; i < 10; i += 1) await pedir().expect(422)
+
+      expect((await pedir()).status).toBe(429)
     })
   })
 })

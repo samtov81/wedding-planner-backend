@@ -61,6 +61,19 @@ export class SessionRepositoryEnMemoria implements SessionRepository {
     return Promise.resolve({ ...publica })
   }
 
+  revocarTodasDeUsuario(userId: string): Promise<void> {
+    const ahora = new Date()
+    for (const sesion of this.sesiones) {
+      if (sesion.userId === userId && sesion.revokedAt === null) sesion.revokedAt = ahora
+    }
+    return Promise.resolve()
+  }
+
+  /** Helper de test: cuántas sesiones vivas tiene el usuario. */
+  vivasDeUsuario(userId: string): number {
+    return this.sesiones.filter((s) => s.userId === userId && s.revokedAt === null).length
+  }
+
   /** Helper de test: ¿la sesión que emitió este token en claro está revocada? */
   estaRevocado(token: string): boolean {
     const hash = hashToken(token)

@@ -28,3 +28,16 @@ export const resendVerificationSchema = z.object({
   email: z.email(),
 })
 export type ResendVerificationDto = z.infer<typeof resendVerificationSchema>
+
+export const forgotPasswordSchema = z.object({
+  email: z.email(),
+})
+export type ForgotPasswordDto = z.infer<typeof forgotPasswordSchema>
+
+export const resetPasswordSchema = z.object({
+  /** Un token real mide 43; el tope sólo corta basura antes de hashearla. */
+  token: z.string().min(1).max(256),
+  /** Mismo mínimo que el registro. El máximo acota el trabajo de Argon2. */
+  password: z.string().min(8).max(128),
+})
+export type ResetPasswordDto = z.infer<typeof resetPasswordSchema>

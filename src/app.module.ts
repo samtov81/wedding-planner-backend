@@ -8,6 +8,7 @@ import type { Env } from '@/config/env.schema'
 import { AuthModule } from '@/modules/auth/auth.module'
 import { DatabaseModule } from '@/modules/database/database.module'
 import { EventsModule } from '@/modules/events/events.module'
+import { ExpensesModule } from '@/modules/expenses/expenses.module'
 import { GuestsModule } from '@/modules/guests/guests.module'
 import { HealthModule } from '@/modules/health/health.module'
 import { MailModule } from '@/modules/mail/mail.module'
@@ -53,6 +54,7 @@ import { RegistroModule } from '@/shared/logging/registro.module'
     EventsModule,
     VendorsModule,
     ScheduleModule,
+    ExpensesModule,
     GuestsModule,
     NotificationsModule,
     HealthModule,

@@ -6,6 +6,7 @@ import request from 'supertest'
 
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
+import { crearEventoPublicado } from '../support/eventos'
 
 interface CuerpoError {
   code: string
@@ -62,12 +63,7 @@ describe('Acceso a eventos e2e', () => {
   }
 
   async function crearEvento(accessToken: string, name: string): Promise<string> {
-    const respuesta = await request(url)
-      .post('/events')
-      .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name, weddingDate: '2027-06-12T00:00:00.000Z' })
-      .expect(201)
-    return (respuesta.body as CuerpoEvento).id
+    return await crearEventoPublicado(url, accessToken, name)
   }
 
   async function listarEventos(accessToken: string): Promise<string[]> {
@@ -321,9 +317,9 @@ describe('Acceso a eventos e2e', () => {
   })
 
   it('un vendor sólo entra cuando la contratación está BOOKED', async () => {
-    // Un vendor nunca ve un DRAFT (regla probada aparte); aquí se cubre la
-    // otra mitad, BOOKED vs SHORTLISTED, así que el evento se activa primero.
-    await prisma.event.update({ where: { id: eventoDeAna }, data: { status: 'ACTIVE' } })
+    // `eventoDeAna` ya está ACTIVE (nace publicado, ver `crearEvento`); aquí
+    // se cubre la otra mitad, BOOKED vs SHORTLISTED (un vendor nunca ve un
+    // DRAFT, regla probada aparte).
     const perfil = await prisma.vendorProfile.create({
       data: { userId: extrano.id, businessName: 'Lumière', category: 'Catering' },
     })

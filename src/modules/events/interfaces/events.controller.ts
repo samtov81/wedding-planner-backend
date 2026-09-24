@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Inject, Param, Post, UseGuards } from '@nestjs/common'
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Inject,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common'
 
 import {
   CurrentUser,
@@ -12,18 +22,17 @@ import { CreateEventUseCase } from '../application/create-event.use-case'
 import { EVENT_REPOSITORY, type EventRepository } from '../application/event.repository'
 import { InviteMemberUseCase } from '../application/invite-member.use-case'
 import { ListEventsUseCase } from '../application/list-events.use-case'
+import { PublishEventUseCase } from '../application/publish-event.use-case'
+import { UpdateEventUseCase } from '../application/update-event.use-case'
 import type { Event } from '../domain/event'
 import type { EventAccess } from '../domain/event-access'
 import { EventoNoEncontradoError } from '../domain/event-errors'
+import { completitud, type Completitud } from '../domain/publicacion'
 import { EventAccessOf } from './event-access-of.decorator'
 import { EventAccessGuard } from './event-access.guard'
-import { createEventSchema, inviteMemberSchema } from './events.dto'
+import { createEventSchema, inviteMemberSchema, updateEventSchema } from './events.dto'
 import { RequireEventAccess } from './require-event-access.decorator'
 
-/**
- * Forma provisional: la definitiva (con `conteos`, `status`, etc. expuestos
- * al detalle que necesita el wizard) llega en la Tarea 8.
- */
 interface EventoRespuesta {
   id: string
   name: string
@@ -33,9 +42,12 @@ interface EventoRespuesta {
   currency: string
   totalBudget: string | null
   venue: Event['venue']
+  completitud: Completitud
   /** Bloque A §2. La pareja necesita poder leer el plazo que fijó, no sólo escribirlo. */
   rsvpDeadlineDays: number
   ownerId: string
+  createdAt: string
+  updatedAt: string
 }
 
 @UseGuards(JwtAuthGuard)
@@ -45,6 +57,8 @@ export class EventsController {
     private readonly crear: CreateEventUseCase,
     private readonly listar: ListEventsUseCase,
     private readonly invitar: InviteMemberUseCase,
+    private readonly editar: UpdateEventUseCase,
+    private readonly publicar: PublishEventUseCase,
     @Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository,
   ) {}
 
@@ -87,7 +101,29 @@ export class EventsController {
     // El guard siempre deja el acceso resuelto; si falta, la ruta perdió el
     // guard, y eso es un error de programación, no un acceso `none` inventado.
     if (acceso === undefined) throw new Error('verEvento requires EventAccessGuard')
+    // Defensa en profundidad: el guard ya niega esto por el repositorio, pero
+    // un ADMIN llega aquí sin pasar por esa consulta.
+    if (evento.status === 'DRAFT' && acceso.kind === 'vendor') throw new EventoNoEncontradoError()
     return { ...this.aRespuesta(evento), access: acceso }
+  }
+
+  @UseGuards(EventAccessGuard)
+  @RequireEventAccess('COUPLE', 'PLANNER')
+  @Patch(':eventId')
+  async editarEvento(
+    @Param('eventId') eventId: string,
+    @Body() body: unknown,
+  ): Promise<EventoRespuesta> {
+    const cambios = validarCon(updateEventSchema, body)
+    return this.aRespuesta(await this.editar.ejecutar(eventId, cambios))
+  }
+
+  @UseGuards(EventAccessGuard)
+  @RequireEventAccess('COUPLE', 'PLANNER')
+  @Post(':eventId/publish')
+  @HttpCode(200)
+  async publicarEvento(@Param('eventId') eventId: string): Promise<EventoRespuesta> {
+    return this.aRespuesta(await this.publicar.ejecutar(eventId))
   }
 
   /** Invitar toca quién manda en el evento: sólo COUPLE. */
@@ -122,8 +158,11 @@ export class EventsController {
       currency: evento.currency,
       totalBudget: evento.totalBudget,
       venue: evento.venue,
+      completitud: completitud(evento),
       rsvpDeadlineDays: evento.rsvpDeadlineDays,
       ownerId: evento.ownerId,
+      createdAt: evento.createdAt.toISOString(),
+      updatedAt: evento.updatedAt.toISOString(),
     }
   }
 }

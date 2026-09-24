@@ -6,6 +6,7 @@ import request from 'supertest'
 
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
+import { crearEventoPublicado } from '../support/eventos'
 
 interface CuerpoError {
   code: string
@@ -74,12 +75,7 @@ describe('Vendors por evento e2e', () => {
   }
 
   async function crearEvento(accessToken: string, name: string): Promise<string> {
-    const respuesta = await request(url)
-      .post('/events')
-      .set('Authorization', `Bearer ${accessToken}`)
-      .send({ name, weddingDate: '2027-06-12T00:00:00.000Z' })
-      .expect(201)
-    return (respuesta.body as { id: string }).id
+    return await crearEventoPublicado(url, accessToken, name)
   }
 
   beforeAll(async () => {
@@ -287,8 +283,6 @@ describe('Vendors por evento e2e', () => {
       'Fotógrafo Propio',
     )
     const eventoPropio = await crearEvento(ana.accessToken, 'Boda para vendor BOOKED')
-    // Un vendor no ve un DRAFT: se activa para probar la autorización real.
-    await prisma.event.update({ where: { id: eventoPropio }, data: { status: 'ACTIVE' } })
 
     const perfil = await prisma.vendorProfile.create({
       data: {

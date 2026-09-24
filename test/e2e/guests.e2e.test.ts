@@ -6,6 +6,7 @@ import request from 'supertest'
 
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
+import { crearEventoPublicado } from '../support/eventos'
 
 interface CuerpoError {
   code: string
@@ -83,12 +84,7 @@ describe('Invitados e2e', () => {
   }
 
   async function crearEvento(token: string, nombre: string): Promise<string> {
-    const respuesta = await request(url)
-      .post('/events')
-      .set('Authorization', `Bearer ${token}`)
-      .send({ name: nombre, weddingDate: '2027-06-12T00:00:00.000Z' })
-      .expect(201)
-    return (respuesta.body as { id: string }).id
+    return await crearEventoPublicado(url, token, nombre)
   }
 
   /**
@@ -621,8 +617,6 @@ describe('Invitados e2e', () => {
     const anaPropia = await registrarYEntrar(anaEmail, 'Ana Propia')
     const fotografoPropio = await registrarYEntrar(fotografoEmail, 'Fotógrafo Propio')
     const bodaPropia = await crearEvento(anaPropia.accessToken, 'Boda propia')
-    // Un vendor no ve un DRAFT: se activa para probar la autorización real.
-    await prisma.event.update({ where: { id: bodaPropia }, data: { status: 'ACTIVE' } })
 
     const victima = (
       await request(url)

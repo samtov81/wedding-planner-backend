@@ -35,6 +35,7 @@ export const LIMITADOR_WEBHOOK = 'webhook'
 export const LIMITADOR_RESEND_VERIFICATION = 'resend-verification'
 export const LIMITADOR_FORGOT_PASSWORD = 'forgot-password'
 export const LIMITADOR_RESET_PASSWORD = 'reset-password'
+export const LIMITADOR_VENDOR_CATALOG = 'vendor-catalog'
 
 type LimitadorDeRuta =
   | typeof LIMITADOR_RSVP
@@ -45,6 +46,7 @@ type LimitadorDeRuta =
   | typeof LIMITADOR_RESEND_VERIFICATION
   | typeof LIMITADOR_FORGOT_PASSWORD
   | typeof LIMITADOR_RESET_PASSWORD
+  | typeof LIMITADOR_VENDOR_CATALOG
 
 const reflector = new Reflector()
 const marca = (nombre: LimitadorDeRuta): string => `limitador-de-ruta:${nombre}`
@@ -130,6 +132,16 @@ export function crearLimitadores(limiteGlobalPorMinuto: number): ThrottlerOption
       ttl: 900_000,
       limit: 10,
       skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_RESET_PASSWORD),
+    },
+    // Se cuenta por IP, que es el tracker por defecto. DESIGN-GAP: la spec
+    // pedía contar por usuario, pero `ThrottlerGuard` es `APP_GUARD` y corre
+    // antes que `JwtAuthGuard`, así que `req.user` aún no existe cuando el
+    // limitador cuenta.
+    {
+      name: LIMITADOR_VENDOR_CATALOG,
+      ttl: 60_000,
+      limit: 60,
+      skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_VENDOR_CATALOG),
     },
   ]
 }

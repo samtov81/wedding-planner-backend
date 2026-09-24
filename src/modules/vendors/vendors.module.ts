@@ -9,9 +9,13 @@ import { AddEventVendorUseCase } from './application/add-event-vendor.use-case'
 import { EVENT_VENDOR_REPOSITORY } from './application/event-vendor.repository'
 import { ListEventVendorsUseCase } from './application/list-event-vendors.use-case'
 import { RemoveEventVendorUseCase } from './application/remove-event-vendor.use-case'
+import { SearchVendorCatalogUseCase } from './application/search-vendor-catalog.use-case'
 import { UpdateEventVendorUseCase } from './application/update-event-vendor.use-case'
+import { VENDOR_CATALOG_REPOSITORY } from './application/vendor-catalog.repository'
 import { PrismaEventVendorRepository } from './infrastructure/prisma-event-vendor.repository'
+import { PrismaVendorCatalogRepository } from './infrastructure/prisma-vendor-catalog.repository'
 import { EventVendorsController } from './interfaces/event-vendors.controller'
+import { VendorCatalogController } from './interfaces/vendor-catalog.controller'
 
 /**
  * `EventsModule` se IMPORTA (no se reconstruye nada suyo): `EventAccessGuard`
@@ -25,17 +29,23 @@ import { EventVendorsController } from './interfaces/event-vendors.controller'
  */
 @Module({
   imports: [AuthModule, UsersModule, EventsModule],
-  controllers: [EventVendorsController],
+  controllers: [EventVendorsController, VendorCatalogController],
   providers: [
     {
       provide: EVENT_VENDOR_REPOSITORY,
       useFactory: (prisma: PrismaService) => new PrismaEventVendorRepository(prisma),
       inject: [PrismaService],
     },
+    {
+      provide: VENDOR_CATALOG_REPOSITORY,
+      useFactory: (prisma: PrismaService) => new PrismaVendorCatalogRepository(prisma),
+      inject: [PrismaService],
+    },
     AddEventVendorUseCase,
     ListEventVendorsUseCase,
     UpdateEventVendorUseCase,
     RemoveEventVendorUseCase,
+    SearchVendorCatalogUseCase,
   ],
 })
 export class VendorsModule {}

@@ -14,7 +14,9 @@ export interface EventVendorVista {
   vendorRef: VendorRef
   category: string
   specialty: string | null
-  assignedBudget: number | null
+  assignedBudget: string | null
+  /** `businessName` de la ficha si está vinculada, `externalName` si es externo. */
+  name: string
   status: EventVendorStatus
   createdAt: Date
   updatedAt: Date
@@ -25,14 +27,14 @@ export interface DatosCrearEventVendor {
   vendorRef: VendorRef
   category: string
   specialty: string | null
-  assignedBudget: number | null
+  assignedBudget: string | null
   actorUserId: string
 }
 
 export interface CambiosEventVendor {
   category?: string | undefined
   specialty?: string | null | undefined
-  assignedBudget?: number | null | undefined
+  assignedBudget?: string | null | undefined
   status?: EventVendorStatus | undefined
 }
 
@@ -75,6 +77,9 @@ export interface EventVendorRepository {
    * desde el caso de uso, igual que en `crear`.
    */
   eliminar(eventId: string, eventVendorId: string, actorUserId: string): Promise<void>
+
+  /** ¿Tiene gastos? Borrarlo los dejaría huérfanos: la FK es `Restrict`. */
+  tieneGastos(eventId: string, eventVendorId: string): Promise<boolean>
 }
 
 export const EVENT_VENDOR_REPOSITORY = Symbol('EVENT_VENDOR_REPOSITORY')

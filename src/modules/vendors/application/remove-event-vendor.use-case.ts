@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common'
 
-import { EventVendorNoEncontradoError } from '../domain/vendor-errors'
+import { EventVendorNoEncontradoError, ProveedorConGastosError } from '../domain/vendor-errors'
 import { EVENT_VENDOR_REPOSITORY, type EventVendorRepository } from './event-vendor.repository'
 
 /** Ver DESIGN-GAP en `update-event-vendor.use-case.ts`: mismo motivo de existir. */
@@ -11,6 +11,8 @@ export class RemoveEventVendorUseCase {
   async ejecutar(eventId: string, eventVendorId: string, actorUserId: string): Promise<void> {
     const existente = await this.vendors.buscarPorId(eventId, eventVendorId)
     if (existente === null) throw new EventVendorNoEncontradoError()
+
+    if (await this.vendors.tieneGastos(eventId, eventVendorId)) throw new ProveedorConGastosError()
 
     await this.vendors.eliminar(eventId, eventVendorId, actorUserId)
   }

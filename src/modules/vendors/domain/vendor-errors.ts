@@ -1,4 +1,4 @@
-import { NotFoundError } from '@/shared/domain'
+import { ConflictError, NotFoundError } from '@/shared/domain'
 
 /**
  * Cubre dos casos que el cliente no necesita distinguir: el `eventVendorId`
@@ -21,5 +21,15 @@ export class EventVendorNoEncontradoError extends NotFoundError {
 export class VendorProfileNoDisponibleError extends NotFoundError {
   constructor() {
     super('La ficha del marketplace no existe o no está publicada', 'VENDOR_PROFILE_NOT_AVAILABLE')
+  }
+}
+
+/** Con gastos no se borra: se marca CANCELLED y el histórico de pagos queda. */
+export class ProveedorConGastosError extends ConflictError {
+  constructor() {
+    super(
+      'El proveedor tiene gastos registrados; márcalo como CANCELLED en lugar de eliminarlo',
+      'VENDOR_HAS_EXPENSES',
+    )
   }
 }

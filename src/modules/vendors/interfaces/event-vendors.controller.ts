@@ -25,7 +25,8 @@ interface EventVendorRespuesta {
   vendorRef: EventVendorVista['vendorRef']
   category: string
   specialty: string | null
-  assignedBudget: number | null
+  assignedBudget: string | null
+  name: string
   status: EventVendorVista['status']
 }
 
@@ -111,6 +112,7 @@ export class EventVendorsController {
       category: vendor.category,
       specialty: vendor.specialty,
       assignedBudget: vendor.assignedBudget,
+      name: vendor.name,
       status: vendor.status,
     }
   }

@@ -21,11 +21,11 @@ describe('UpdateEventVendorUseCase', () => {
     const actualizado = await caso.ejecutar(
       EVENTO,
       vista.id,
-      { status: 'BOOKED', assignedBudget: 1500 },
+      { status: 'BOOKED', assignedBudget: '1500.00' },
       'ana',
     )
 
-    expect(actualizado).toMatchObject({ status: 'BOOKED', assignedBudget: 1500 })
+    expect(actualizado).toMatchObject({ status: 'BOOKED', assignedBudget: '1500.00' })
   })
 
   it('deja rastro en la auditoría de quién actualizó y qué campos cambiaron, sin datos personales', async () => {
@@ -40,7 +40,7 @@ describe('UpdateEventVendorUseCase', () => {
       actorUserId: 'ana',
     })
 
-    await caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED', assignedBudget: 1500 }, 'ana')
+    await caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED', assignedBudget: '1500.00' }, 'ana')
 
     expect(vendors.auditoria).toContainEqual({
       actorUserId: 'ana',

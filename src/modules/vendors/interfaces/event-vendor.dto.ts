@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { montoSchema } from '@/shared/http/esquemas'
+
 /**
  * Los cuatro campos de `EntradaVendorRef` llegan opcionales: es
  * `parseVendorRef` quien decide si la combinación es válida (422 con motivo),
@@ -13,7 +15,8 @@ export const createEventVendorSchema = z.object({
   externalPhone: z.string().trim().min(1).optional(),
   category: z.string().trim().min(1).max(200),
   specialty: z.string().trim().min(1).max(200).optional(),
-  assignedBudget: z.number().positive().optional(),
+  // `montoSchema`, no `.positive()`: el presupuesto asignado admite 0.
+  assignedBudget: montoSchema.optional(),
 })
 export type CreateEventVendorDto = z.infer<typeof createEventVendorSchema>
 
@@ -21,7 +24,7 @@ export const updateEventVendorSchema = z
   .object({
     category: z.string().trim().min(1).max(200).optional(),
     specialty: z.string().trim().min(1).max(200).nullable().optional(),
-    assignedBudget: z.number().positive().nullable().optional(),
+    assignedBudget: montoSchema.nullable().optional(),
     status: z.enum(['SHORTLISTED', 'BOOKED', 'CANCELLED']).optional(),
   })
   .refine((datos) => Object.keys(datos).length > 0, {

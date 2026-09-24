@@ -11,6 +11,7 @@ import type { VendorRef } from '../domain/vendor-ref'
 export interface PerfilPublicadoEnMemoria {
   id: string
   status: 'DRAFT' | 'PUBLISHED' | 'SUSPENDED'
+  businessName?: string
 }
 
 interface FilaEnMemoria {
@@ -19,7 +20,7 @@ interface FilaEnMemoria {
   vendorRef: VendorRef
   category: string
   specialty: string | null
-  assignedBudget: number | null
+  assignedBudget: string | null
   status: 'SHORTLISTED' | 'BOOKED' | 'CANCELLED'
   createdAt: Date
   updatedAt: Date
@@ -41,6 +42,7 @@ export class EventVendorRepositoryEnMemoria implements EventVendorRepository {
   readonly filas: FilaEnMemoria[] = []
   readonly perfiles: PerfilPublicadoEnMemoria[] = []
   readonly auditoria: AuditoriaVendorEnMemoria[] = []
+  readonly gastos: Array<{ eventId: string; eventVendorId: string }> = []
 
   buscarPerfilPublicado(vendorProfileId: string): Promise<{ id: string } | null> {
     const perfil = this.perfiles.find((p) => p.id === vendorProfileId && p.status === 'PUBLISHED')
@@ -114,7 +116,18 @@ export class EventVendorRepositoryEnMemoria implements EventVendorRepository {
     return Promise.resolve()
   }
 
+  tieneGastos(eventId: string, eventVendorId: string): Promise<boolean> {
+    return Promise.resolve(
+      this.gastos.some((g) => g.eventId === eventId && g.eventVendorId === eventVendorId),
+    )
+  }
+
   private aVista(fila: FilaEnMemoria): EventVendorVista {
-    return { ...fila }
+    const vendorRef = fila.vendorRef
+    const name =
+      vendorRef.kind === 'linked'
+        ? (this.perfiles.find((p) => p.id === vendorRef.vendorProfileId)?.businessName ?? '')
+        : vendorRef.name
+    return { ...fila, name }
   }
 }

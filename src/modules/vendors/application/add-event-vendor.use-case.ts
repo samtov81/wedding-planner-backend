@@ -11,7 +11,7 @@ import {
 export interface CrearEventVendor extends EntradaVendorRef {
   category: string
   specialty?: string | undefined
-  assignedBudget?: number | undefined
+  assignedBudget?: string | undefined
   actorUserId: string
 }
 

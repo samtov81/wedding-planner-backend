@@ -1,4 +1,4 @@
-import { EventVendorNoEncontradoError } from '../domain/vendor-errors'
+import { EventVendorNoEncontradoError, ProveedorConGastosError } from '../domain/vendor-errors'
 import { EventVendorRepositoryEnMemoria } from '../infrastructure/event-vendor.repository.fake'
 import { RemoveEventVendorUseCase } from './remove-event-vendor.use-case'
 
@@ -69,5 +69,24 @@ describe('RemoveEventVendorUseCase', () => {
     await expect(caso.ejecutar(EVENTO, vista.id, 'ana')).rejects.toBeInstanceOf(
       EventVendorNoEncontradoError,
     )
+  })
+
+  it('rechaza eliminar un proveedor con gastos registrados (409)', async () => {
+    const vendors = new EventVendorRepositoryEnMemoria()
+    const caso = new RemoveEventVendorUseCase(vendors)
+    const vista = await vendors.crear({
+      eventId: EVENTO,
+      vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
+      category: 'Floristería',
+      specialty: null,
+      assignedBudget: '1500.00',
+      actorUserId: 'ana',
+    })
+    vendors.gastos.push({ eventId: EVENTO, eventVendorId: vista.id })
+
+    await expect(caso.ejecutar(EVENTO, vista.id, 'ana')).rejects.toBeInstanceOf(
+      ProveedorConGastosError,
+    )
+    expect(await vendors.buscarPorId(EVENTO, vista.id)).not.toBeNull()
   })
 })

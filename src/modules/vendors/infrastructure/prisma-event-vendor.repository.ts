@@ -40,6 +40,7 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
                 externalPhone: datos.vendorRef.phone,
               }),
         },
+        include: { vendorProfile: { select: { businessName: true } } },
       })
 
       await tx.auditLog.create({
@@ -69,12 +70,16 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
     const filas = await this.prisma.eventVendor.findMany({
       where: { eventId },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      include: { vendorProfile: { select: { businessName: true } } },
     })
     return filas.map((fila) => this.aVista(fila))
   }
 
   async buscarPorId(eventId: string, eventVendorId: string): Promise<EventVendorVista | null> {
-    const fila = await this.prisma.eventVendor.findFirst({ where: { id: eventVendorId, eventId } })
+    const fila = await this.prisma.eventVendor.findFirst({
+      where: { id: eventVendorId, eventId },
+      include: { vendorProfile: { select: { businessName: true } } },
+    })
     return fila === null ? null : this.aVista(fila)
   }
 
@@ -114,6 +119,7 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
       // no queda un `AuditLog` de un cambio que nunca se leyó de vuelta.
       const fila = await tx.eventVendor.findFirst({
         where: { id: eventVendorId, eventId },
+        include: { vendorProfile: { select: { businessName: true } } },
       })
       if (fila === null) throw new EventVendorNoEncontradoError()
 
@@ -148,8 +154,15 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
     })
   }
 
+  async tieneGastos(eventId: string, eventVendorId: string): Promise<boolean> {
+    const n = await this.prisma.expense.count({ where: { eventId, eventVendorId } })
+    return n > 0
+  }
+
   /** La fila de Prisma no sale de infrastructure/: reconstruye el `VendorRef`. */
-  private aVista(fila: EventVendorFila): EventVendorVista {
+  private aVista(
+    fila: EventVendorFila & { vendorProfile: { businessName: string } | null },
+  ): EventVendorVista {
     const vendorRef: VendorRef =
       fila.vendorProfileId !== null
         ? { kind: 'linked', vendorProfileId: fila.vendorProfileId }
@@ -166,7 +179,8 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
       vendorRef,
       category: fila.category,
       specialty: fila.specialty,
-      assignedBudget: fila.assignedBudget === null ? null : Number(fila.assignedBudget),
+      assignedBudget: fila.assignedBudget === null ? null : fila.assignedBudget.toFixed(2),
+      name: fila.vendorProfile?.businessName ?? fila.externalName ?? '',
       status: fila.status,
       createdAt: fila.createdAt,
       updatedAt: fila.updatedAt,

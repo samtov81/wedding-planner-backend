@@ -5,6 +5,7 @@ import { VendorProfileNoDisponibleError } from '../domain/vendor-errors'
 import { AddEventVendorUseCase } from './add-event-vendor.use-case'
 
 const EVENTO = '11111111-1111-4111-8111-111111111111'
+const PERFIL = '33333333-3333-4333-8333-333333333333'
 const ANA = 'ana-id'
 
 describe('AddEventVendorUseCase', () => {
@@ -124,5 +125,24 @@ describe('AddEventVendorUseCase', () => {
     })
 
     expect(espia).not.toHaveBeenCalled()
+  })
+
+  it('devuelve el nombre visible: el de la ficha o el externo', async () => {
+    vendors.perfiles.push({ id: PERFIL, status: 'PUBLISHED', businessName: 'Lumière' })
+
+    const vinculado = await caso.ejecutar(EVENTO, {
+      vendorProfileId: PERFIL,
+      category: 'Catering',
+      assignedBudget: '2000.00',
+      actorUserId: ANA,
+    })
+    const externo = await caso.ejecutar(EVENTO, {
+      externalName: 'DJ Max',
+      category: 'Music',
+      actorUserId: ANA,
+    })
+
+    expect(vinculado).toMatchObject({ name: 'Lumière', assignedBudget: '2000.00' })
+    expect(externo).toMatchObject({ name: 'DJ Max', assignedBudget: null })
   })
 })

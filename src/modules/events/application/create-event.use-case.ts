@@ -15,6 +15,8 @@ export class CreateEventUseCase {
    * transacción: un evento sin membresía es un evento al que ni su dueño puede
    * entrar —`EventAccessService` mira membresías, no `ownerId`— y que nadie
    * puede arreglar salvo a mano contra la base de datos.
+   *
+   * Nace en DRAFT; solo `name` es obligatorio.
    */
   async ejecutar(datos: DatosCrearEvento): Promise<Event> {
     return await this.eventos.crearConMembresia(datos)

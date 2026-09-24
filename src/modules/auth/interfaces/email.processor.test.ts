@@ -38,6 +38,7 @@ describe('EmailProcessor', () => {
 
   const PAYLOAD_VERIFICACION = {
     userId: 'u-1',
+    tokenId: 't-1',
     email: 'ana@test.com',
     fullName: 'Ana',
     token: 'token-en-claro',
@@ -88,7 +89,7 @@ describe('EmailProcessor', () => {
       await procesador.process(jobFalso('send-verification-email', PAYLOAD_VERIFICACION))
       await procesador.process(jobFalso('send-verification-email', PAYLOAD_VERIFICACION))
 
-      expect(mail.enviados[0]?.idempotencyKey).toBe('verify-email-u-1')
+      expect(mail.enviados[0]?.idempotencyKey).toBe('verify-email-t-1')
       expect(mail.enviados).toHaveLength(1)
     })
 
@@ -106,6 +107,23 @@ describe('EmailProcessor', () => {
         procesador.process(
           jobFalso('send-verification-email', { ...PAYLOAD_VERIFICACION, email: 'no-es-un-email' }),
         ),
+      ).rejects.toBeInstanceOf(UnrecoverableError)
+    })
+
+    it('usa el id del token como clave de idempotencia, no el del usuario', async () => {
+      await procesador.process(
+        jobFalso('send-verification-email', { ...PAYLOAD_VERIFICACION, tokenId: 'token-7' }),
+      )
+
+      expect(mail.enviados).toHaveLength(1)
+      expect(mail.enviados[0]?.idempotencyKey).toBe('verify-email-token-7')
+    })
+
+    it('rechaza sin reintento un payload de verificación sin tokenId', async () => {
+      const { tokenId: _sin, ...sinTokenId } = { ...PAYLOAD_VERIFICACION, tokenId: 'token-7' }
+
+      await expect(
+        procesador.process(jobFalso('send-verification-email', sinTokenId)),
       ).rejects.toBeInstanceOf(UnrecoverableError)
     })
   })

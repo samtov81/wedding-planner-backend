@@ -65,7 +65,7 @@ export class RegisterUseCase {
       // Generar token, persistir hash, encolar correo de verificación.
       const tokenEnClaro = generarTokenVerificacion()
       const tokenHash = hashToken(tokenEnClaro)
-      await this.tokens.crear({
+      const { id: tokenId } = await this.tokens.crear({
         userId: usuario.id,
         tokenHash,
         expiresAt: caducidadVerificacion(this.env.EMAIL_VERIFICATION_TTL_HOURS),
@@ -76,11 +76,14 @@ export class RegisterUseCase {
         'send-verification-email',
         {
           userId: usuario.id,
+          tokenId,
           email: usuario.email,
           fullName: usuario.fullName,
           token: tokenEnClaro,
         },
-        { jobId: `verify-email-${usuario.id}`, removeOnComplete: true },
+        // Por token y no por usuario: ver el comentario de EmailProcessor. Con el id
+        // del usuario, un reenvío chocaría con el jobId del registro original.
+        { jobId: `verify-email-${tokenId}`, removeOnComplete: true },
       )
 
       return { id: usuario.id, email: usuario.email, fullName: usuario.fullName }

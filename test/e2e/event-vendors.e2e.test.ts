@@ -54,6 +54,14 @@ describe('Vendors por evento e2e', () => {
       .send({ email, password: 'una-contraseña-larga', fullName })
       .expect(201)
 
+    // El login exige el email verificado (Tarea 2): este test no ejercita ese
+    // flujo, así que se marca directo en base de datos en vez de pasar por el
+    // correo y el token de verificación.
+    await prisma.user.update({
+      where: { email },
+      data: { emailVerifiedAt: new Date() },
+    })
+
     const login = await request(url)
       .post('/auth/login')
       .send({ email, password: 'una-contraseña-larga' })

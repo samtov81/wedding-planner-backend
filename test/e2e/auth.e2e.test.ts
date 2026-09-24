@@ -97,6 +97,14 @@ describe('Auth e2e', () => {
       .send({ email: 'ana@test.com', password: 'una-contraseña-larga', fullName: 'Ana' })
       .expect(201)
 
+    // El login exige el email verificado desde esta tarea: sin este paso el
+    // 200 de más abajo pasaría a ser un 403 EMAIL_NOT_VERIFIED.
+    const { html: htmlAna } = await esperarCorreoA('ana@test.com')
+    await request(url)
+      .post('/auth/verify-email')
+      .send({ token: tokenDelEnlace(htmlAna) })
+      .expect(200)
+
     const login = await request(url)
       .post('/auth/login')
       .send({ email: 'ana@test.com', password: 'una-contraseña-larga' })
@@ -137,26 +145,40 @@ describe('Auth e2e', () => {
     expect(cookieRotada).toBeDefined()
     expect(cookieRotada).not.toBe(cookie)
 
-    // El primer refresh token ya fue rotado: presentarlo de nuevo es un reuso
-    // y tiene que caer con 401, no colarse. 401 y no 403 porque un refresh
-    // muerto es un fallo de IDENTIDAD, no de permiso sobre un recurso: es lo
-    // que hace que el cliente dispare "re-autenticar".
-    const reuso = await request(url)
+    // Fix crítico #1 (revisión final de rama): presentar el primer refresh
+    // token INMEDIATAMENTE después de que ya fue rotado ya no cae como reuso.
+    // Es exactamente el caso que la ventana de gracia de `RefreshUseCase`
+    // existe para cubrir — dos pestañas con la misma cookie, o (como aquí)
+    // dos peticiones seguidas contra el mismo token sin que medie tiempo real
+    // entre ellas — así que responde 200 con un par de tokens NUEVO en vez de
+    // tumbar la familia. El reuso genuino, pasada la ventana de diez
+    // segundos, está cubierto a nivel de unidad en
+    // `refresh.use-case.test.ts` con el reloj adelantado de verdad; repetirlo
+    // aquí exigiría un `sleep` real de más de diez segundos sólo para este
+    // test, que no compensa frente a la cobertura que ya existe.
+    const graciaConcurrente = await request(url)
       .post('/auth/refresh')
       .set('Cookie', cookie ?? '')
-      .expect(401)
-    expect((reuso.body as CuerpoError).code).toBe('REFRESH_REUSED')
+      .expect(200)
+    const cuerpoGracia = graciaConcurrente.body as CuerpoLogin
+    expect(cuerpoGracia.accessToken).toBeDefined()
+    const cookieDeGracia = primeraCookie(graciaConcurrente)
+    expect(cookieDeGracia).toBeDefined()
+    // Y la rotación normal SÍ revocó a `cookieRotada`: la ventana de gracia la
+    // avanzó una vez más, no le devolvió el mismo token que ya tenía.
+    expect(cookieDeGracia).not.toBe(cookieRotada)
 
-    // Logout con la cookie vigente (la rotada) revoca la familia entera.
+    // Logout con la cookie vigente (la de la ventana de gracia) revoca la
+    // familia entera.
     await request(url)
       .post('/auth/logout')
-      .set('Cookie', cookieRotada ?? '')
+      .set('Cookie', cookieDeGracia ?? '')
       .expect(200)
 
     // Y ya no se puede refrescar con lo que quedó vivo: la familia está muerta.
     await request(url)
       .post('/auth/refresh')
-      .set('Cookie', cookieRotada ?? '')
+      .set('Cookie', cookieDeGracia ?? '')
       .expect(401)
   })
 
@@ -213,6 +235,14 @@ describe('Auth e2e', () => {
       .expect(201)
 
     expect(segundo.body).toEqual(primero.body)
+
+    // El correo de verificación del primer registro es el válido: el segundo
+    // intento no genera cuenta nueva, así que no hay un segundo token que valga.
+    const { html } = await esperarCorreoA('duplicado@test.com')
+    await request(url)
+      .post('/auth/verify-email')
+      .send({ token: tokenDelEnlace(html) })
+      .expect(200)
 
     // Y la cuenta original sigue siendo la suya: ni nombre ni contraseña nuevos.
     await request(url)
@@ -273,6 +303,58 @@ describe('Auth e2e', () => {
 
   it('verify-email sin token responde 400, no 500', async () => {
     await request(url).post('/auth/verify-email').send({}).expect(400)
+  })
+
+  describe('reenvío del correo de verificación', () => {
+    it('devuelve el MISMO 202 y el mismo cuerpo exista la cuenta o no', async () => {
+      await request(url)
+        .post('/auth/register')
+        .send({ email: 'sinverificar@test.com', password: 'una-contraseña-larga', fullName: 'Sin Verificar' })
+        .expect(201)
+
+      await request(url)
+        .post('/auth/register')
+        .send({ email: 'verificada@test.com', password: 'una-contraseña-larga', fullName: 'Verificada' })
+        .expect(201)
+      const { html } = await esperarCorreoA('verificada@test.com')
+      await request(url).post('/auth/verify-email').send({ token: tokenDelEnlace(html) }).expect(200)
+
+      const pendiente = await request(url)
+        .post('/auth/resend-verification')
+        .send({ email: 'sinverificar@test.com' })
+      const inexistente = await request(url)
+        .post('/auth/resend-verification')
+        .send({ email: 'nadie@test.com' })
+      const verificada = await request(url)
+        .post('/auth/resend-verification')
+        .send({ email: 'verificada@test.com' })
+
+      // Este test es la defensa contra la enumeración de cuentas: si alguna vez
+      // divergen status o cuerpo, el endpoint dice quién tiene cuenta aquí.
+      expect(pendiente.status).toBe(202)
+      expect(inexistente.status).toBe(202)
+      expect(verificada.status).toBe(202)
+      expect(inexistente.body).toEqual(pendiente.body)
+      expect(verificada.body).toEqual(pendiente.body)
+    })
+
+    it('rechaza un email mal formado con 400', async () => {
+      const res = await request(url).post('/auth/resend-verification').send({ email: 'no-es-un-email' })
+
+      expect(res.status).toBe(400)
+    })
+
+    it('el cuarto intento en una hora contra el mismo IP+correo da 429', async () => {
+      function pedir(): request.Test {
+        return request(url).post('/auth/resend-verification').send({ email: 'limite-resend@test.com' })
+      }
+
+      for (let i = 0; i < 3; i += 1) await pedir().expect(202)
+
+      const cortado = await pedir()
+
+      expect(cortado.status).toBe(429)
+    })
   })
 
   describe('límite de intentos de login', () => {

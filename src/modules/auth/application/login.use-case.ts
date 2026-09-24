@@ -8,7 +8,7 @@ import {
 } from '@/modules/users/application/password-hasher.port'
 import { USER_REPOSITORY, type UserRepository } from '@/modules/users/application/user.repository'
 
-import { CredencialesInvalidasError } from '../domain/auth-errors'
+import { CredencialesInvalidasError, EmailNoVerificadoError } from '../domain/auth-errors'
 import { SESSION_REPOSITORY, type SessionRepository } from './session.repository'
 import { TokenService } from './token.service'
 
@@ -55,6 +55,11 @@ export class LoginUseCase {
     // Mismo error, mismo código, para "no existe" y para "contraseña mal":
     // distinguirlos es lo que permite enumerar cuentas.
     if (usuario === null || !claveValida) throw new CredencialesInvalidasError()
+
+    // DESPUÉS de validar la contraseña, nunca antes: responder "verifica tu correo"
+    // a quien sólo acertó el email confirmaría que esa cuenta existe, que es justo
+    // lo que el hash señuelo de arriba está evitando.
+    if (usuario.emailVerifiedAt === null) throw new EmailNoVerificadoError()
 
     const familyId = randomUUID()
     const refresh = this.tokens.generarRefresh()

@@ -63,6 +63,19 @@ export class PrismaSessionRepository implements SessionRepository {
     })
   }
 
+  async buscarSesionVivaDeFamilia(familyId: string): Promise<SesionPersistida | null> {
+    const fila = await this.prisma.session.findFirst({ where: { familyId, revokedAt: null } })
+    if (fila === null) return null
+
+    return {
+      id: fila.id,
+      userId: fila.userId,
+      familyId: fila.familyId,
+      expiresAt: fila.expiresAt,
+      revokedAt: fila.revokedAt,
+    }
+  }
+
   /**
    * Serializa `rotar` y `revocarFamilia` de UNA familia con un cerrojo
    * consultivo que se suelta solo al terminar la transacción.

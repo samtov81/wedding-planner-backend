@@ -3,16 +3,23 @@ import type { Request, Response } from 'express'
 
 import { ENV } from '@/config/config.module'
 import type { Env } from '@/config/env.schema'
-import { LIMITADOR_LOGIN, LIMITADOR_REGISTER, LIMITADOR_VERIFY_EMAIL, LimiteDeRuta } from '@/shared/http/limitadores'
+import {
+  LIMITADOR_LOGIN,
+  LIMITADOR_REGISTER,
+  LIMITADOR_RESEND_VERIFICATION,
+  LIMITADOR_VERIFY_EMAIL,
+  LimiteDeRuta,
+} from '@/shared/http/limitadores'
 import { validarCon } from '@/shared/http/validar-con'
 
 import { LoginUseCase } from '../application/login.use-case'
 import { LogoutUseCase } from '../application/logout.use-case'
 import { RefreshUseCase } from '../application/refresh.use-case'
 import { RegisterUseCase } from '../application/register.use-case'
+import { ResendVerificationUseCase } from '../application/resend-verification.use-case'
 import { VerifyEmailUseCase } from '../application/verify-email.use-case'
 import { RefreshInvalidoError } from '../domain/token-errors'
-import { loginSchema, registerSchema, verifyEmailSchema } from './auth.dto'
+import { loginSchema, registerSchema, resendVerificationSchema, verifyEmailSchema } from './auth.dto'
 import { CurrentUser, type UsuarioAutenticado } from './current-user.decorator'
 import { JwtAuthGuard } from './jwt-auth.guard'
 
@@ -26,6 +33,7 @@ export class AuthController {
     private readonly refreshUseCase: RefreshUseCase,
     private readonly logoutUseCase: LogoutUseCase,
     private readonly verifyEmailUseCase: VerifyEmailUseCase,
+    private readonly resendVerificationUseCase: ResendVerificationUseCase,
     @Inject(ENV) private readonly env: Env,
   ) {}
 
@@ -119,6 +127,29 @@ export class AuthController {
     // eslint-disable-next-line security/detect-possible-timing-attacks -- no se compara un secreto: sólo se mira si la cookie venía o no
     if (token !== undefined) await this.logoutUseCase.ejecutar(token)
     res.clearCookie(COOKIE_REFRESH, { path: '/auth' })
+    return { ok: true }
+  }
+
+  /**
+   * Reenvío del correo de verificación. Responde 202 y el mismo cuerpo SIEMPRE:
+   * exista la cuenta, esté ya verificada o no exista. El caso de uso devuelve
+   * `void` justo para que aquí no haya nada que contar — cualquier diferencia
+   * visible convertiría esto en un enumerador de cuentas.
+   *
+   * 3 por hora por IP+correo: sin límite, el endpoint es un cañón de correo
+   * gratis contra la dirección de cualquiera y quema la reputación de envío del
+   * dominio. Misma clave compuesta que el login.
+   */
+  @Post('resend-verification')
+  @HttpCode(202)
+  @LimiteDeRuta(LIMITADOR_RESEND_VERIFICATION, {
+    limit: 3,
+    ttl: 3_600_000,
+    getTracker: rastreoPorIpYCorreo,
+  })
+  async resendVerification(@Body() body: unknown): Promise<{ ok: true }> {
+    const datos = validarCon(resendVerificationSchema, body)
+    await this.resendVerificationUseCase.ejecutar(datos)
     return { ok: true }
   }
 

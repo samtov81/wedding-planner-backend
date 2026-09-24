@@ -11,6 +11,7 @@ import { REGISTRATION_NOTICE_RENDERER, type RegistrationNoticeRenderer } from '@
 
 const payloadVerificacionSchema = z.object({
   userId: z.string().min(1),
+  tokenId: z.string().min(1),
   email: z.string().email(),
   fullName: z.string().min(1),
   token: z.string().min(1),
@@ -46,7 +47,7 @@ export class EmailProcessor extends WorkerHost {
     const leido = payloadVerificacionSchema.safeParse(job.data)
     if (!leido.success) throw new UnrecoverableError('Payload de verificación inválido')
 
-    const { email, fullName, token, userId } = leido.data
+    const { email, fullName, token, userId, tokenId } = leido.data
     const { html, text } = await this.plantillaVerificacion.render({
       fullName,
       verifyUrl: `${this.env.APP_URL}/verify-email?token=${encodeURIComponent(token)}`,
@@ -58,7 +59,12 @@ export class EmailProcessor extends WorkerHost {
       html,
       text,
       tags: { userId },
-      idempotencyKey: `verify-email-${userId}`,
+      // La clave lleva el TOKEN, no el usuario: con el id del usuario, el segundo
+      // correo de verificación del mismo usuario (un reenvío) choca con la clave
+      // del primero y Resend lo descarta como duplicado — cuenta como enviado sin
+      // salir. Por token, la idempotencia sigue siendo la real (un token, un
+      // correo, reintentos de BullMQ incluidos) y cada reenvío sale.
+      idempotencyKey: `verify-email-${tokenId}`,
     })
   }
 

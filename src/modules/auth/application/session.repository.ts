@@ -36,6 +36,21 @@ export interface SessionRepository {
    * de la misma familia: ninguna hija de una rotación concurrente sobrevive.
    */
   revocarFamilia(familyId: string): Promise<void>
+  /**
+   * La sesión VIVA (no revocada) de una familia, si la hay. La usa la
+   * ventana de gracia de `RefreshUseCase`: cuando dos peticiones comparten el
+   * mismo refresh (dos pestañas con la misma cookie, o una que perdió el
+   * compare-and-swap de `rotar` por milisegundos), la perdedora no puede
+   * reconstruir el token en claro de la sesión que ganó — sólo se guarda su
+   * hash — así que en vez de "devolver los tokens de la sucesora" literal, se
+   * la usa como punto de partida para una rotación más, produciendo tokens
+   * NUEVOS y válidos para la petición perdedora sin matar la familia. Como
+   * en cada instante sólo hay una sesión viva por familia salvo en el
+   * brevísimo hueco entre el CAS y el insert de `rotar`, este método basta
+   * para localizarla sin necesitar un enlace explícito padre→hijo en el
+   * modelo.
+   */
+  buscarSesionVivaDeFamilia(familyId: string): Promise<SesionPersistida | null>
 }
 
 export const SESSION_REPOSITORY = Symbol('SESSION_REPOSITORY')

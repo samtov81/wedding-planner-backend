@@ -7,9 +7,15 @@
 export abstract class DomainError extends Error {
   abstract readonly httpStatus: number
 
+  /**
+   * `details` es para el cliente, no para el log: datos estructurados que la UI
+   * necesita para reaccionar (p. ej. qué campos faltan para publicar). Nunca
+   * lleva datos personales ni internos.
+   */
   constructor(
     message: string,
     readonly code: string,
+    readonly details?: unknown,
   ) {
     super(message)
     this.name = new.target.name
@@ -48,7 +54,7 @@ export class ConflictError extends DomainError {
 /** Petición bien formada pero imposible de cumplir. Ej.: invitar sin email. */
 export class UnprocessableError extends DomainError {
   readonly httpStatus = 422
-  constructor(message: string, code = 'UNPROCESSABLE') {
-    super(message, code)
+  constructor(message: string, code = 'UNPROCESSABLE', details?: unknown) {
+    super(message, code, details)
   }
 }

@@ -1,8 +1,9 @@
 import { inspect } from 'node:util'
 
-import { ArgumentsHost, Logger } from '@nestjs/common'
+import type { ArgumentsHost } from '@nestjs/common'
+import { Logger } from '@nestjs/common'
 
-import { ConflictError, NotFoundError } from '../domain/domain-error'
+import { ConflictError, NotFoundError, UnprocessableError } from '../domain/domain-error'
 import { DomainExceptionFilter } from './domain-exception.filter'
 
 function hostFalso(url = '/events/1'): {
@@ -143,6 +144,35 @@ describe('DomainExceptionFilter', () => {
       )
 
       expect(status).toHaveBeenCalledWith(500)
+    })
+  })
+
+  describe('DomainExceptionFilter con details', () => {
+    it('serializa los details de un DomainError', () => {
+      const { host, json, status } = hostFalso()
+      new DomainExceptionFilter().catch(
+        new UnprocessableError('Faltan datos', 'EVENT_INCOMPLETE', { faltantes: ['venue'] }),
+        host,
+      )
+      expect(status).toHaveBeenCalledWith(422)
+      expect(json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: 'EVENT_INCOMPLETE',
+          message: 'Faltan datos',
+          details: { faltantes: ['venue'] },
+        }),
+      )
+    })
+
+    it('sin details no añade la clave', () => {
+      const { host, json, status } = hostFalso()
+      new DomainExceptionFilter().catch(new UnprocessableError('X'), host)
+      expect(status).toHaveBeenCalledWith(422)
+      expect(json).toHaveBeenCalledWith(
+        expect.objectContaining({ code: 'UNPROCESSABLE', message: 'X' }),
+      )
+      // Verifica que no tiene la propiedad 'details'
+      expect(json.mock.calls[0]?.[0]).not.toHaveProperty('details')
     })
   })
 })

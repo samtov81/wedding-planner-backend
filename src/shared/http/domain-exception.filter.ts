@@ -47,7 +47,11 @@ export class DomainExceptionFilter implements ExceptionFilter {
     if (exception instanceof DomainError) {
       return {
         status: exception.httpStatus,
-        cuerpo: { code: exception.code, message: exception.message },
+        cuerpo: {
+          code: exception.code,
+          message: exception.message,
+          ...(exception.details !== undefined ? { details: exception.details } : {}),
+        },
       }
     }
 

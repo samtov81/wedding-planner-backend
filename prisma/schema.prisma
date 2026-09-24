@@ -60,6 +60,22 @@ enum PasswordResetStatus {
   CONSUMED
 }
 
+enum EventStatus {
+  DRAFT
+  ACTIVE
+}
+
+enum ScheduleItemStatus {
+  PENDING
+  IN_PROGRESS
+  DONE
+}
+
+enum ExpenseStatus {
+  PENDING
+  PAID
+}
+
 model User {
   id              String     @id @default(uuid()) @db.Uuid
   email           String     @unique
@@ -77,6 +93,7 @@ model User {
   notifications               Notification[]
   emailVerificationTokens     EmailVerificationToken[]
   passwordResetTokens         PasswordResetToken[]
+  expensesCreated             Expense[]                  @relation("ExpenseCreatedBy")
 
   @@map("users")
 }
@@ -124,24 +141,80 @@ model VendorProfile {
 }
 
 model Event {
-  id               String   @id @default(uuid()) @db.Uuid
+  id               String      @id @default(uuid()) @db.Uuid
   name             String
-  weddingDate      DateTime
-  timezone         String   @default("UTC")
-  venueLocation    String?
-  rsvpDeadlineDays Int      @default(14)
-  ownerId          String   @db.Uuid
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  status           EventStatus @default(DRAFT)
+  weddingDate      DateTime?
+  timezone         String      @default("UTC")
+  currency         String      @default("USD") @db.Char(3)
+  totalBudget      Decimal?    @db.Decimal(12, 2)
+  venueName        String?
+  venueAddress     String?
+  venueLat         Decimal?    @db.Decimal(9, 6)
+  venueLng         Decimal?    @db.Decimal(9, 6)
+  venueMapboxId    String?
+  rsvpDeadlineDays Int         @default(14)
+  ownerId          String      @db.Uuid
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
 
   owner         User              @relation("EventOwner", fields: [ownerId], references: [id])
   memberships   EventMembership[]
   vendors       EventVendor[]
   guests        Guest[]
   notifications Notification[]
+  scheduleItems ScheduleItem[]
+  expenses      Expense[]
 
   @@index([ownerId])
   @@map("events")
+}
+
+model ScheduleItem {
+  id               String             @id @default(uuid()) @db.Uuid
+  eventId          String             @db.Uuid
+  title            String
+  description      String?
+  startsAt         DateTime
+  endsAt           DateTime?
+  locationName     String?
+  locationAddress  String?
+  locationLat      Decimal?           @db.Decimal(9, 6)
+  locationLng      Decimal?           @db.Decimal(9, 6)
+  locationMapboxId String?
+  status           ScheduleItemStatus @default(PENDING)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, startsAt])
+  @@map("schedule_items")
+}
+
+model Expense {
+  id            String        @id @default(uuid()) @db.Uuid
+  eventId       String        @db.Uuid
+  eventVendorId String?       @db.Uuid
+  payeeName     String?
+  concept       String
+  category      String
+  amount        Decimal       @db.Decimal(12, 2)
+  status        ExpenseStatus @default(PENDING)
+  dueDate       DateTime?     @db.Date
+  paidAt        DateTime?
+  notes         String?
+  createdById   String        @db.Uuid
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  event       Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  eventVendor EventVendor? @relation(fields: [eventVendorId], references: [id], onDelete: Restrict)
+  createdBy   User         @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
+
+  @@index([eventId, createdAt, id])
+  @@index([eventVendorId])
+  @@map("expenses")
 }
 
 /// Quienes PLANIFICAN el evento. No incluye vendors: ver EventVendor.
@@ -189,6 +262,7 @@ model EventVendor {
   /// (VendorProfileStatus ya tiene ese valor), que no requiere tocar
   /// ninguna fila de EventVendor.
   vendorProfile VendorProfile? @relation(fields: [vendorProfileId], references: [id], onDelete: Restrict)
+  expenses      Expense[]
 
   @@index([eventId])
   @@index([vendorProfileId])

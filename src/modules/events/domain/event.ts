@@ -13,7 +13,7 @@ export const DIAS_DE_CIERRE_POR_DEFECTO = 14
 export interface Event {
   id: string
   name: string
-  weddingDate: Date
+  weddingDate: Date | null
   timezone: string
   venueLocation: string | null
   /** El RSVP cierra `weddingDate − rsvpDeadlineDays` días (bloque A §2). 0–365. */

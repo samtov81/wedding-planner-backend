@@ -14,6 +14,41 @@
 | `npm run db:docker:migrate` | Apply migrations inside Docker containers |
 | `npm run db:docker:reset` | Reset Docker volumes and restart services |
 
+## Schema
+
+### `events`
+
+| Column | Notes |
+|---|---|
+| `status` | `EventStatus` (`DRAFT` \| `ACTIVE`), defaults to `DRAFT`. New events start as drafts; existing rows were backfilled to `ACTIVE` since they already had a mandatory `weddingDate`. |
+| `weddingDate` | Nullable — a `DRAFT` event can exist without a date. |
+| `currency` | `CHAR(3)`, defaults to `USD`. |
+| `totalBudget` | `DECIMAL(12,2)`, nullable. |
+| `venueName`, `venueAddress`, `venueLat`, `venueLng`, `venueMapboxId` | Venue fields. `venueAddress` replaces the old free-text `venueLocation` column (data was copied over during the migration). |
+| `rsvpDeadlineDays` | Unchanged. |
+
+CHECK constraints:
+- `events_venue_coords` — `venueLat`/`venueLng` must be both present or both absent, and each must be within its valid range (`-90..90` / `-180..180`).
+- `events_total_budget_no_negativo` — `totalBudget`, when set, cannot be negative.
+- `events_activo_con_fecha` — an `ACTIVE` event must have a `weddingDate`; only `DRAFT` events can omit it.
+
+### `schedule_items`
+
+Belongs to an `Event` (`onDelete: Cascade`). Tracks timeline entries (`ScheduleItemStatus`: `PENDING` \| `IN_PROGRESS` \| `DONE`), each with an optional location (name, address, coordinates, Mapbox id).
+
+CHECK constraints:
+- `schedule_items_rango` — `endsAt`, when set, cannot be earlier than `startsAt`.
+- `schedule_items_coords` — same both-or-neither / range rule as `events_venue_coords`, applied to `locationLat`/`locationLng`.
+
+### `expenses`
+
+Belongs to an `Event` (`onDelete: Cascade`) and optionally to an `EventVendor` (`onDelete: Restrict` — an `EventVendor` with expenses cannot be deleted). Tracks `ExpenseStatus` (`PENDING` \| `PAID`).
+
+CHECK constraints:
+- `expenses_monto_positivo` — `amount` must be strictly positive.
+- `expenses_origen_exclusivo` — exactly one of `eventVendorId` or `payeeName` must be set (an expense is either billed to a booked vendor or to an external payee, never both, never neither).
+- `expenses_pagado_con_fecha` — `status = 'PAID'` if and only if `paidAt` is set.
+
 ## Development Workflow
 
 ### Creating a New Migration

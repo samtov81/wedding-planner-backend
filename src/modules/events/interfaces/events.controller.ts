@@ -22,7 +22,7 @@ import { RequireEventAccess } from './require-event-access.decorator'
 interface EventoRespuesta {
   id: string
   name: string
-  weddingDate: string
+  weddingDate: string | null
   timezone: string
   venueLocation: string | null
   /** Bloque A §2. La pareja necesita poder leer el plazo que fijó, no sólo escribirlo. */
@@ -107,7 +107,7 @@ export class EventsController {
   private aRespuesta(evento: {
     id: string
     name: string
-    weddingDate: Date
+    weddingDate: Date | null
     timezone: string
     venueLocation: string | null
     rsvpDeadlineDays: number
@@ -116,7 +116,7 @@ export class EventsController {
     return {
       id: evento.id,
       name: evento.name,
-      weddingDate: evento.weddingDate.toISOString(),
+      weddingDate: evento.weddingDate?.toISOString() ?? null,
       timezone: evento.timezone,
       venueLocation: evento.venueLocation,
       rsvpDeadlineDays: evento.rsvpDeadlineDays,

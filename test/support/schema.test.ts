@@ -107,4 +107,132 @@ describe('restricciones del esquema', () => {
       id: perfil.id,
     })
   })
+
+  describe('eventos, cronograma y gastos', () => {
+    let ownerId: string
+
+    beforeAll(async () => {
+      const owner = await prisma.user.findFirstOrThrow({ where: { email: 'owner@test.com' } })
+      ownerId = owner.id
+    })
+
+    it('un evento nuevo nace en DRAFT y admite no tener fecha', async () => {
+      const evento = await prisma.event.create({ data: { name: 'Borrador', ownerId } })
+      expect(evento.status).toBe('DRAFT')
+      expect(evento.weddingDate).toBeNull()
+      expect(evento.currency).toBe('USD')
+    })
+
+    it('rechaza un evento ACTIVE sin fecha', async () => {
+      await expect(
+        prisma.event.create({ data: { name: 'X', ownerId, status: 'ACTIVE' } }),
+      ).rejects.toThrow(/events_activo_con_fecha/)
+    })
+
+    it('rechaza latitud sin longitud en el venue', async () => {
+      await expect(
+        prisma.event.create({ data: { name: 'X', ownerId, venueLat: 4.6 } }),
+      ).rejects.toThrow(/events_venue_coords/)
+    })
+
+    it('rechaza una latitud fuera de rango', async () => {
+      await expect(
+        prisma.event.create({ data: { name: 'X', ownerId, venueLat: 91, venueLng: 0 } }),
+      ).rejects.toThrow(/events_venue_coords/)
+    })
+
+    it('rechaza un presupuesto total negativo', async () => {
+      await expect(
+        prisma.event.create({ data: { name: 'X', ownerId, totalBudget: -1 } }),
+      ).rejects.toThrow(/events_total_budget_no_negativo/)
+    })
+
+    it('rechaza un ítem de cronograma que acaba antes de empezar', async () => {
+      await expect(
+        prisma.scheduleItem.create({
+          data: {
+            eventId,
+            title: 'Fiesta',
+            startsAt: new Date('2027-06-12T20:00:00Z'),
+            endsAt: new Date('2027-06-12T19:00:00Z'),
+          },
+        }),
+      ).rejects.toThrow(/schedule_items_rango/)
+    })
+
+    it('rechaza un gasto con proveedor Y beneficiario externo', async () => {
+      const vendor = await prisma.eventVendor.create({
+        data: { eventId, externalName: 'DJ', category: 'Music' },
+      })
+      await expect(
+        prisma.expense.create({
+          data: {
+            eventId,
+            eventVendorId: vendor.id,
+            payeeName: 'Otro',
+            concept: 'Anticipo',
+            category: 'Music',
+            amount: 100,
+            createdById: ownerId,
+          },
+        }),
+      ).rejects.toThrow(/expenses_origen_exclusivo/)
+    })
+
+    it('rechaza un gasto sin ningún origen', async () => {
+      await expect(
+        prisma.expense.create({
+          data: { eventId, concept: 'X', category: 'X', amount: 100, createdById: ownerId },
+        }),
+      ).rejects.toThrow(/expenses_origen_exclusivo/)
+    })
+
+    it('rechaza un gasto de monto cero', async () => {
+      await expect(
+        prisma.expense.create({
+          data: {
+            eventId,
+            payeeName: 'Imprenta',
+            concept: 'X',
+            category: 'X',
+            amount: 0,
+            createdById: ownerId,
+          },
+        }),
+      ).rejects.toThrow(/expenses_monto_positivo/)
+    })
+
+    it('rechaza un gasto PAID sin fecha de pago', async () => {
+      await expect(
+        prisma.expense.create({
+          data: {
+            eventId,
+            payeeName: 'Imprenta',
+            concept: 'X',
+            category: 'X',
+            amount: 10,
+            status: 'PAID',
+            createdById: ownerId,
+          },
+        }),
+      ).rejects.toThrow(/expenses_pagado_con_fecha/)
+    })
+
+    it('impide borrar un EventVendor que tiene gastos', async () => {
+      const vendor = await prisma.eventVendor.create({
+        data: { eventId, externalName: 'Flores', category: 'Floral' },
+      })
+      await prisma.expense.create({
+        data: {
+          eventId,
+          eventVendorId: vendor.id,
+          concept: 'Anticipo',
+          category: 'Floral',
+          amount: 50,
+          createdById: ownerId,
+        },
+      })
+      await expect(prisma.eventVendor.delete({ where: { id: vendor.id } })).rejects.toThrow()
+    })
+  })
 })

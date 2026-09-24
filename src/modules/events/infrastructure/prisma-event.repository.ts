@@ -138,7 +138,7 @@ export class PrismaEventRepository implements EventRepository {
       name: fila.name,
       weddingDate: fila.weddingDate,
       timezone: fila.timezone,
-      venueLocation: fila.venueLocation,
+      venueLocation: fila.venueAddress,
       rsvpDeadlineDays: fila.rsvpDeadlineDays,
       ownerId: fila.ownerId,
       createdAt: fila.createdAt,

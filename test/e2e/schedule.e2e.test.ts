@@ -117,4 +117,28 @@ describe('Cronograma del evento e2e', () => {
       .set('Authorization', `Bearer ${extrano.accessToken}`)
       .expect(404)
   })
+
+  it('un vendor BOOKED sobre un DRAFT recibe 404, no 403, en el cronograma', async () => {
+    // Mismo motivo que `events-draft.e2e`: un 403 en vez de 404 delataría que
+    // el borrador existe. `buscarContratacionReservada` sólo mira eventos
+    // ACTIVE, así que un DRAFT tiene que dar 404 también en esta ruta.
+    const fotografo = await registrarYEntrar('foto-schedule@test.com', 'Fotógrafo')
+    const creado = await request(url)
+      .post('/events')
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ name: 'Boda con fotógrafo (schedule)' })
+      .expect(201)
+    const draft = (creado.body as { id: string }).id
+    const perfil = await prisma.vendorProfile.create({
+      data: { userId: fotografo.id, businessName: 'Luz', category: 'Photo', status: 'PUBLISHED' },
+    })
+    await prisma.eventVendor.create({
+      data: { eventId: draft, vendorProfileId: perfil.id, category: 'Photo', status: 'BOOKED' },
+    })
+
+    await request(url)
+      .get(`/events/${draft}/schedule`)
+      .set('Authorization', `Bearer ${fotografo.accessToken}`)
+      .expect(404)
+  })
 })

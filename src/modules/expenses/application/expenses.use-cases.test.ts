@@ -80,6 +80,24 @@ describe('casos de uso de gastos', () => {
     expect(revertido.paidAt).toBeNull()
   })
 
+  it('un PATCH sin status no toca paidAt (no pisa un pago concurrente)', async () => {
+    // `update-expense.use-case`: si `cambios.status` no llega, `paidAt` no debe
+    // ir en los cambios que se pasan al repositorio. Sin este guard, un PATCH
+    // de `{notes}` que corre a la vez que un `{status:'PAID'}` reescribiría
+    // `paidAt` con un valor calculado sobre una lectura ya obsoleta.
+    const { crear, editar, gastos } = montar()
+    const pagado = await crear.ejecutar(
+      EVENTO,
+      { ...base, status: 'PAID', origen: { kind: 'external', payeeName: 'X' } },
+      'ana',
+    )
+    const espia = vi.spyOn(gastos, 'actualizar')
+
+    await editar.ejecutar(EVENTO, pagado.id, { notes: 'nueva nota' })
+
+    expect(espia.mock.calls[0]?.[2]).not.toHaveProperty('paidAt')
+  })
+
   it('editar un gasto de otro evento → 404', async () => {
     const { crear, editar } = montar()
     const gasto = await crear.ejecutar(

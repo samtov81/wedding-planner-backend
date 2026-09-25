@@ -25,9 +25,15 @@ export class UpdateExpenseUseCase {
     ) {
       throw new ProveedorDelEventoNoEncontradoError()
     }
+    // `paidAt` sólo se recalcula cuando el PATCH trae `status`: si no, un
+    // cambio de `{notes}` concurrente con un `{status:'PAID'}` de otra
+    // petición pisaría el `paidAt` recién fijado con uno calculado sobre esta
+    // lectura, ya obsoleta.
     return await this.gastos.actualizar(eventId, expenseId, {
       ...cambios,
-      paidAt: paidAtTrasCambio(actual, cambios.status, new Date()),
+      ...(cambios.status !== undefined
+        ? { paidAt: paidAtTrasCambio(actual, cambios.status, new Date()) }
+        : {}),
     })
   }
 }

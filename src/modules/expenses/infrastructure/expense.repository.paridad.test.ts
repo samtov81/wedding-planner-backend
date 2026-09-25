@@ -235,6 +235,28 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
       )
       expect(porVendor.items.map((e) => e.concept)).toEqual(['G1'])
 
+      // Ronda de arreglo 1 (I-1): `origin` y `eventVendorId` combinados deben
+      // ANDearse, no que uno pise al otro. `origin: 'external'` +
+      // `eventVendorId` de un vendor real es CONTRADICTORIO (G1 es el único
+      // gasto de ese vendor y es 'vendor', no 'external') → vacío.
+      const contradictorio = await repo.listar(
+        eventId,
+        { status: null, origin: 'external', eventVendorId: vendorId },
+        null,
+        20,
+      )
+      expect(contradictorio.items).toEqual([])
+
+      // `origin: 'vendor'` + el mismo `eventVendorId` es REDUNDANTE pero
+      // consistente: sigue devolviendo sólo G1.
+      const vendorYOrigin = await repo.listar(
+        eventId,
+        { status: null, origin: 'vendor', eventVendorId: vendorId },
+        null,
+        20,
+      )
+      expect(vendorYOrigin.items.map((e) => e.concept)).toEqual(['G1'])
+
       // Pagina con limit: 1, en orden createdAt desc, hasta que nextCursor sea null.
       const conceptos: string[] = []
       let cursor: ReturnType<typeof decodeCursor> | null = null

@@ -81,9 +81,17 @@ export class PrismaExpenseRepository implements ExpenseRepository {
       where: {
         eventId,
         ...(filtro.status !== null ? { status: filtro.status } : {}),
-        ...(filtro.origin === 'vendor' ? { eventVendorId: { not: null } } : {}),
-        ...(filtro.origin === 'external' ? { eventVendorId: null } : {}),
-        ...(filtro.eventVendorId !== null ? { eventVendorId: filtro.eventVendorId } : {}),
+        // `origin` y `eventVendorId` son dos condiciones INDEPENDIENTES sobre
+        // la misma columna: si fueran dos claves sueltas del `where`, la
+        // segunda machacaría a la primera en vez de combinarse (JS no permite
+        // dos claves `eventVendorId` en el mismo objeto). Un `AND` con una
+        // entrada por condición las combina de verdad, igual que hace
+        // `ExpenseRepositoryEnMemoria.listar`.
+        AND: [
+          ...(filtro.origin === 'vendor' ? [{ eventVendorId: { not: null } }] : []),
+          ...(filtro.origin === 'external' ? [{ eventVendorId: null }] : []),
+          ...(filtro.eventVendorId !== null ? [{ eventVendorId: filtro.eventVendorId }] : []),
+        ],
         ...(cursor !== null
           ? {
               OR: [

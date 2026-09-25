@@ -171,6 +171,36 @@ describe('InvitationProcessor', () => {
     expect(enviado?.tags).toMatchObject({ invitationId: 'inv-1' })
   })
 
+  it('un evento sin fecha manda "a date to be confirmed", no revienta', async () => {
+    // Un borrador (Tarea de eventos) no tiene `weddingDate` hasta publicarse,
+    // pero sus invitados sí pueden estar en RSVP: el correo tiene que salir
+    // igual, con la plantilla avisando de que la fecha está por confirmar.
+    const recibido: Array<{ weddingDate: string }> = []
+    const plantillaQueGuarda: InvitationRenderer = {
+      render: (datos) => {
+        recibido.push({ weddingDate: datos.weddingDate })
+        return plantillaDoble.render(datos)
+      },
+    }
+    const procesadorSinFecha = new InvitationProcessor(
+      invitaciones,
+      mail,
+      { APP_URL: 'https://app.test' },
+      plantillaQueGuarda,
+    )
+    invitaciones.añadir({
+      id: 'inv-1',
+      status: 'QUEUED',
+      guest: { email: 'ana@test.com', name: 'Ana' },
+      event: { name: 'Boda de Ana', weddingDate: null },
+    })
+
+    await procesadorSinFecha.process(jobFalso({ invitationId: 'inv-1' }))
+
+    expect(recibido).toEqual([{ weddingDate: 'a date to be confirmed' }])
+    expect(mail.enviados).toHaveLength(1)
+  })
+
   it('procesar DOS VECES el mismo job manda UN solo correo', async () => {
     // BullMQ reentrega: la idempotencia no es hipotética.
     invitaciones.añadir({ id: 'inv-1', status: 'QUEUED' })

@@ -24,6 +24,8 @@ describe('createEventSchema', () => {
     [{ name: 'B', totalBudget: '1,500' }],
     [{ name: 'B', totalBudget: -1 }],
     [{ name: 'B', venue: { address: 'X', lat: 100, lng: 0 } }],
+    [{ name: 'B', weddingDate: 0 }],
+    [{ name: 'B', weddingDate: true }],
   ])('rechaza %o', (entrada) => {
     expect(createEventSchema.safeParse(entrada).success).toBe(false)
   })

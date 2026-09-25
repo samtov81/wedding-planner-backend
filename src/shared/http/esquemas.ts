@@ -28,5 +28,12 @@ export const ubicacionSchema = z
   .strict()
   .transform((entrada) => crearUbicacion(entrada))
 
-/** `YYYY-MM-DD` o ISO completo → Date. */
-export const fechaSchema = z.coerce.date()
+/**
+ * `YYYY-MM-DD` o ISO completo con offset → Date. Sólo string: `z.coerce.date()`
+ * aceptaba también number y boolean (`weddingDate: 0` guardaba 1970-01-01), y
+ * la frontera de una API no debe coercer tipos que el cliente no mandó como
+ * fecha.
+ */
+export const fechaSchema = z
+  .union([z.iso.date(), z.iso.datetime({ offset: true })])
+  .transform((valor) => new Date(valor))

@@ -144,6 +144,23 @@ export class EventRepositoryEnMemoria implements EventRepository {
     return Promise.resolve(this.materializar(evento))
   }
 
+  /** La MISMA condición que el `updateMany` de Prisma, comprobada al escribir. */
+  publicarSiCompleto(eventId: string): Promise<Event | null> {
+    const evento = this.eventos.find((e) => e.id === eventId)
+    if (evento === undefined) return Promise.resolve(null)
+    const materializado = this.materializar(evento)
+    if (materializado.status !== 'DRAFT') return Promise.resolve(null)
+    if (
+      materializado.weddingDate === null ||
+      materializado.totalBudget === null ||
+      materializado.venue === null
+    ) {
+      return Promise.resolve(null)
+    }
+    evento.status = 'ACTIVE'
+    return Promise.resolve(this.materializar(evento))
+  }
+
   listarAccesiblesPor(userId: string): Promise<Event[]> {
     const porMembresia = this.membresias
       .filter((m) => m.userId === userId && m.status === MEMBRESIA_CON_ACCESO)

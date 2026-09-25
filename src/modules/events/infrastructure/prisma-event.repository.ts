@@ -136,6 +136,28 @@ export class PrismaEventRepository implements EventRepository {
     return this.aDominio(fila)
   }
 
+  async publicarSiCompleto(eventId: string): Promise<Event | null> {
+    // El `WHERE` repite `camposFaltantesParaPublicar`: si un PATCH concurrente
+    // vació alguno de estos campos entre el check del caso de uso y esta
+    // escritura, `count` da 0 y no hay UPDATE que deshacer.
+    const cliente = clienteDe(this.prisma)
+    const { count } = await cliente.event.updateMany({
+      where: {
+        id: eventId,
+        status: 'DRAFT',
+        weddingDate: { not: null },
+        totalBudget: { not: null },
+        venueAddress: { not: null },
+        venueLat: { not: null },
+        venueLng: { not: null },
+      },
+      data: { status: 'ACTIVE' },
+    })
+    if (count === 0) return null
+    const fila = await cliente.event.findUnique({ where: { id: eventId }, include: CON_CONTEOS })
+    return fila === null ? null : this.aDominio(fila)
+  }
+
   async listarAccesiblesPor(userId: string): Promise<Event[]> {
     const filas = await this.prisma.event.findMany({
       where: {

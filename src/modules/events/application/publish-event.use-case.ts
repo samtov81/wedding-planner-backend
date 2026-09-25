@@ -18,6 +18,17 @@ export class PublishEventUseCase {
     const faltantes = camposFaltantesParaPublicar(actual)
     if (faltantes.length > 0) throw new EventoIncompletoError(faltantes)
 
-    return await this.eventos.actualizar(eventId, { status: 'ACTIVE' })
+    // Escritura condicional: entre el check de arriba y aquí, un PATCH
+    // concurrente puede haber vaciado `venue` o `totalBudget` (por ejemplo,
+    // otra pestaña). `publicarSiCompleto` sólo aplica el ACTIVE si en ese
+    // mismo instante el evento sigue completo; si no, se relee y se repite la
+    // validación para dar el motivo correcto en vez de dejar un ACTIVE a medias.
+    const publicado = await this.eventos.publicarSiCompleto(eventId)
+    if (publicado !== null) return publicado
+
+    const actualizado = await this.eventos.buscarPorId(eventId)
+    if (actualizado === null) throw new EventoNoEncontradoError()
+    if (actualizado.status === 'ACTIVE') return actualizado
+    throw new EventoIncompletoError(camposFaltantesParaPublicar(actualizado))
   }
 }

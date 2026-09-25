@@ -129,4 +129,24 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
       ).rejects.toMatchObject({ code: 'NOT_FOUND' })
     }
   })
+
+  it('publicarSiCompleto publica un DRAFT completo y es null si le falta algo o ya no es DRAFT', async () => {
+    for (const [, repo] of sujetos()) {
+      const completo = await repo.crearConMembresia({
+        name: 'Boda',
+        ownerId,
+        weddingDate: new Date('2027-06-12T00:00:00Z'),
+        totalBudget: '100.00',
+        venue: VENUE,
+      })
+      const publicado = await repo.publicarSiCompleto(completo.id)
+      expect(publicado?.status).toBe('ACTIVE')
+      // Ya no es DRAFT: una segunda llamada no hace nada.
+      expect(await repo.publicarSiCompleto(completo.id)).toBeNull()
+
+      const incompleto = await repo.crearConMembresia({ name: 'Boda a medias', ownerId })
+      expect(await repo.publicarSiCompleto(incompleto.id)).toBeNull()
+      expect((await repo.buscarPorId(incompleto.id))?.status).toBe('DRAFT')
+    }
+  })
 })

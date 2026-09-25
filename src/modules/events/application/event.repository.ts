@@ -63,6 +63,16 @@ export interface EventRepository {
    */
   actualizar(eventId: string, cambios: CambiosEvento): Promise<Event>
 
+  /**
+   * DRAFT → ACTIVE, pero sólo si en el MISMO instante de la escritura el
+   * evento sigue teniendo `weddingDate`, `totalBudget` y `venue`: cierra la
+   * ventana entre comprobar `camposFaltantesParaPublicar` y escribir, que un
+   * PATCH concurrente (`venue: null`, por ejemplo) podía colar. Devuelve
+   * `null` si no se pudo escribir (ya no es DRAFT, o volvió a faltar algo)
+   * para que el caso de uso decida el motivo exacto con una relectura.
+   */
+  publicarSiCompleto(eventId: string): Promise<Event | null>
+
   /** Eventos con membresía ACTIVA, más aquellos donde el usuario está BOOKED. */
   listarAccesiblesPor(userId: string): Promise<Event[]>
 

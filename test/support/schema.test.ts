@@ -235,4 +235,52 @@ describe('restricciones del esquema', () => {
       await expect(prisma.eventVendor.delete({ where: { id: vendor.id } })).rejects.toThrow()
     })
   })
+  describe('distribución de mesas', () => {
+    const mesa = { name: 'Mesa 1', minSeats: 2, maxSeats: 4, seatCount: 2 }
+
+    it('rechaza asientos fuera de mínimo..máximo o un máximo de más de 20', async () => {
+      await expect(
+        prisma.seatingTable.create({ data: { eventId, ...mesa, seatCount: 5 } }),
+      ).rejects.toThrow(/seating_tables_asientos_rango/)
+      await expect(
+        prisma.seatingTable.create({ data: { eventId, ...mesa, seatCount: 1 } }),
+      ).rejects.toThrow(/seating_tables_asientos_rango/)
+      await expect(
+        prisma.seatingTable.create({
+          data: { eventId, ...mesa, seatCount: 21, maxSeats: 21 },
+        }),
+      ).rejects.toThrow(/seating_tables_asientos_rango/)
+    })
+
+    it('rechaza una posición negativa', async () => {
+      await expect(
+        prisma.seatingTable.create({ data: { eventId, ...mesa, x: -1 } }),
+      ).rejects.toThrow(/seating_tables_posicion/)
+    })
+
+    it('rechaza índices negativos o un acompañante 11', async () => {
+      const t = await prisma.seatingTable.create({ data: { eventId, ...mesa } })
+      const g = await prisma.guest.create({ data: { eventId, name: 'Sentado', group: 'Family' } })
+      await expect(
+        prisma.seatAssignment.create({
+          data: { eventId, tableId: t.id, seatIndex: -1, guestId: g.id, companionIndex: 0 },
+        }),
+      ).rejects.toThrow(/seat_assignments_indices/)
+      await expect(
+        prisma.seatAssignment.create({
+          data: { eventId, tableId: t.id, seatIndex: 0, guestId: g.id, companionIndex: 11 },
+        }),
+      ).rejects.toThrow(/seat_assignments_indices/)
+    })
+
+    it('borrar al invitado libera su asiento', async () => {
+      const t = await prisma.seatingTable.create({ data: { eventId, ...mesa } })
+      const g = await prisma.guest.create({ data: { eventId, name: 'Se va', group: 'Family' } })
+      await prisma.seatAssignment.create({
+        data: { eventId, tableId: t.id, seatIndex: 0, guestId: g.id, companionIndex: 0 },
+      })
+      await prisma.guest.delete({ where: { id: g.id } })
+      expect(await prisma.seatAssignment.count({ where: { tableId: t.id } })).toBe(0)
+    })
+  })
 })

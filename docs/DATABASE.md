@@ -49,6 +49,25 @@ CHECK constraints:
 - `expenses_origen_exclusivo` — exactly one of `eventVendorId` or `payeeName` must be set (an expense is either billed to a booked vendor or to an external payee, never both, never neither).
 - `expenses_pagado_con_fecha` — `status = 'PAID'` if and only if `paidAt` is set.
 
+### `seating_tables`
+
+Belongs to an `Event` (`onDelete: Cascade`). A round table of the seating chart. Its seats are the indexes `0..seatCount-1`; there is no row per seat. `x`/`y` are the table's position on the canvas. Tables are listed by `createdAt, id`; the repository writes strictly increasing `createdAt` values so bulk-created tables keep their order.
+
+CHECK constraints:
+- `seating_tables_asientos_rango` — `1 ≤ minSeats ≤ seatCount ≤ maxSeats ≤ 20`.
+- `seating_tables_posicion` — `x` and `y` cannot be negative.
+
+The limit of 100 tables per event is enforced by the use case, not by the database.
+
+### `seat_assignments`
+
+Who sits in a seat: the guest (`companionIndex = 0`) or one of their companions (`1..10`). Belongs to an `Event`, a `SeatingTable` and a `Guest`, all with `onDelete: Cascade` — deleting a table or a guest frees its seats. Unique on `(tableId, seatIndex)` (one person per seat) and on `(guestId, companionIndex)` (one seat per person).
+
+CHECK constraints:
+- `seat_assignments_indices` — `seatIndex ≥ 0` and `companionIndex` between `0` and `10`.
+
+That `seatIndex < seatCount` of its table, and that the person fits the guest's current RSVP, cross tables and are enforced by the use cases, which lock the event row (`SELECT … FOR UPDATE`) inside a transaction before validating. A seat whose occupant no longer fits (the guest declined or lowered their companions) is kept and reported as `sobrante`.
+
 ## Development Workflow
 
 ### Creating a New Migration

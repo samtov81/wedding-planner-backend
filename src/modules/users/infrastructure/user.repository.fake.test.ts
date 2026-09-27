@@ -208,7 +208,11 @@ describe('Equivalencia: UserRepositoryEnMemoria vs PrismaUserRepository', () => 
 
   it('actualizarPassword cambia el hash y marca verificado si no lo estaba, en ambas impls', async () => {
     for (const repo of [repoReal, repoFake]) {
-      const creado = await repo.create({ email: 'reset@test.com', passwordHash: 'viejo', fullName: 'R' })
+      const creado = await repo.create({
+        email: 'reset@test.com',
+        passwordHash: 'viejo',
+        fullName: 'R',
+      })
 
       await repo.actualizarPassword(creado.id, 'nuevo')
 
@@ -220,7 +224,11 @@ describe('Equivalencia: UserRepositoryEnMemoria vs PrismaUserRepository', () => 
 
   it('actualizarPassword NO reescribe emailVerifiedAt si ya estaba verificado, en ambas impls', async () => {
     for (const repo of [repoReal, repoFake]) {
-      const creado = await repo.create({ email: 'yaverif@test.com', passwordHash: 'viejo', fullName: 'V' })
+      const creado = await repo.create({
+        email: 'yaverif@test.com',
+        passwordHash: 'viejo',
+        fullName: 'V',
+      })
       await repo.marcarEmailVerificado(creado.id)
       const antes = (await repo.findByEmail('yaverif@test.com'))?.emailVerifiedAt
 

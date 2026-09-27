@@ -67,10 +67,10 @@ export class SeatingRepositoryEnMemoria implements SeatingRepository {
   actualizarMesa(eventId: string, tableId: string, cambios: CambiosMesa): Promise<Mesa> {
     const mesa = this.mesas.find((m) => m.id === tableId && m.eventId === eventId)
     if (mesa === undefined) return Promise.reject(new MesaNoEncontradaError())
-    for (const clave of Object.keys(cambios) as Array<keyof CambiosMesa>) {
-      const valor = cambios[clave]
-      if (valor !== undefined) Object.assign(mesa, { [clave]: valor })
-    }
+    Object.assign(
+      mesa,
+      Object.fromEntries(Object.entries(cambios).filter(([, valor]) => valor !== undefined)),
+    )
     return Promise.resolve({ ...mesa })
   }
 
@@ -131,9 +131,7 @@ export class SeatingRepositoryEnMemoria implements SeatingRepository {
   }
 
   private quitarDonde(predicado: (a: AsignacionGuardada) => boolean): void {
-    for (let i = this.asignaciones.length - 1; i >= 0; i -= 1) {
-      const a = this.asignaciones[i]
-      if (a !== undefined && predicado(a)) this.asignaciones.splice(i, 1)
-    }
+    const restantes = this.asignaciones.filter((a) => !predicado(a))
+    this.asignaciones.splice(0, this.asignaciones.length, ...restantes)
   }
 }

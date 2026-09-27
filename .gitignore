@@ -1,7 +1,9 @@
 node_modules/
 dist/
-.env*
-!.env*.example
-*.log
+.env
+.env.docker
 coverage/
-.DS_Store
+.mail-outbox/
+
+/generated/prisma
+.claude/worktrees/

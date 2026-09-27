@@ -1,9 +1,11 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '@prisma/client'
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient()
 
 async function main() {
-  console.log('🌱 Starting database seed...');
+  console.log('🌱 Starting database seed...')
+  // Conectar primero: sin base de datos falla aquí, no a mitad de sembrar.
+  await prisma.$connect()
 
   // Add your seed data here
   // Example:
@@ -15,14 +17,14 @@ async function main() {
   //   },
   // });
 
-  console.log('✅ Database seed completed');
+  console.log('✅ Database seed completed')
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Seed failed:', e);
-    process.exit(1);
+    console.error('❌ Seed failed:', e)
+    process.exit(1)
   })
   .finally(async () => {
-    await prisma.$disconnect();
-  });
+    await prisma.$disconnect()
+  })

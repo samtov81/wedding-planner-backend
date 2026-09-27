@@ -52,6 +52,9 @@ export class PrismaUserRepository implements UserRepository {
     const db = clienteDe(this.prisma)
     await db.user.update({ where: { id }, data: { passwordHash } })
     // Condicional en el WHERE: no se pisa la fecha de una verificación previa.
-    await db.user.updateMany({ where: { id, emailVerifiedAt: null }, data: { emailVerifiedAt: new Date() } })
+    await db.user.updateMany({
+      where: { id, emailVerifiedAt: null },
+      data: { emailVerifiedAt: new Date() },
+    })
   }
 }

@@ -14,10 +14,14 @@ function RegistrationAttemptNotice({ fullName }: Props) {
           <Heading>Account security notice</Heading>
           <Text>Hi {fullName},</Text>
           <Text>
-            We received an attempt to create a wedding planner account using this email address. If this was you,
-            your account may already be active — you can log in with your existing credentials.
+            We received an attempt to create a wedding planner account using this email address. If
+            this was you, your account may already be active — you can log in with your existing
+            credentials.
           </Text>
-          <Text>If you did not make this attempt, you can safely ignore this message. No account has been created.</Text>
+          <Text>
+            If you did not make this attempt, you can safely ignore this message. No account has
+            been created.
+          </Text>
           <Text style={{ fontSize: '12px', marginTop: '24px', color: '#666' }}>
             If you have any questions, please contact our support team.
           </Text>
@@ -27,7 +31,9 @@ function RegistrationAttemptNotice({ fullName }: Props) {
   )
 }
 
-export async function renderRegistrationAttemptNotice(datos: Props): Promise<{ html: string; text: string }> {
+export async function renderRegistrationAttemptNotice(
+  datos: Props,
+): Promise<{ html: string; text: string }> {
   const elemento = <RegistrationAttemptNotice {...datos} />
 
   return {

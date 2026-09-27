@@ -40,7 +40,9 @@ describe('renderRegistrationAttemptNotice', () => {
   })
 
   it('escapa el nombre en el HTML', async () => {
-    const { html } = await renderRegistrationAttemptNotice({ fullName: '<script>alert(1)</script>' })
+    const { html } = await renderRegistrationAttemptNotice({
+      fullName: '<script>alert(1)</script>',
+    })
 
     expect(html).not.toContain('<script>')
   })

@@ -19,7 +19,8 @@ function PasswordChanged({ fullName, cambiadoEn, recoverUrl }: Props) {
           <Text>The password for your account was changed on {cambiadoEn.toUTCString()}.</Text>
           <Text>For your security, you have been signed out of all devices.</Text>
           <Text>
-            If you did not make this change, recover your account now: <Link href={recoverUrl}>{recoverUrl}</Link>
+            If you did not make this change, recover your account now:{' '}
+            <Link href={recoverUrl}>{recoverUrl}</Link>
           </Text>
         </Container>
       </Body>

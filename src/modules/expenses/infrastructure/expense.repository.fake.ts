@@ -89,10 +89,10 @@ export class ExpenseRepositoryEnMemoria implements ExpenseRepository {
   actualizar(eventId: string, expenseId: string, cambios: CambiosGasto): Promise<Expense> {
     const gasto = this.gastos.find((g) => g.id === expenseId && g.eventId === eventId)
     if (gasto === undefined) return Promise.reject(new GastoNoEncontradoError())
-    for (const clave of Object.keys(cambios) as Array<keyof CambiosGasto>) {
-      const valor = cambios[clave]
-      if (valor !== undefined) Object.assign(gasto, { [clave]: valor })
-    }
+    Object.assign(
+      gasto,
+      Object.fromEntries(Object.entries(cambios).filter(([, valor]) => valor !== undefined)),
+    )
     gasto.updatedAt = new Date()
     return Promise.resolve(this.aDominio(gasto))
   }

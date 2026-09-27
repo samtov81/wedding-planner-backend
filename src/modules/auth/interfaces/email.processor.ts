@@ -5,11 +5,23 @@ import { z } from 'zod'
 
 import { ENV } from '@/config/config.module'
 import type { Env } from '@/config/env.schema'
-import { EMAIL_VERIFICATION_RENDERER, type EmailVerificationRenderer } from '@/modules/mail/application/email-verification-renderer.port'
+import {
+  EMAIL_VERIFICATION_RENDERER,
+  type EmailVerificationRenderer,
+} from '@/modules/mail/application/email-verification-renderer.port'
 import { MAIL_PORT, type MailPort } from '@/modules/mail/application/mail.port'
-import { PASSWORD_CHANGED_RENDERER, type PasswordChangedRenderer } from '@/modules/mail/application/password-changed-renderer.port'
-import { PASSWORD_RESET_RENDERER, type PasswordResetRenderer } from '@/modules/mail/application/password-reset-renderer.port'
-import { REGISTRATION_NOTICE_RENDERER, type RegistrationNoticeRenderer } from '@/modules/mail/application/registration-notice-renderer.port'
+import {
+  PASSWORD_CHANGED_RENDERER,
+  type PasswordChangedRenderer,
+} from '@/modules/mail/application/password-changed-renderer.port'
+import {
+  PASSWORD_RESET_RENDERER,
+  type PasswordResetRenderer,
+} from '@/modules/mail/application/password-reset-renderer.port'
+import {
+  REGISTRATION_NOTICE_RENDERER,
+  type RegistrationNoticeRenderer,
+} from '@/modules/mail/application/registration-notice-renderer.port'
 
 const payloadVerificacionSchema = z.object({
   userId: z.string().min(1),
@@ -48,8 +60,10 @@ export class EmailProcessor extends WorkerHost {
   constructor(
     @Inject(MAIL_PORT) private readonly mail: MailPort,
     @Inject(ENV) private readonly env: Env,
-    @Inject(EMAIL_VERIFICATION_RENDERER) private readonly plantillaVerificacion: EmailVerificationRenderer,
-    @Inject(REGISTRATION_NOTICE_RENDERER) private readonly plantillaAviso: RegistrationNoticeRenderer,
+    @Inject(EMAIL_VERIFICATION_RENDERER)
+    private readonly plantillaVerificacion: EmailVerificationRenderer,
+    @Inject(REGISTRATION_NOTICE_RENDERER)
+    private readonly plantillaAviso: RegistrationNoticeRenderer,
     @Inject(PASSWORD_RESET_RENDERER) private readonly plantillaReset: PasswordResetRenderer,
     @Inject(PASSWORD_CHANGED_RENDERER) private readonly plantillaCambio: PasswordChangedRenderer,
   ) {

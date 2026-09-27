@@ -1,24 +1,39 @@
 services:
   postgres:
     image: postgres:16-alpine
-    restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: backend_base
-    ports:
-      - '5432:5432'
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+      POSTGRES_USER: wp
+      POSTGRES_PASSWORD: wp
+      POSTGRES_DB: wedding_planner
+    ports: ['5433:5432']
+    volumes: ['pgdata:/var/lib/postgresql/data']
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U wp -d wedding_planner']
+      interval: 5s
+      retries: 10
 
   redis:
     image: redis:7-alpine
-    restart: unless-stopped
-    ports:
-      - '6379:6379'
+    ports: ['6379:6379']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      retries: 10
+
+  backend:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env.docker
+    ports: ['3000:3000']
     volumes:
-      - redis_data:/data
+      - .:/app
+      - /app/node_modules
+    command: npm start
 
 volumes:
-  postgres_data:
-  redis_data:
+  pgdata:

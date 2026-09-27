@@ -1,0 +1,112 @@
+import type { ExecutionContext } from '@nestjs/common'
+
+import { UserRepositoryEnMemoria } from '@/modules/users/infrastructure/user.repository.fake'
+import { UnauthorizedError } from '@/shared/domain'
+
+import { ACCESS_TOKEN_RECHAZADO } from '../application/autenticar-access-token'
+import { TokenService } from '../application/token.service'
+import { JwtAuthGuard } from './jwt-auth.guard'
+
+interface RequestFalsa {
+  headers: { authorization?: string }
+  user?: unknown
+}
+
+function contexto(req: RequestFalsa): ExecutionContext {
+  return {
+    switchToHttp: () => ({ getRequest: () => req }),
+  } as unknown as ExecutionContext
+}
+
+describe('JwtAuthGuard', () => {
+  const tokens = new TokenService({
+    JWT_ACCESS_SECRET: 'x'.repeat(32),
+    JWT_ACCESS_TTL: '15m',
+    REFRESH_TTL_DAYS: 30,
+  })
+  let usuarios: UserRepositoryEnMemoria
+  let guard: JwtAuthGuard
+
+  beforeEach(() => {
+    usuarios = new UserRepositoryEnMemoria([
+      {
+        id: 'user-1',
+        email: 'ana@test.com',
+        fullName: 'Ana',
+        systemRole: 'ADMIN',
+        emailVerifiedAt: null,
+        passwordHash: 'irrelevante',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ])
+    guard = new JwtAuthGuard(tokens, usuarios)
+  })
+
+  it('recarga el usuario de la base de datos y lo deja entero en req.user', async () => {
+    const token = tokens.firmarAccess({ id: 'user-1', systemRole: 'ADMIN' })
+    const req: RequestFalsa = { headers: { authorization: `Bearer ${token}` } }
+
+    await expect(guard.canActivate(contexto(req))).resolves.toBe(true)
+
+    // Email y nombre no viajan en el token: si están, es que se leyó la fila.
+    expect(req.user).toEqual({
+      id: 'user-1',
+      email: 'ana@test.com',
+      fullName: 'Ana',
+      systemRole: 'ADMIN',
+    })
+  })
+
+  it('rechaza un token cuyo usuario ya no existe', async () => {
+    const token = tokens.firmarAccess({ id: 'user-borrado', systemRole: 'USER' })
+
+    // Sin recargar, un usuario borrado seguiría entrando hasta que caducara
+    // su access token: quince minutos de acceso a una cuenta que no existe.
+    await expect(
+      guard.canActivate(contexto({ headers: { authorization: `Bearer ${token}` } })),
+    ).rejects.toThrow(UnauthorizedError)
+  })
+
+  it('rechaza un rol que no pertenece a SystemRole', async () => {
+    const token = tokens.firmarAccess({ id: 'user-1', systemRole: 'SUPERADMIN' })
+
+    await expect(
+      guard.canActivate(contexto({ headers: { authorization: `Bearer ${token}` } })),
+    ).rejects.toThrow(UnauthorizedError)
+  })
+
+  it('un fallo de la base de datos al recargar NO se disfraza de 401: el error sale tal cual', async () => {
+    // Con un 401, durante una caída de la base cada petición diría "token
+    // inválido o caducado": los clientes cerrarían la sesión del usuario y la
+    // caída no se vería en ningún sitio. Tiene que llegar al filtro como 500.
+    const caida = new Error('conexión con la base de datos perdida')
+    vi.spyOn(usuarios, 'findById').mockRejectedValueOnce(caida)
+    const token = tokens.firmarAccess({ id: 'user-1', systemRole: 'ADMIN' })
+
+    await expect(
+      guard.canActivate(contexto({ headers: { authorization: `Bearer ${token}` } })),
+    ).rejects.toBe(caida)
+  })
+
+  it('rechaza una petición sin cabecera Authorization', async () => {
+    await expect(guard.canActivate(contexto({ headers: {} }))).rejects.toThrow(UnauthorizedError)
+  })
+
+  // El 401 sale como error de DOMINIO para que el filtro lo responda con
+  // `code: 'UNAUTHORIZED'`: una `UnauthorizedException` de Nest salía como
+  // `HTTP_ERROR`, el mismo código que cualquier otro fallo HTTP genérico.
+  it.each([
+    ['sin cabecera', {}],
+    ['con una cabecera que no es Bearer', { authorization: 'Basic dTpw' }],
+    ['con un token que no verifica', { authorization: 'Bearer no-es-un-jwt' }],
+  ])('%s: 401 con code UNAUTHORIZED y el mismo mensaje', async (_caso, headers) => {
+    const rechazo = guard.canActivate(contexto({ headers }))
+
+    await expect(rechazo).rejects.toBeInstanceOf(UnauthorizedError)
+    await expect(rechazo).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+      message: ACCESS_TOKEN_RECHAZADO,
+    })
+  })
+})

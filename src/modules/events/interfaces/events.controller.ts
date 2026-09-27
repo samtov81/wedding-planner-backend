@@ -1,0 +1,168 @@
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  Inject,
+  Param,
+  Patch,
+  Post,
+  UseGuards,
+} from '@nestjs/common'
+
+import {
+  CurrentUser,
+  type UsuarioAutenticado,
+} from '@/modules/auth/interfaces/current-user.decorator'
+import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
+import { UnauthorizedError } from '@/shared/domain'
+import { validarCon } from '@/shared/http/validar-con'
+
+import { CreateEventUseCase } from '../application/create-event.use-case'
+import { EVENT_REPOSITORY, type EventRepository } from '../application/event.repository'
+import { InviteMemberUseCase } from '../application/invite-member.use-case'
+import { ListEventsUseCase } from '../application/list-events.use-case'
+import { PublishEventUseCase } from '../application/publish-event.use-case'
+import { UpdateEventUseCase } from '../application/update-event.use-case'
+import type { Event } from '../domain/event'
+import type { EventAccess } from '../domain/event-access'
+import { EventoNoEncontradoError } from '../domain/event-errors'
+import { completitud, type Completitud } from '../domain/publicacion'
+import { EventAccessOf } from './event-access-of.decorator'
+import { EventAccessGuard } from './event-access.guard'
+import { createEventSchema, inviteMemberSchema, updateEventSchema } from './events.dto'
+import { RequireEventAccess } from './require-event-access.decorator'
+
+interface EventoRespuesta {
+  id: string
+  name: string
+  status: Event['status']
+  weddingDate: string | null
+  timezone: string
+  currency: string
+  totalBudget: string | null
+  venue: Event['venue']
+  completitud: Completitud
+  /** Bloque A §2. La pareja necesita poder leer el plazo que fijó, no sólo escribirlo. */
+  rsvpDeadlineDays: number
+  ownerId: string
+  createdAt: string
+  updatedAt: string
+}
+
+@UseGuards(JwtAuthGuard)
+@Controller('events')
+export class EventsController {
+  constructor(
+    private readonly crear: CreateEventUseCase,
+    private readonly listar: ListEventsUseCase,
+    private readonly invitar: InviteMemberUseCase,
+    private readonly editar: UpdateEventUseCase,
+    private readonly publicar: PublishEventUseCase,
+    @Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository,
+  ) {}
+
+  @Post()
+  async crearEvento(
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+    @Body() body: unknown,
+  ): Promise<EventoRespuesta> {
+    const yo = this.exigirUsuario(usuario)
+    const datos = validarCon(createEventSchema, body)
+    const evento = await this.crear.ejecutar({ ...datos, ownerId: yo.id })
+    return this.aRespuesta(evento)
+  }
+
+  @Get()
+  async listarEventos(
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+  ): Promise<EventoRespuesta[]> {
+    const yo = this.exigirUsuario(usuario)
+    const eventos = await this.listar.ejecutar(yo.id)
+    return eventos.map((evento) => this.aRespuesta(evento))
+  }
+
+  /**
+   * Leer el evento lo puede hacer cualquiera que esté dentro, incluido un
+   * vendor contratado; la lista es explícita porque el guard falla cerrado sin
+   * ella. El filtro que importa es el 404 del guard para todos los demás.
+   */
+  @UseGuards(EventAccessGuard)
+  @RequireEventAccess('COUPLE', 'PLANNER', 'VENDOR')
+  @Get(':eventId')
+  async verEvento(
+    @Param('eventId') eventId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+  ): Promise<EventoRespuesta & { access: EventAccess }> {
+    const evento = await this.eventos.buscarPorId(eventId)
+    // Sólo lo alcanza un ADMIN: a cualquier otro el guard ya le habría dado
+    // 404, porque no se puede tener membresía de un evento que no existe.
+    if (evento === null) throw new EventoNoEncontradoError()
+    // El guard siempre deja el acceso resuelto; si falta, la ruta perdió el
+    // guard, y eso es un error de programación, no un acceso `none` inventado.
+    if (acceso === undefined) throw new Error('verEvento requires EventAccessGuard')
+    // Defensa en profundidad: el guard ya niega esto por el repositorio, pero
+    // un ADMIN llega aquí sin pasar por esa consulta.
+    if (evento.status === 'DRAFT' && acceso.kind === 'vendor') throw new EventoNoEncontradoError()
+    return { ...this.aRespuesta(evento), access: acceso }
+  }
+
+  @UseGuards(EventAccessGuard)
+  @RequireEventAccess('COUPLE', 'PLANNER')
+  @Patch(':eventId')
+  async editarEvento(
+    @Param('eventId') eventId: string,
+    @Body() body: unknown,
+  ): Promise<EventoRespuesta> {
+    const cambios = validarCon(updateEventSchema, body)
+    return this.aRespuesta(await this.editar.ejecutar(eventId, cambios))
+  }
+
+  @UseGuards(EventAccessGuard)
+  @RequireEventAccess('COUPLE', 'PLANNER')
+  @Post(':eventId/publish')
+  @HttpCode(200)
+  async publicarEvento(@Param('eventId') eventId: string): Promise<EventoRespuesta> {
+    return this.aRespuesta(await this.publicar.ejecutar(eventId))
+  }
+
+  /** Invitar toca quién manda en el evento: sólo COUPLE. */
+  @UseGuards(EventAccessGuard)
+  @RequireEventAccess('COUPLE')
+  @Post(':eventId/members')
+  async invitarMiembro(
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+    @Param('eventId') eventId: string,
+    @Body() body: unknown,
+  ): Promise<{ id: string; status: 'INVITED' }> {
+    const yo = this.exigirUsuario(usuario)
+    const datos = validarCon(inviteMemberSchema, body)
+    return await this.invitar.ejecutar({ ...datos, eventId, invitedById: yo.id })
+  }
+
+  private exigirUsuario(usuario: UsuarioAutenticado | undefined): UsuarioAutenticado {
+    // `@CurrentUser()` es opcional por tipo (ver su docblock): bajo
+    // `JwtAuthGuard` nunca falta, pero el tipo no lo sabe y no se fuerza con
+    // un `!` que mentiría.
+    if (usuario === undefined) throw new UnauthorizedError('Falta el token de acceso')
+    return usuario
+  }
+
+  private aRespuesta(evento: Event): EventoRespuesta {
+    return {
+      id: evento.id,
+      name: evento.name,
+      status: evento.status,
+      weddingDate: evento.weddingDate?.toISOString() ?? null,
+      timezone: evento.timezone,
+      currency: evento.currency,
+      totalBudget: evento.totalBudget,
+      venue: evento.venue,
+      completitud: completitud(evento),
+      rsvpDeadlineDays: evento.rsvpDeadlineDays,
+      ownerId: evento.ownerId,
+      createdAt: evento.createdAt.toISOString(),
+      updatedAt: evento.updatedAt.toISOString(),
+    }
+  }
+}

@@ -14,7 +14,10 @@ function EmailVerification({ fullName, verifyUrl }: Props) {
         <Container style={{ padding: '32px' }}>
           <Heading>Verify your email address</Heading>
           <Text>Hi {fullName},</Text>
-          <Text>Thank you for signing up! Please confirm your email address by clicking the button below.</Text>
+          <Text>
+            Thank you for signing up! Please confirm your email address by clicking the button
+            below.
+          </Text>
           <Button href={verifyUrl} style={{ padding: '12px 24px' }}>
             Verify email
           </Button>
@@ -30,7 +33,9 @@ function EmailVerification({ fullName, verifyUrl }: Props) {
   )
 }
 
-export async function renderEmailVerification(datos: Props): Promise<{ html: string; text: string }> {
+export async function renderEmailVerification(
+  datos: Props,
+): Promise<{ html: string; text: string }> {
   const elemento = <EmailVerification {...datos} />
 
   return {

@@ -46,10 +46,23 @@ describe('ResetPasswordUseCase', () => {
     cola = new InMemoryQueueAdapter()
     caso = new ResetPasswordUseCase(tokens, usuarios, sesiones, hasher, uow, cola)
 
-    await tokens.crear({ userId: 'u-1', tokenHash: hashToken('bueno'), expiresAt: new Date(AHORA + 600_000) })
-    await tokens.crear({ userId: 'u-1', tokenHash: hashToken('caducado'), expiresAt: new Date(AHORA - 1) })
+    await tokens.crear({
+      userId: 'u-1',
+      tokenHash: hashToken('bueno'),
+      expiresAt: new Date(AHORA + 600_000),
+    })
+    await tokens.crear({
+      userId: 'u-1',
+      tokenHash: hashToken('caducado'),
+      expiresAt: new Date(AHORA - 1),
+    })
     for (const familyId of ['f-1', 'f-2']) {
-      await sesiones.crear({ userId: 'u-1', tokenHash: `s-${familyId}`, familyId, expiresAt: new Date(AHORA + 86_400_000) })
+      await sesiones.crear({
+        userId: 'u-1',
+        tokenHash: `s-${familyId}`,
+        familyId,
+        expiresAt: new Date(AHORA + 86_400_000),
+      })
     }
   })
 
@@ -65,7 +78,13 @@ describe('ResetPasswordUseCase', () => {
     expect(cola.encolados).toHaveLength(1)
     const aviso = cola.encolados[0]
     expect(aviso?.nombre).toBe('send-password-changed-notice')
-    const datos = aviso?.datos as { userId: string; tokenId: string; email: string; fullName: string; cambiadoEn: string }
+    const datos = aviso?.datos as {
+      userId: string
+      tokenId: string
+      email: string
+      fullName: string
+      cambiadoEn: string
+    }
     expect(datos).toEqual({
       userId: 'u-1',
       tokenId: 'reset-1',
@@ -83,21 +102,24 @@ describe('ResetPasswordUseCase', () => {
   it('el mismo token no sirve dos veces', async () => {
     await caso.ejecutar({ token: 'bueno', password: 'una-nueva-larga' })
 
-    await expect(caso.ejecutar({ token: 'bueno', password: 'otra-mas-larga' })).rejects.toBeInstanceOf(
-      TokenResetInvalidoError,
-    )
+    await expect(
+      caso.ejecutar({ token: 'bueno', password: 'otra-mas-larga' }),
+    ).rejects.toBeInstanceOf(TokenResetInvalidoError)
     expect((await usuarios.findByEmail('ana@test.com'))?.passwordHash).toBe('hash:una-nueva-larga')
   })
 
-  it.each([['caducado'], ['inexistente']])('token %s → TokenResetInvalidoError sin efectos', async (token) => {
-    await expect(caso.ejecutar({ token, password: 'una-nueva-larga' })).rejects.toBeInstanceOf(
-      TokenResetInvalidoError,
-    )
+  it.each([['caducado'], ['inexistente']])(
+    'token %s → TokenResetInvalidoError sin efectos',
+    async (token) => {
+      await expect(caso.ejecutar({ token, password: 'una-nueva-larga' })).rejects.toBeInstanceOf(
+        TokenResetInvalidoError,
+      )
 
-    expect((await usuarios.findByEmail('ana@test.com'))?.passwordHash).toBe('hash:vieja')
-    expect(sesiones.vivasDeUsuario('u-1')).toBe(2)
-    expect(cola.encolados).toHaveLength(0)
-  })
+      expect((await usuarios.findByEmail('ana@test.com'))?.passwordHash).toBe('hash:vieja')
+      expect(sesiones.vivasDeUsuario('u-1')).toBe(2)
+      expect(cola.encolados).toHaveLength(0)
+    },
+  )
 
   it('las escrituras corren dentro de la unidad de trabajo', async () => {
     const dentro: boolean[] = []
@@ -115,7 +137,9 @@ describe('ResetPasswordUseCase', () => {
   it('un fallo dentro de la transacción se propaga y no encola el aviso', async () => {
     vi.spyOn(sesiones, 'revocarTodasDeUsuario').mockRejectedValue(new Error('BD caída'))
 
-    await expect(caso.ejecutar({ token: 'bueno', password: 'una-nueva-larga' })).rejects.toThrow('BD caída')
+    await expect(caso.ejecutar({ token: 'bueno', password: 'una-nueva-larga' })).rejects.toThrow(
+      'BD caída',
+    )
     expect(cola.encolados).toHaveLength(0)
   })
 
@@ -123,14 +147,20 @@ describe('ResetPasswordUseCase', () => {
     const errorEspia = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined)
     const encolarEspia = vi.spyOn(cola, 'enqueue').mockRejectedValue(new Error('Redis caído'))
 
-    await expect(caso.ejecutar({ token: 'bueno', password: 'una-nueva-larga' })).resolves.toBeUndefined()
+    await expect(
+      caso.ejecutar({ token: 'bueno', password: 'una-nueva-larga' }),
+    ).resolves.toBeUndefined()
     expect((await usuarios.findByEmail('ana@test.com'))?.passwordHash).toBe('hash:una-nueva-larga')
     expect(encolarEspia).toHaveBeenCalled()
     expect(errorEspia).toHaveBeenCalled()
   })
 
   it('caduca cualquier otro enlace vivo del usuario', async () => {
-    await tokens.crear({ userId: 'u-1', tokenHash: hashToken('otro'), expiresAt: new Date(AHORA + 600_000) })
+    await tokens.crear({
+      userId: 'u-1',
+      tokenHash: hashToken('otro'),
+      expiresAt: new Date(AHORA + 600_000),
+    })
 
     await caso.ejecutar({ token: 'bueno', password: 'una-nueva-larga' })
 

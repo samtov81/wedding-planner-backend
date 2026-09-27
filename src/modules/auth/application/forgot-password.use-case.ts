@@ -62,7 +62,13 @@ export class ForgotPasswordUseCase {
     await this.cola.enqueue(
       'email',
       'send-password-reset-email',
-      { userId: usuario.id, tokenId, email: usuario.email, fullName: usuario.fullName, token: tokenEnClaro },
+      {
+        userId: usuario.id,
+        tokenId,
+        email: usuario.email,
+        fullName: usuario.fullName,
+        token: tokenEnClaro,
+      },
       {
         jobId: `password-reset-${tokenId}`,
         // removeOnComplete obligatorio: el payload lleva el token en claro.

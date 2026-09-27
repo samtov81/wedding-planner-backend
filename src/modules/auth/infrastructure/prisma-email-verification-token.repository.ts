@@ -9,7 +9,11 @@ import type {
 export class PrismaEmailVerificationTokenRepository implements EmailVerificationTokenRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async crear(datos: { userId: string; tokenHash: string; expiresAt: Date }): Promise<{ id: string }> {
+  async crear(datos: {
+    userId: string
+    tokenHash: string
+    expiresAt: Date
+  }): Promise<{ id: string }> {
     const creado = await this.prisma.emailVerificationToken.create({
       data: {
         userId: datos.userId,
@@ -59,7 +63,8 @@ export class PrismaEmailVerificationTokenRepository implements EmailVerification
     })
 
     if (existente === null) return { resultado: 'NO_ENCONTRADO_O_CADUCADO' }
-    if (existente.status === 'CONSUMED') return { resultado: 'YA_CONSUMIDO', userId: existente.userId }
+    if (existente.status === 'CONSUMED')
+      return { resultado: 'YA_CONSUMIDO', userId: existente.userId }
     return { resultado: 'NO_ENCONTRADO_O_CADUCADO' }
   }
 }

@@ -45,9 +45,7 @@ describe('EmailVerificationTokenRepositoryFake', () => {
 
     // `expiresAt <= ahora` ya está fuera: el borde es exclusivo, igual que el
     // `expiresAt > $ahora` del adaptador Prisma.
-    expect((await repo.consumirPorHash('hash-1', AHORA)).resultado).toBe(
-      'NO_ENCONTRADO_O_CADUCADO',
-    )
+    expect((await repo.consumirPorHash('hash-1', AHORA)).resultado).toBe('NO_ENCONTRADO_O_CADUCADO')
     expect(repo.obtenerPorHash('hash-1')?.status).toBe('PENDING')
   })
 

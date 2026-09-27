@@ -35,10 +35,10 @@ export class ScheduleItemRepositoryEnMemoria implements ScheduleItemRepository {
   actualizar(eventId: string, itemId: string, cambios: CambiosItem): Promise<ScheduleItem> {
     const item = this.items.find((i) => i.id === itemId && i.eventId === eventId)
     if (item === undefined) return Promise.reject(new ItemDeCronogramaNoEncontradoError())
-    for (const clave of Object.keys(cambios) as Array<keyof CambiosItem>) {
-      const valor = cambios[clave]
-      if (valor !== undefined) Object.assign(item, { [clave]: valor })
-    }
+    Object.assign(
+      item,
+      Object.fromEntries(Object.entries(cambios).filter(([, valor]) => valor !== undefined)),
+    )
     item.updatedAt = new Date()
     return Promise.resolve({ ...item })
   }

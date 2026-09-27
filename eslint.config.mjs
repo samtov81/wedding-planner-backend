@@ -20,6 +20,7 @@ export default tseslint.config(
             'prisma.config.ts',
             'vitest.smoke.config.ts',
             'scripts/*.mjs',
+            'scripts/*.ts',
           ],
         },
         tsconfigRootDir: import.meta.dirname,

@@ -91,9 +91,7 @@ describe('EmailProcessor', () => {
 
       // Query param y no segmento de ruta: el frontend resuelve `/verify-email`
       // con un switch sobre el pathname, sin router de segmentos.
-      expect(mail.enviados[0]?.html).toContain(
-        'https://app.test/verify-email?token=token-en-claro',
-      )
+      expect(mail.enviados[0]?.html).toContain('https://app.test/verify-email?token=token-en-claro')
     })
 
     it('codifica el token en la URL', async () => {
@@ -183,7 +181,13 @@ describe('EmailProcessor', () => {
   })
 
   describe('send-password-reset-email', () => {
-    const PAYLOAD = { userId: 'u-1', tokenId: 'r-1', email: 'ana@test.com', fullName: 'Ana', token: 'a+b/c' }
+    const PAYLOAD = {
+      userId: 'u-1',
+      tokenId: 'r-1',
+      email: 'ana@test.com',
+      fullName: 'Ana',
+      token: 'a+b/c',
+    }
 
     it('manda el enlace a /reset-password con el token codificado y la caducidad', async () => {
       await procesador.process(jobFalso('send-password-reset-email', PAYLOAD))

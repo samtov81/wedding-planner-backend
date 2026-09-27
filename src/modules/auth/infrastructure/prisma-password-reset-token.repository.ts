@@ -17,8 +17,15 @@ import type {
 export class PrismaPasswordResetTokenRepository implements PasswordResetTokenRepository {
   constructor(private readonly prisma: PrismaService) {}
 
-  async crear(datos: { userId: string; tokenHash: string; expiresAt: Date }): Promise<{ id: string }> {
-    return await clienteDe(this.prisma).passwordResetToken.create({ data: datos, select: { id: true } })
+  async crear(datos: {
+    userId: string
+    tokenHash: string
+    expiresAt: Date
+  }): Promise<{ id: string }> {
+    return await clienteDe(this.prisma).passwordResetToken.create({
+      data: datos,
+      select: { id: true },
+    })
   }
 
   async caducarVigentesDe(userId: string, ahora: Date): Promise<void> {

@@ -5,7 +5,10 @@ import {
   type UnidadDeTrabajo,
 } from '@/modules/database/application/unidad-de-trabajo'
 import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
-import { PASSWORD_HASHER, type PasswordHasher } from '@/modules/users/application/password-hasher.port'
+import {
+  PASSWORD_HASHER,
+  type PasswordHasher,
+} from '@/modules/users/application/password-hasher.port'
 import { USER_REPOSITORY, type UserRepository } from '@/modules/users/application/user.repository'
 
 import { TokenResetInvalidoError } from '../domain/auth-errors'
@@ -67,7 +70,11 @@ export class ResetPasswordUseCase {
    * Fuera de la transacción y sin propagar el error: la contraseña YA cambió;
    * contestar 500 haría que el usuario reintentase con un token ya gastado.
    */
-  private async avisarDelCambio(userId: string, tokenId: string, cambiadoEn: string): Promise<void> {
+  private async avisarDelCambio(
+    userId: string,
+    tokenId: string,
+    cambiadoEn: string,
+  ): Promise<void> {
     try {
       const usuario = await this.usuarios.findById(userId)
       if (usuario === null) return

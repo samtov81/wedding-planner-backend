@@ -99,9 +99,15 @@ describe('Auth e2e', () => {
 
   /** Registra y verifica una cuenta; devuelve la cookie de una sesión abierta. */
   async function cuentaConSesion(email: string, password: string): Promise<string> {
-    await request(url).post('/auth/register').send({ email, password, fullName: 'Reset' }).expect(201)
+    await request(url)
+      .post('/auth/register')
+      .send({ email, password, fullName: 'Reset' })
+      .expect(201)
     const { html } = await esperarCorreoA(email)
-    await request(url).post('/auth/verify-email').send({ token: tokenDelEnlace(html) }).expect(200)
+    await request(url)
+      .post('/auth/verify-email')
+      .send({ token: tokenDelEnlace(html) })
+      .expect(200)
     const login = await request(url).post('/auth/login').send({ email, password }).expect(200)
     const cookie = primeraCookie(login)
     if (cookie === undefined) throw new Error('Sin cookie de refresh')
@@ -319,7 +325,11 @@ describe('Auth e2e', () => {
     // Dos correos a la misma dirección: el de verificación y el aviso. El aviso
     // es el segundo y no puede llevar nada accionable — quien lo provoca no es
     // quien lo recibe.
-    for (let intento = 0; intento < 100 && correo.enviados.filter((m) => m.to === alta.email).length < 2; intento += 1) {
+    for (
+      let intento = 0;
+      intento < 100 && correo.enviados.filter((m) => m.to === alta.email).length < 2;
+      intento += 1
+    ) {
       await new Promise((seguir) => setTimeout(seguir, 100))
     }
     const aviso = correo.enviados.filter((m) => m.to === alta.email)[1]
@@ -336,15 +346,26 @@ describe('Auth e2e', () => {
     it('devuelve el MISMO 202 y el mismo cuerpo exista la cuenta o no', async () => {
       await request(url)
         .post('/auth/register')
-        .send({ email: 'sinverificar@test.com', password: 'una-contraseña-larga', fullName: 'Sin Verificar' })
+        .send({
+          email: 'sinverificar@test.com',
+          password: 'una-contraseña-larga',
+          fullName: 'Sin Verificar',
+        })
         .expect(201)
 
       await request(url)
         .post('/auth/register')
-        .send({ email: 'verificada@test.com', password: 'una-contraseña-larga', fullName: 'Verificada' })
+        .send({
+          email: 'verificada@test.com',
+          password: 'una-contraseña-larga',
+          fullName: 'Verificada',
+        })
         .expect(201)
       const { html } = await esperarCorreoA('verificada@test.com')
-      await request(url).post('/auth/verify-email').send({ token: tokenDelEnlace(html) }).expect(200)
+      await request(url)
+        .post('/auth/verify-email')
+        .send({ token: tokenDelEnlace(html) })
+        .expect(200)
 
       const pendiente = await request(url)
         .post('/auth/resend-verification')
@@ -366,14 +387,18 @@ describe('Auth e2e', () => {
     })
 
     it('rechaza un email mal formado con 400', async () => {
-      const res = await request(url).post('/auth/resend-verification').send({ email: 'no-es-un-email' })
+      const res = await request(url)
+        .post('/auth/resend-verification')
+        .send({ email: 'no-es-un-email' })
 
       expect(res.status).toBe(400)
     })
 
     it('el cuarto intento en una hora contra el mismo IP+correo da 429', async () => {
       function pedir(): request.Test {
-        return request(url).post('/auth/resend-verification').send({ email: 'limite-resend@test.com' })
+        return request(url)
+          .post('/auth/resend-verification')
+          .send({ email: 'limite-resend@test.com' })
       }
 
       for (let i = 0; i < 3; i += 1) await pedir().expect(202)
@@ -443,16 +468,27 @@ describe('Auth e2e', () => {
         .send({ token: tokenDeReset(html), password: 'contraseña-nueva-1' })
         .expect(200, { ok: true })
 
-      await request(url).post('/auth/login').send({ email: 'reset@test.com', password: 'contraseña-vieja-1' }).expect(401)
-      await request(url).post('/auth/login').send({ email: 'reset@test.com', password: 'contraseña-nueva-1' }).expect(200)
+      await request(url)
+        .post('/auth/login')
+        .send({ email: 'reset@test.com', password: 'contraseña-vieja-1' })
+        .expect(401)
+      await request(url)
+        .post('/auth/login')
+        .send({ email: 'reset@test.com', password: 'contraseña-nueva-1' })
+        .expect(200)
       await request(url).post('/auth/refresh').set('Cookie', cookieVieja).expect(401)
       await esperarCorreoCon('reset@test.com', 'Your password was changed')
     })
 
     it('el mismo enlace no sirve dos veces: 422 RESET_TOKEN_INVALID', async () => {
       await cuentaConSesion('reset-dos@test.com', 'contraseña-vieja-1')
-      await request(url).post('/auth/forgot-password').send({ email: 'reset-dos@test.com' }).expect(202)
-      const token = tokenDeReset((await esperarCorreoCon('reset-dos@test.com', 'Reset your password')).html)
+      await request(url)
+        .post('/auth/forgot-password')
+        .send({ email: 'reset-dos@test.com' })
+        .expect(202)
+      const token = tokenDeReset(
+        (await esperarCorreoCon('reset-dos@test.com', 'Reset your password')).html,
+      )
 
       const [a, b] = await Promise.all([
         request(url).post('/auth/reset-password').send({ token, password: 'nueva-contraseña-a' }),
@@ -469,7 +505,10 @@ describe('Auth e2e', () => {
         .post('/auth/register')
         .send({ email: 'sinverif-reset@test.com', password: 'contraseña-vieja-1', fullName: 'SV' })
         .expect(201)
-      await request(url).post('/auth/forgot-password').send({ email: 'sinverif-reset@test.com' }).expect(202)
+      await request(url)
+        .post('/auth/forgot-password')
+        .send({ email: 'sinverif-reset@test.com' })
+        .expect(202)
       const { html } = await esperarCorreoCon('sinverif-reset@test.com', 'Reset your password')
 
       await request(url)
@@ -487,14 +526,22 @@ describe('Auth e2e', () => {
       await cuentaConSesion('existe-reset@test.com', 'contraseña-vieja-1')
       await request(url)
         .post('/auth/register')
-        .send({ email: 'sin-verificar-reset@test.com', password: 'contraseña-vieja-1', fullName: 'Reset' })
+        .send({
+          email: 'sin-verificar-reset@test.com',
+          password: 'contraseña-vieja-1',
+          fullName: 'Reset',
+        })
         .expect(201)
 
-      const existe = await request(url).post('/auth/forgot-password').send({ email: 'existe-reset@test.com' })
+      const existe = await request(url)
+        .post('/auth/forgot-password')
+        .send({ email: 'existe-reset@test.com' })
       const sinVerificar = await request(url)
         .post('/auth/forgot-password')
         .send({ email: 'sin-verificar-reset@test.com' })
-      const noExiste = await request(url).post('/auth/forgot-password').send({ email: 'nadie-reset@test.com' })
+      const noExiste = await request(url)
+        .post('/auth/forgot-password')
+        .send({ email: 'nadie-reset@test.com' })
 
       expect(existe.status).toBe(202)
       expect(sinVerificar.status).toBe(202)
@@ -508,22 +555,41 @@ describe('Auth e2e', () => {
     })
 
     it('reset-password: token falso 422; contraseña corta, larga o token enorme 400; nunca 500', async () => {
-      await request(url).post('/auth/reset-password').send({ token: 'no-existe', password: 'contraseña-larga' }).expect(422)
-      await request(url).post('/auth/reset-password').send({ token: 'x', password: 'corta' }).expect(400)
-      await request(url).post('/auth/reset-password').send({ token: 'x', password: 'a'.repeat(129) }).expect(400)
-      await request(url).post('/auth/reset-password').send({ token: 'a'.repeat(10_000), password: 'contraseña-larga' }).expect(400)
-      await request(url).post('/auth/reset-password').send({ token: ' ¿?%00 ', password: 'contraseña-larga' }).expect(422)
+      await request(url)
+        .post('/auth/reset-password')
+        .send({ token: 'no-existe', password: 'contraseña-larga' })
+        .expect(422)
+      await request(url)
+        .post('/auth/reset-password')
+        .send({ token: 'x', password: 'corta' })
+        .expect(400)
+      await request(url)
+        .post('/auth/reset-password')
+        .send({ token: 'x', password: 'a'.repeat(129) })
+        .expect(400)
+      await request(url)
+        .post('/auth/reset-password')
+        .send({ token: 'a'.repeat(10_000), password: 'contraseña-larga' })
+        .expect(400)
+      await request(url)
+        .post('/auth/reset-password')
+        .send({ token: ' ¿?%00 ', password: 'contraseña-larga' })
+        .expect(422)
     })
 
     it('el cuarto forgot-password en una hora contra el mismo IP+correo da 429', async () => {
-      const pedir = () => request(url).post('/auth/forgot-password').send({ email: 'limite-forgot@test.com' })
+      const pedir = () =>
+        request(url).post('/auth/forgot-password').send({ email: 'limite-forgot@test.com' })
       for (let i = 0; i < 3; i += 1) await pedir().expect(202)
 
       expect((await pedir()).status).toBe(429)
     })
 
     it('el undécimo reset-password en 15 minutos desde la misma IP da 429', async () => {
-      const pedir = () => request(url).post('/auth/reset-password').send({ token: 'falso', password: 'contraseña-larga' })
+      const pedir = () =>
+        request(url)
+          .post('/auth/reset-password')
+          .send({ token: 'falso', password: 'contraseña-larga' })
       for (let i = 0; i < 10; i += 1) await pedir().expect(422)
 
       expect((await pedir()).status).toBe(429)

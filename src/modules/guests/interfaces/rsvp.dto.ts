@@ -1,5 +1,7 @@
 import { z } from 'zod'
 
+import { MAX_ACOMPANANTES } from '../domain/guest'
+
 /**
  * La respuesta del invitado. Sólo CONFIRMED o DECLINED: "PENDING" no es una
  * respuesta, es la ausencia de ella.
@@ -10,6 +12,11 @@ import { z } from 'zod'
 export const responderRsvpSchema = z.object({
   rsvp: z.enum(['CONFIRMED', 'DECLINED']),
   dietary: z.string().trim().min(1).max(200).nullable().optional(),
+  /**
+   * Acompañantes que trae. El tope de ESTE invitado (`companionsAllowed`) lo
+   * comprueba el caso de uso; aquí sólo el global. Ausente = 0.
+   */
+  companions: z.number().int().min(0).max(MAX_ACOMPANANTES).optional(),
 })
 export type ResponderRsvpDto = z.infer<typeof responderRsvpSchema>
 

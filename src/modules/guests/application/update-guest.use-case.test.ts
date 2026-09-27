@@ -1,6 +1,6 @@
 import { UnidadDeTrabajoEnMemoria } from '@/modules/database/infrastructure/unidad-de-trabajo.fake'
 
-import { InvitadoNoEncontradoError } from '../domain/guest-errors'
+import { AcompanantesExcedidosError, InvitadoNoEncontradoError } from '../domain/guest-errors'
 import type { GuestRepositoryEnMemoria } from '../infrastructure/guest.repository.fake'
 import { A, B0, EVENTO_A, repoSembrado } from '../infrastructure/guests.fixture'
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
@@ -45,6 +45,46 @@ describe('UpdateGuestUseCase', () => {
     await expect(caso.ejecutar(EVENTO_A, B0, { rsvp: 'DECLINED' })).rejects.toBeInstanceOf(
       InvitadoNoEncontradoError,
     )
+  })
+
+  describe('cupo de acompañantes', () => {
+    function repoConConfirmados(confirmados: number | null): GuestRepositoryEnMemoria {
+      const repo = repoSembrado()
+      const fila = repo.filas.find((g) => g.id === A(0))
+      if (fila !== undefined) {
+        fila.companionsAllowed = 3
+        fila.companionsConfirmed = confirmados
+      }
+      return repo
+    }
+
+    it('se puede subir o bajar mientras cubra lo ya confirmado', async () => {
+      const caso = casoCon(repoConConfirmados(2))
+
+      expect(
+        (await caso.ejecutar(EVENTO_A, A(0), { companionsAllowed: 5 })).companionsAllowed,
+      ).toBe(5)
+      expect(
+        (await caso.ejecutar(EVENTO_A, A(0), { companionsAllowed: 2 })).companionsAllowed,
+      ).toBe(2)
+    })
+
+    it('bajarlo por debajo de lo confirmado → 422 COMPANIONS_EXCEEDED sin escribir', async () => {
+      const repo = repoConConfirmados(2)
+
+      await expect(
+        casoCon(repo).ejecutar(EVENTO_A, A(0), { companionsAllowed: 1 }),
+      ).rejects.toBeInstanceOf(AcompanantesExcedidosError)
+      expect(repo.filas.find((g) => g.id === A(0))?.companionsAllowed).toBe(3)
+    })
+
+    it('sin respuesta todavía (null) se puede dejar en 0', async () => {
+      const caso = casoCon(repoConConfirmados(null))
+
+      expect(
+        (await caso.ejecutar(EVENTO_A, A(0), { companionsAllowed: 0 })).companionsAllowed,
+      ).toBe(0)
+    })
   })
 
   describe('cambiar el email caduca los tokens vigentes (ruling C24)', () => {

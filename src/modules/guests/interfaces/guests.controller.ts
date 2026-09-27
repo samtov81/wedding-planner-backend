@@ -24,6 +24,7 @@ import { DeleteGuestUseCase } from '../application/delete-guest.use-case'
 import { GetGuestUseCase } from '../application/get-guest.use-case'
 import type { GuestFilters } from '../application/guest.repository'
 import { GuestSummaryUseCase } from '../application/guest-summary.use-case'
+import { ImportGuestsUseCase } from '../application/import-guests.use-case'
 import { ListGuestsUseCase } from '../application/list-guests.use-case'
 import {
   SendInvitationsUseCase,
@@ -36,7 +37,9 @@ import { InvitadoNoEncontradoError } from '../domain/guest-errors'
 import {
   actualizarInvitadoSchema,
   crearInvitadoSchema,
+  importarInvitadosSchema,
   listarInvitadosQuerySchema,
+  validarFilaImportacion,
 } from './guest.dto'
 
 interface InvitadoRespuesta {
@@ -47,6 +50,8 @@ interface InvitadoRespuesta {
   group: string
   rsvp: Guest['rsvp']
   dietary: string | null
+  companionsAllowed: number
+  companionsConfirmed: number | null
   createdAt: Date
 }
 
@@ -61,7 +66,7 @@ interface PaginaRespuesta {
 }
 
 /**
- * Las ocho rutas exigen `COUPLE` o `PLANNER`, y eso excluye a `VENDOR` de TODO
+ * Las nueve rutas exigen `COUPLE` o `PLANNER`, y eso excluye a `VENDOR` de TODO
  * el controlador: un catering contratado no necesita los datos personales de
  * 150 personas. Si algún día hace falta (restricciones alimentarias), será un
  * endpoint agregado y anonimizado, no acceso a la tabla.
@@ -86,6 +91,7 @@ export class GuestsController {
     private readonly eliminar: DeleteGuestUseCase,
     private readonly enviarInvitaciones: SendInvitationsUseCase,
     private readonly enviarInvitacion: SendSingleInvitationUseCase,
+    private readonly importar: ImportGuestsUseCase,
   ) {}
 
   @RequireEventAccess('COUPLE', 'PLANNER')
@@ -136,9 +142,28 @@ export class GuestsController {
       email: datos.email ?? null,
       group: datos.group,
       dietary: datos.dietary ?? null,
+      companionsAllowed: datos.companionsAllowed,
     })
 
     return aRespuesta(invitado)
+  }
+
+  /**
+   * Carga en bloque (el CSV del frontend llega ya convertido a JSON). Todo o
+   * nada: 422 `GUEST_IMPORT_INVALID` con `details` por fila si alguna falla, y
+   * entonces no se crea ninguna. Un 400 queda sólo para un lote sin forma
+   * (sin `guests`, vacío o de más de `MAX_FILAS_IMPORTACION`).
+   *
+   * Como `invitations`, va ANTES de cualquier futuro `POST /:guestId`.
+   */
+  @RequireEventAccess('COUPLE', 'PLANNER')
+  @Post('import')
+  async importarInvitados(
+    @Param('eventId') eventId: string,
+    @Body() body: unknown,
+  ): Promise<{ created: number }> {
+    const { guests } = validarCon(importarInvitadosSchema, body)
+    return await this.importar.ejecutar(eventId, guests.map(validarFilaImportacion))
   }
 
   /**
@@ -216,6 +241,8 @@ function aRespuesta(invitado: Guest): InvitadoRespuesta {
     group: invitado.group,
     rsvp: invitado.rsvp,
     dietary: invitado.dietary,
+    companionsAllowed: invitado.companionsAllowed,
+    companionsConfirmed: invitado.companionsConfirmed,
     createdAt: invitado.createdAt,
   }
 }

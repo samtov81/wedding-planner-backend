@@ -14,6 +14,7 @@ import { GetGuestUseCase } from './application/get-guest.use-case'
 import { GetRsvpUseCase } from './application/get-rsvp.use-case'
 import { GUEST_REPOSITORY } from './application/guest.repository'
 import { GuestSummaryUseCase } from './application/guest-summary.use-case'
+import { ImportGuestsUseCase } from './application/import-guests.use-case'
 import { HandleDeliveryEventUseCase } from './application/handle-delivery-event.use-case'
 import { INVITATION_REPOSITORY } from './application/invitation.repository'
 import { ListGuestsUseCase } from './application/list-guests.use-case'
@@ -76,6 +77,7 @@ import { RsvpController } from './interfaces/rsvp.controller'
     GetGuestUseCase,
     GuestSummaryUseCase,
     CreateGuestUseCase,
+    ImportGuestsUseCase,
     UpdateGuestUseCase,
     DeleteGuestUseCase,
     SendInvitationsUseCase,

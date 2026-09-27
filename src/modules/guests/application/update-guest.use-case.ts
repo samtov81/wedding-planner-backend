@@ -5,8 +5,8 @@ import {
   type UnidadDeTrabajo,
 } from '@/modules/database/application/unidad-de-trabajo'
 
-import type { Guest } from '../domain/guest'
-import { InvitadoNoEncontradoError } from '../domain/guest-errors'
+import { cupoCubreConfirmados, type Guest } from '../domain/guest'
+import { AcompanantesExcedidosError, InvitadoNoEncontradoError } from '../domain/guest-errors'
 import { GUEST_REPOSITORY, type CambiosInvitado, type GuestRepository } from './guest.repository'
 import { INVITATION_REPOSITORY, type InvitationRepository } from './invitation.repository'
 
@@ -24,6 +24,13 @@ export class UpdateGuestUseCase {
     // 200 sin haber cambiado nada — un éxito que no lo es.
     const existente = await this.invitados.buscar(eventId, guestId)
     if (existente === null) throw new InvitadoNoEncontradoError()
+
+    if (
+      cambios.companionsAllowed !== undefined &&
+      !cupoCubreConfirmados(cambios.companionsAllowed, existente.companionsConfirmed)
+    ) {
+      throw new AcompanantesExcedidosError()
+    }
 
     // Ruling C24: un cambio de email (corregir uno mal tecleado, o borrarlo)
     // caduca los enlaces que ya salieron hacia la dirección vieja. Cambio y

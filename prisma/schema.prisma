@@ -86,14 +86,14 @@ model User {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
-  sessions                    Session[]
-  memberships                 EventMembership[]
-  ownedEvents                 Event[]                    @relation("EventOwner")
-  vendorProfile               VendorProfile?
-  notifications               Notification[]
-  emailVerificationTokens     EmailVerificationToken[]
-  passwordResetTokens         PasswordResetToken[]
-  expensesCreated             Expense[]                  @relation("ExpenseCreatedBy")
+  sessions                Session[]
+  memberships             EventMembership[]
+  ownedEvents             Event[]                  @relation("EventOwner")
+  vendorProfile           VendorProfile?
+  notifications           Notification[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+  expensesCreated         Expense[]                @relation("ExpenseCreatedBy")
 
   @@map("users")
 }
@@ -273,15 +273,19 @@ model EventVendor {
 /// La unicidad es un índice PARCIAL (ver Step 3) para no estorbar a quien no
 /// tiene correo, sin dejar de impedir invitar dos veces al mismo buzón.
 model Guest {
-  id        String     @id @default(uuid()) @db.Uuid
-  eventId   String     @db.Uuid
-  name      String
-  email     String?
-  group     String
-  rsvp      RsvpStatus @default(PENDING)
-  dietary   String?
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id                  String     @id @default(uuid()) @db.Uuid
+  eventId             String     @db.Uuid
+  name                String
+  email               String?
+  group               String
+  rsvp                RsvpStatus @default(PENDING)
+  dietary             String?
+  /// Cuántos acompañantes puede traer: lo decide quien organiza (0..10, CHECK en SQL).
+  companionsAllowed   Int        @default(0)
+  /// Cuántos trae de verdad: lo dice el invitado al responder. `null` = aún no respondió.
+  companionsConfirmed Int?
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
 
   event       Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
   invitations GuestInvitation[]
@@ -311,13 +315,13 @@ model GuestInvitation {
 }
 
 model EmailVerificationToken {
-  id         String                   @id @default(uuid()) @db.Uuid
-  userId     String                   @db.Uuid
-  tokenHash  String                   @unique
-  status     EmailVerificationStatus  @default(PENDING)
+  id         String                  @id @default(uuid()) @db.Uuid
+  userId     String                  @db.Uuid
+  tokenHash  String                  @unique
+  status     EmailVerificationStatus @default(PENDING)
   consumedAt DateTime?
   expiresAt  DateTime
-  createdAt  DateTime                 @default(now())
+  createdAt  DateTime                @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

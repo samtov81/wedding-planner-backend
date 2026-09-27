@@ -125,6 +125,7 @@ describe('RSVP público e2e', () => {
       expiresAt?: Date
       status?: 'SENT' | 'DELIVERED' | 'RESPONDED'
       eventId?: string
+      companionsAllowed?: number
     } = {},
   ): Promise<{ token: string; guestId: string; invitationId: string }> {
     const { token, hash } = generarTokenInvitacion()
@@ -135,6 +136,7 @@ describe('RSVP público e2e', () => {
         name: 'Ana Invitada',
         email: `ana-${hash.slice(0, 8)}@test.com`,
         group: 'Family',
+        companionsAllowed: datos.companionsAllowed ?? 0,
       },
     })
     const fila = await prisma.guestInvitation.create({
@@ -258,6 +260,8 @@ describe('RSVP público e2e', () => {
         weddingDate: BODA.toISOString(),
         rsvp: 'PENDING',
         dietary: null,
+        companionsAllowed: 0,
+        companionsConfirmed: null,
         rsvpClosesAt: CIERRE.toISOString(),
       })
     })
@@ -349,6 +353,32 @@ describe('RSVP público e2e', () => {
       ).toBe('DELIVERED')
       const lectura = await request(url).get(`/rsvp/${token}`).expect(200)
       expect((lectura.body as { rsvp: string }).rsvp).toBe('PENDING')
+    })
+
+    it('confirma con acompañantes dentro del cupo; por encima es 422 y no escribe', async () => {
+      const { token, guestId } = await invitacion({ companionsAllowed: 2 })
+
+      const rechazo = await request(url)
+        .post(`/rsvp/${token}`)
+        .send({ rsvp: 'CONFIRMED', companions: 3 })
+        .expect(422)
+      expect((rechazo.body as CuerpoError).code).toBe('COMPANIONS_EXCEEDED')
+      expect(await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).toMatchObject({
+        rsvp: 'PENDING',
+        companionsConfirmed: null,
+      })
+
+      await request(url)
+        .post(`/rsvp/${token}`)
+        .send({ rsvp: 'CONFIRMED', companions: 2 })
+        .expect(204)
+      expect(await prisma.guest.findUniqueOrThrow({ where: { id: guestId } })).toMatchObject({
+        rsvp: 'CONFIRMED',
+        companionsConfirmed: 2,
+      })
+
+      const vista = await request(url).get(`/rsvp/${token}`).expect(200)
+      expect(vista.body).toMatchObject({ companionsAllowed: 2, companionsConfirmed: 2 })
     })
 
     it('un cuerpo inválido es un 400 que no gasta el token', async () => {

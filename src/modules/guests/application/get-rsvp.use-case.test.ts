@@ -87,6 +87,8 @@ describe('GetRsvpUseCase', () => {
       group: 'Family',
       rsvp: 'PENDING',
       dietary: 'Vegan',
+      companionsAllowed: 2,
+      companionsConfirmed: null,
       createdAt: new Date(Date.UTC(2026, 0, 1)),
     })
     caso = new GetRsvpUseCase(invitaciones, invitados)
@@ -103,6 +105,8 @@ describe('GetRsvpUseCase', () => {
       weddingDate: evento.weddingDate.toISOString(),
       rsvp: 'PENDING',
       dietary: 'Vegan',
+      companionsAllowed: 2,
+      companionsConfirmed: null,
       rsvpClosesAt: new Date(evento.weddingDate.getTime() - 14 * 86_400_000).toISOString(),
     })
   })

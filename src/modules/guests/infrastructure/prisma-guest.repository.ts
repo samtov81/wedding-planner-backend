@@ -96,21 +96,44 @@ export class PrismaGuestRepository implements GuestRepository {
     return base
   }
 
+  async sumarAcompanantesConfirmados(eventId: string): Promise<number> {
+    const suma = await this.prisma.guest.aggregate({
+      where: { eventId, rsvp: 'CONFIRMED' },
+      _sum: { companionsConfirmed: true },
+    })
+    return suma._sum.companionsConfirmed ?? 0
+  }
+
   async crear(datos: DatosCrearInvitado): Promise<Guest> {
     try {
-      const fila = await this.prisma.guest.create({
-        data: {
-          eventId: datos.eventId,
-          name: datos.name,
-          email: datos.email,
-          group: datos.group,
-          dietary: datos.dietary,
-        },
-      })
+      const fila = await this.prisma.guest.create({ data: aFilaNueva(datos) })
       return aInvitado(fila)
     } catch (error) {
       throw traducir(error)
     }
+  }
+
+  async crearVarios(datos: DatosCrearInvitado[]): Promise<number> {
+    // Un solo INSERT multi-fila: Postgres lo aplica entero o nada, sin
+    // transacción explícita. `clienteDe` por si algún día lo llama una unidad
+    // de trabajo más grande.
+    try {
+      const { count } = await clienteDe(this.prisma).guest.createMany({
+        data: datos.map((d) => aFilaNueva(d)),
+      })
+      return count
+    } catch (error) {
+      throw traducir(error)
+    }
+  }
+
+  async emailsExistentes(eventId: string, emails: string[]): Promise<Set<string>> {
+    if (emails.length === 0) return new Set()
+    const filas = await this.prisma.guest.findMany({
+      where: { eventId, email: { in: emails, mode: 'insensitive' } },
+      select: { email: true },
+    })
+    return new Set(filas.flatMap((f) => (f.email === null ? [] : [f.email.toLowerCase()])))
   }
 
   async buscar(eventId: string, guestId: string): Promise<Guest | null> {
@@ -137,6 +160,12 @@ export class PrismaGuestRepository implements GuestRepository {
           ...(cambios.group !== undefined ? { group: cambios.group } : {}),
           ...(cambios.rsvp !== undefined ? { rsvp: cambios.rsvp } : {}),
           ...(cambios.dietary !== undefined ? { dietary: cambios.dietary } : {}),
+          ...(cambios.companionsAllowed !== undefined
+            ? { companionsAllowed: cambios.companionsAllowed }
+            : {}),
+          ...(cambios.companionsConfirmed !== undefined
+            ? { companionsConfirmed: cambios.companionsConfirmed }
+            : {}),
         },
       })
     } catch (error) {
@@ -173,7 +202,20 @@ function aInvitado(fila: GuestFila): Guest {
     group: fila.group,
     rsvp: fila.rsvp,
     dietary: fila.dietary,
+    companionsAllowed: fila.companionsAllowed,
+    companionsConfirmed: fila.companionsConfirmed,
     createdAt: fila.createdAt,
+  }
+}
+
+function aFilaNueva(datos: DatosCrearInvitado): Prisma.GuestCreateManyInput {
+  return {
+    eventId: datos.eventId,
+    name: datos.name,
+    email: datos.email,
+    group: datos.group,
+    dietary: datos.dietary,
+    companionsAllowed: datos.companionsAllowed,
   }
 }
 

@@ -31,6 +31,8 @@ export function repoSembrado(): GuestRepositoryEnMemoria {
       group: i < 3 ? 'Family' : 'Friends',
       rsvp: i < 3 ? 'CONFIRMED' : 'PENDING',
       dietary: null,
+      companionsAllowed: 0,
+      companionsConfirmed: null,
       createdAt: new Date(base.getTime() + i * 1000),
     })
   }
@@ -42,6 +44,8 @@ export function repoSembrado(): GuestRepositoryEnMemoria {
     group: 'Family',
     rsvp: 'CONFIRMED',
     dietary: null,
+    companionsAllowed: 0,
+    companionsConfirmed: null,
     createdAt: base,
   })
 

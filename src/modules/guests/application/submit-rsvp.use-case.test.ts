@@ -5,7 +5,11 @@ import type { DomainError } from '@/shared/domain'
 import { Logger } from '@nestjs/common'
 
 import type { Guest } from '../domain/guest'
-import { InvitacionNoValidaError, RsvpCerradoError } from '../domain/guest-errors'
+import {
+  AcompanantesExcedidosError,
+  InvitacionNoValidaError,
+  RsvpCerradoError,
+} from '../domain/guest-errors'
 import { generarTokenInvitacion, type InvitationStatus } from '../domain/invitation'
 import { GuestRepositoryEnMemoria } from '../infrastructure/guest.repository.fake'
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
@@ -90,6 +94,8 @@ describe('SubmitRsvpUseCase', () => {
       group: 'Family',
       rsvp: 'PENDING',
       dietary: null,
+      companionsAllowed: 2,
+      companionsConfirmed: null,
       createdAt: new Date(Date.UTC(2026, 0, 1)),
     })
     notificaciones.registrarMiembros('ev-1', ['user-pareja', 'user-planner'])
@@ -108,6 +114,45 @@ describe('SubmitRsvpUseCase', () => {
     expect(invitado('g1')?.dietary).toBe('Vegan')
     expect(invitaciones.buscar(id)?.status).toBe('RESPONDED')
     expect(invitaciones.buscar(id)?.respondedAt).toBeInstanceOf(Date)
+  })
+
+  it('CONFIRMED guarda los acompañantes que trae, dentro del cupo', async () => {
+    const { token } = await prepararInvitacionValida()
+
+    await caso.ejecutar(token, { rsvp: 'CONFIRMED', companions: 2 })
+
+    expect(invitado('g1')?.companionsConfirmed).toBe(2)
+  })
+
+  it('CONFIRMED sin `companions` viene solo: 0, no null', async () => {
+    const { token } = await prepararInvitacionValida()
+
+    await caso.ejecutar(token, { rsvp: 'CONFIRMED' })
+
+    expect(invitado('g1')?.companionsConfirmed).toBe(0)
+  })
+
+  it('más acompañantes que el cupo → 422 COMPANIONS_EXCEEDED y no toca nada', async () => {
+    const { token, id } = await prepararInvitacionValida()
+
+    const error = await capturarError(() =>
+      caso.ejecutar(token, { rsvp: 'CONFIRMED', companions: 3 }),
+    )
+
+    expect(error).toBeInstanceOf(AcompanantesExcedidosError)
+    expect(error.httpStatus).toBe(422)
+    expect(invitado('g1')?.rsvp).toBe('PENDING')
+    expect(invitado('g1')?.companionsConfirmed).toBeNull()
+    expect(invitaciones.buscar(id)?.status).toBe('DELIVERED')
+  })
+
+  it('DECLINED deja los acompañantes en 0 aunque el cuerpo diga otra cosa', async () => {
+    const { token } = await prepararInvitacionValida()
+    await caso.ejecutar(token, { rsvp: 'CONFIRMED', companions: 2 })
+
+    await caso.ejecutar(token, { rsvp: 'DECLINED', companions: 2 })
+
+    expect(invitado('g1')?.companionsConfirmed).toBe(0)
   })
 
   it('sin `dietary` no toca la dieta que ya tuviera el invitado', async () => {

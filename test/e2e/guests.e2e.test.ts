@@ -21,6 +21,8 @@ interface CuerpoInvitado {
   group: string
   rsvp: 'CONFIRMED' | 'PENDING' | 'DECLINED'
   dietary: string | null
+  companionsAllowed: number
+  companionsConfirmed: number | null
 }
 
 interface CuerpoPagina {
@@ -38,6 +40,11 @@ interface CuerpoResumen {
   confirmed: number
   pending: number
   declined: number
+  attending: number
+}
+
+interface CuerpoErrorImportacion extends CuerpoError {
+  details: Array<{ row: number; field: string; code: string; message: string }>
 }
 
 describe('Invitados e2e', () => {
@@ -158,6 +165,139 @@ describe('Invitados e2e', () => {
     expect(invitado.email).toBeNull()
     expect(invitado.rsvp).toBe('PENDING')
     expect(invitado.eventId).toBe(bodaDeAna)
+  })
+
+  it('crea un invitado con cupo de acompañantes; por encima de 10 es 400', async () => {
+    const respuesta = await request(url)
+      .post(`/events/${bodaDeAna}/guests`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({
+        name: 'Con pareja',
+        email: `pareja-${randomUUID()}@test.com`,
+        group: 'Friends',
+        companionsAllowed: 1,
+      })
+      .expect(201)
+
+    expect(respuesta.body).toMatchObject({ companionsAllowed: 1, companionsConfirmed: null })
+
+    await request(url)
+      .post(`/events/${bodaDeAna}/guests`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ name: 'Con autobús', group: 'Friends', companionsAllowed: 11 })
+      .expect(400)
+  })
+
+  it('POST /import carga el lote entero y el resumen cuenta a quien asiste', async () => {
+    const duena = await registrarYEntrar(`import-${randomUUID()}@test.com`, 'Importadora')
+    const boda = await crearEvento(duena.accessToken, 'Boda importada')
+    const auth = `Bearer ${duena.accessToken}`
+
+    const respuesta = await request(url)
+      .post(`/events/${boda}/guests/import`)
+      .set('Authorization', auth)
+      .send({
+        guests: [
+          { name: 'Tía Carmen', email: 'carmen@test.com', group: 'Family', companionsAllowed: 2 },
+          { name: 'Abuelo Luis', group: 'Family' },
+          { name: 'Jefa', email: 'jefa@test.com', group: 'Work', dietary: 'Vegan' },
+        ],
+      })
+      .expect(201)
+
+    expect(respuesta.body).toEqual({ created: 3 })
+    const filas = await prisma.guest.findMany({
+      where: { eventId: boda },
+      orderBy: { name: 'asc' },
+    })
+    expect(filas.map((f) => [f.name, f.companionsAllowed])).toEqual([
+      ['Abuelo Luis', 0],
+      ['Jefa', 0],
+      ['Tía Carmen', 2],
+    ])
+
+    await prisma.guest.updateMany({
+      where: { eventId: boda, name: 'Tía Carmen' },
+      data: { rsvp: 'CONFIRMED', companionsConfirmed: 2 },
+    })
+    const resumen = (
+      await request(url)
+        .get(`/events/${boda}/guests/summary`)
+        .set('Authorization', auth)
+        .expect(200)
+    ).body as CuerpoResumen
+    expect(resumen).toMatchObject({ total: 3, confirmed: 1, attending: 3 })
+  })
+
+  it('POST /import con filas malas es 422 con el detalle por fila y no crea NINGUNA', async () => {
+    const duena = await registrarYEntrar(`import-${randomUUID()}@test.com`, 'Importadora')
+    const boda = await crearEvento(duena.accessToken, 'Boda importada mal')
+    const auth = `Bearer ${duena.accessToken}`
+    await request(url)
+      .post(`/events/${boda}/guests`)
+      .set('Authorization', auth)
+      .send({ name: 'Ya estaba', email: 'ya@test.com', group: 'Family' })
+      .expect(201)
+
+    const respuesta = await request(url)
+      .post(`/events/${boda}/guests/import`)
+      .set('Authorization', auth)
+      .send({
+        guests: [
+          { name: 'Buena', email: 'buena@test.com', group: 'Family' },
+          { name: '', group: 'Family' },
+          { name: 'Copia', email: 'BUENA@test.com', group: 'Family' },
+          { name: 'Otra vez', email: 'Ya@Test.com', group: 'Family' },
+          { name: 'Muchos', group: 'Family', companionsAllowed: 20 },
+        ],
+      })
+      .expect(422)
+
+    const cuerpo = respuesta.body as CuerpoErrorImportacion
+    expect(cuerpo.code).toBe('GUEST_IMPORT_INVALID')
+    expect(cuerpo.details.map((d) => [d.row, d.field, d.code])).toEqual([
+      [2, 'name', 'INVALID'],
+      [3, 'email', 'DUPLICATED_IN_FILE'],
+      [4, 'email', 'ALREADY_INVITED'],
+      [5, 'companionsAllowed', 'INVALID'],
+    ])
+    expect(await prisma.guest.count({ where: { eventId: boda } })).toBe(1)
+  })
+
+  it('POST /import sin filas, o con más de 500, es 400', async () => {
+    const auth = `Bearer ${ana.accessToken}`
+    await request(url)
+      .post(`/events/${bodaDeAna}/guests/import`)
+      .set('Authorization', auth)
+      .send({ guests: [] })
+      .expect(400)
+    await request(url)
+      .post(`/events/${bodaDeAna}/guests/import`)
+      .set('Authorization', auth)
+      .send({ guests: Array.from({ length: 501 }, (_, i) => ({ name: `G${i}`, group: 'F' })) })
+      .expect(400)
+  })
+
+  it('PATCH no deja bajar el cupo por debajo de lo ya confirmado: 422', async () => {
+    const creado = (
+      await request(url)
+        .post(`/events/${bodaDeAna}/guests`)
+        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .send({ name: 'Confirmó dos', group: 'Friends', companionsAllowed: 2 })
+        .expect(201)
+    ).body as CuerpoInvitado
+    await prisma.guest.update({
+      where: { id: creado.id },
+      data: { rsvp: 'CONFIRMED', companionsConfirmed: 2 },
+    })
+
+    const respuesta = await request(url)
+      .patch(`/events/${bodaDeAna}/guests/${creado.id}`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ companionsAllowed: 1 })
+      .expect(422)
+
+    expect((respuesta.body as CuerpoError).code).toBe('COMPANIONS_EXCEEDED')
   })
 
   it('rechaza invitar dos veces al mismo correo en el mismo evento: 409', async () => {
@@ -606,7 +746,7 @@ describe('Invitados e2e', () => {
     expect(fila?.guestId).toBe(invitado.id)
   })
 
-  it('un vendor contratado NO puede tocar NINGUNA de las ocho rutas: 403', async () => {
+  it('un vendor contratado NO puede tocar NINGUNA de las nueve rutas: 403', async () => {
     // Boda, invitado y vendor propios: `@RequireEventAccess` es inerte si
     // falta en un método, y un decorador que falta se ve igual que uno que
     // está. Por eso se comprueban las SEIS rutas, no sólo el listado — con
@@ -669,6 +809,11 @@ describe('Invitados e2e', () => {
           .post(`/events/${bodaPropia}/guests`)
           .set('Authorization', token)
           .send({ name: 'Colado', group: 'Work' }),
+      () =>
+        request(url)
+          .post(`/events/${bodaPropia}/guests/import`)
+          .set('Authorization', token)
+          .send({ guests: [{ name: 'Colado', group: 'Work' }] }),
       () =>
         request(url).get(`/events/${bodaPropia}/guests/${victima.id}`).set('Authorization', token),
       () =>

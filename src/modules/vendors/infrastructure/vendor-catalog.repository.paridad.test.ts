@@ -3,9 +3,11 @@ import { PrismaClient } from '@prisma/client'
 import type { PrismaService } from '@/modules/database/prisma.service'
 import { decodeCursor } from '@/shared/domain'
 
+import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 import type { VendorCatalogRepository } from '../application/vendor-catalog.repository'
 import { VendorCatalogRepositoryEnMemoria } from './vendor-catalog.repository.fake'
+import { categoriaSembrada } from './vendor-category.repository.fake'
 import { PrismaVendorCatalogRepository } from './prisma-vendor-catalog.repository'
 
 const BASE = new Date('2026-03-01T00:00:00.000Z')
@@ -24,6 +26,7 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
     n: number,
     datos: {
       businessName: string
+      /** `slug` de la categoría. */
       category: string
       specialty?: string
       status?: 'DRAFT' | 'PUBLISHED' | 'SUSPENDED'
@@ -37,16 +40,17 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
       data: {
         userId: user.id,
         businessName: datos.businessName,
-        category: datos.category,
+        categoryId: await categoriaId(prisma, datos.category),
         specialty: datos.specialty ?? null,
         status: datos.status ?? 'PUBLISHED',
         createdAt,
       },
     })
+    const { slug, name } = categoriaSembrada(datos.category)
     doble.perfiles.push({
       id: fila.id,
       businessName: datos.businessName,
-      category: datos.category,
+      category: { slug, name },
       specialty: datos.specialty ?? null,
       status: datos.status ?? 'PUBLISHED',
       createdAt,
@@ -59,14 +63,14 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
     real = new PrismaVendorCatalogRepository(prisma as unknown as PrismaService)
     doble = new VendorCatalogRepositoryEnMemoria()
 
-    await sembrar(1, { businessName: 'Lumière Catering', category: 'Catering' })
+    await sembrar(1, { businessName: 'Lumière Catering', category: 'catering' })
     await sembrar(2, {
       businessName: 'Foto Luz',
-      category: 'Photography',
+      category: 'photography',
       specialty: 'Bodas al aire libre',
     })
-    await sembrar(3, { businessName: 'Oculto', category: 'Catering', status: 'DRAFT' })
-    await sembrar(4, { businessName: 'Suspendido', category: 'Catering', status: 'SUSPENDED' })
+    await sembrar(3, { businessName: 'Oculto', category: 'catering', status: 'DRAFT' })
+    await sembrar(4, { businessName: 'Suspendido', category: 'catering', status: 'SUSPENDED' })
     await sembrar(5, { businessName: 'Banquetes Sol', category: 'catering' })
   }, 120_000)
 
@@ -79,7 +83,9 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
     [{ q: null, category: null }, ['Lumière Catering', 'Foto Luz', 'Banquetes Sol']],
     [{ q: 'LUZ', category: null }, ['Foto Luz']],
     [{ q: 'aire libre', category: null }, ['Foto Luz']],
-    [{ q: null, category: 'CATERING' }, ['Lumière Catering', 'Banquetes Sol']],
+    [{ q: null, category: 'catering' }, ['Lumière Catering', 'Banquetes Sol']],
+    [{ q: null, category: 'photography' }, ['Foto Luz']],
+    [{ q: null, category: 'no-existe' }, []],
   ] as const)('buscar(%o)', async (filtro, esperado) => {
     for (const repo of [real, doble] as VendorCatalogRepository[]) {
       const pagina = await repo.buscar({ ...filtro, cursor: null, limit: 20 })

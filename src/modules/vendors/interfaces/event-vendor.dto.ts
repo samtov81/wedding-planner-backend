@@ -2,6 +2,8 @@ import { z } from 'zod'
 
 import { montoSchema } from '@/shared/http/esquemas'
 
+import { slugDeCategoriaSchema } from './categoria.dto'
+
 /**
  * Los cuatro campos de `EntradaVendorRef` llegan opcionales: es
  * `parseVendorRef` quien decide si la combinación es válida (422 con motivo),
@@ -13,7 +15,8 @@ export const createEventVendorSchema = z.object({
   externalName: z.string().trim().min(1).optional(),
   externalEmail: z.email().optional(),
   externalPhone: z.string().trim().min(1).optional(),
-  category: z.string().trim().min(1).max(200),
+  /** `slug` del catálogo de categorías (`GET /vendor-categories`). */
+  category: slugDeCategoriaSchema,
   specialty: z.string().trim().min(1).max(200).optional(),
   // `montoSchema`, no `.positive()`: el presupuesto asignado admite 0.
   assignedBudget: montoSchema.optional(),
@@ -22,7 +25,7 @@ export type CreateEventVendorDto = z.infer<typeof createEventVendorSchema>
 
 export const updateEventVendorSchema = z
   .object({
-    category: z.string().trim().min(1).max(200).optional(),
+    category: slugDeCategoriaSchema.optional(),
     specialty: z.string().trim().min(1).max(200).nullable().optional(),
     assignedBudget: montoSchema.nullable().optional(),
     status: z.enum(['SHORTLISTED', 'BOOKED', 'CANCELLED']).optional(),

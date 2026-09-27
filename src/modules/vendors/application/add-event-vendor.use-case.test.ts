@@ -2,7 +2,9 @@ import { UnprocessableError } from '@/shared/domain'
 
 import { EventVendorRepositoryEnMemoria } from '../infrastructure/event-vendor.repository.fake'
 import { VendorProfileNoDisponibleError } from '../domain/vendor-errors'
+import { VendorCategoryRepositoryEnMemoria } from '../infrastructure/vendor-category.repository.fake'
 import { AddEventVendorUseCase } from './add-event-vendor.use-case'
+import { CategoriasDeProveedor } from './categorias'
 
 const EVENTO = '11111111-1111-4111-8111-111111111111'
 const PERFIL = '33333333-3333-4333-8333-333333333333'
@@ -14,21 +16,24 @@ describe('AddEventVendorUseCase', () => {
 
   beforeEach(() => {
     vendors = new EventVendorRepositoryEnMemoria()
-    caso = new AddEventVendorUseCase(vendors)
+    caso = new AddEventVendorUseCase(
+      vendors,
+      new CategoriasDeProveedor(new VendorCategoryRepositoryEnMemoria()),
+    )
   })
 
   it('contrata a un proveedor externo sin cuenta en el marketplace', async () => {
     const vista = await caso.ejecutar(EVENTO, {
       externalName: 'Flores Pepa',
       externalEmail: 'pepa@flores.es',
-      category: 'Floristería',
+      category: 'decor-floral',
       actorUserId: ANA,
     })
 
     expect(vista).toMatchObject({
       eventId: EVENTO,
       vendorRef: { kind: 'external', name: 'Flores Pepa', email: 'pepa@flores.es', phone: null },
-      category: 'Floristería',
+      category: { slug: 'decor-floral', name: 'Decor & Floral' },
       status: 'SHORTLISTED',
     })
   })
@@ -38,7 +43,7 @@ describe('AddEventVendorUseCase', () => {
 
     const vista = await caso.ejecutar(EVENTO, {
       vendorProfileId: 'perfil-1',
-      category: 'Catering',
+      category: 'catering',
       actorUserId: ANA,
     })
 
@@ -51,7 +56,7 @@ describe('AddEventVendorUseCase', () => {
     await expect(
       caso.ejecutar(EVENTO, {
         vendorProfileId: 'perfil-1',
-        category: 'Catering',
+        category: 'catering',
         actorUserId: ANA,
       }),
     ).rejects.toBeInstanceOf(VendorProfileNoDisponibleError)
@@ -63,7 +68,7 @@ describe('AddEventVendorUseCase', () => {
     await expect(
       caso.ejecutar(EVENTO, {
         vendorProfileId: 'perfil-1',
-        category: 'Catering',
+        category: 'catering',
         actorUserId: ANA,
       }),
     ).rejects.toBeInstanceOf(VendorProfileNoDisponibleError)
@@ -73,7 +78,7 @@ describe('AddEventVendorUseCase', () => {
     await expect(
       caso.ejecutar(EVENTO, {
         vendorProfileId: 'no-existe',
-        category: 'Catering',
+        category: 'catering',
         actorUserId: ANA,
       }),
     ).rejects.toBeInstanceOf(VendorProfileNoDisponibleError)
@@ -86,7 +91,7 @@ describe('AddEventVendorUseCase', () => {
       caso.ejecutar(EVENTO, {
         vendorProfileId: 'perfil-1',
         externalName: 'Flores Pepa',
-        category: 'Catering',
+        category: 'catering',
         actorUserId: ANA,
       }),
     ).rejects.toBeInstanceOf(UnprocessableError)
@@ -94,14 +99,14 @@ describe('AddEventVendorUseCase', () => {
 
   it('rechaza no traer ni ficha ni datos externos', async () => {
     await expect(
-      caso.ejecutar(EVENTO, { category: 'Catering', actorUserId: ANA }),
+      caso.ejecutar(EVENTO, { category: 'catering', actorUserId: ANA }),
     ).rejects.toBeInstanceOf(UnprocessableError)
   })
 
   it('deja rastro en la auditoría de quién dio de alta al proveedor', async () => {
     const vista = await caso.ejecutar(EVENTO, {
       externalName: 'Flores Pepa',
-      category: 'Floristería',
+      category: 'decor-floral',
       actorUserId: ANA,
     })
 
@@ -120,7 +125,7 @@ describe('AddEventVendorUseCase', () => {
 
     await caso.ejecutar(EVENTO, {
       externalName: 'Flores Pepa',
-      category: 'Floristería',
+      category: 'decor-floral',
       actorUserId: ANA,
     })
 
@@ -132,17 +137,28 @@ describe('AddEventVendorUseCase', () => {
 
     const vinculado = await caso.ejecutar(EVENTO, {
       vendorProfileId: PERFIL,
-      category: 'Catering',
+      category: 'catering',
       assignedBudget: '2000.00',
       actorUserId: ANA,
     })
     const externo = await caso.ejecutar(EVENTO, {
       externalName: 'DJ Max',
-      category: 'Music',
+      category: 'music-entertainment',
       actorUserId: ANA,
     })
 
     expect(vinculado).toMatchObject({ name: 'Lumière', assignedBudget: '2000.00' })
     expect(externo).toMatchObject({ name: 'DJ Max', assignedBudget: null })
+  })
+
+  it('rechaza una categoría que no está en el catálogo', async () => {
+    await expect(
+      caso.ejecutar(EVENTO, {
+        externalName: 'Flores Pepa',
+        category: 'floristeria',
+        actorUserId: ANA,
+      }),
+    ).rejects.toMatchObject({ code: 'VENDOR_CATEGORY_UNKNOWN' })
+    expect(vendors.auditoria).toEqual([])
   })
 })

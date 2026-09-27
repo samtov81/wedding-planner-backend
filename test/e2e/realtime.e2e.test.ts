@@ -22,6 +22,7 @@ import {
 import { RedisIoAdapter } from '@/modules/notifications/infrastructure/redis-io.adapter'
 import { DomainExceptionFilter } from '@/shared/http/domain-exception.filter'
 
+import { categoriaId } from '../support/categorias'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 
 const SECRETO_WEBHOOK = `whsec_${Buffer.from('secreto-e2e-del-webhook-32-bytes').toString('base64')}`
@@ -194,10 +195,19 @@ describe('Tiempo real e2e', () => {
       ],
     })
     const perfil = await prisma.vendorProfile.create({
-      data: { userId: vendor.id, businessName: 'Catering', category: 'CATERING' },
+      data: {
+        userId: vendor.id,
+        businessName: 'Catering',
+        categoryId: await categoriaId(prisma, 'catering'),
+      },
     })
     await prisma.eventVendor.create({
-      data: { eventId, vendorProfileId: perfil.id, category: 'CATERING', status: 'BOOKED' },
+      data: {
+        eventId,
+        vendorProfileId: perfil.id,
+        categoryId: await categoriaId(prisma, 'catering'),
+        status: 'BOOKED',
+      },
     })
   }, 240_000)
 

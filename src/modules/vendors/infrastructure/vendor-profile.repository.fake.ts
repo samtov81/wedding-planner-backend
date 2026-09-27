@@ -124,14 +124,14 @@ export class VendorProfileRepositoryEnMemoria implements VendorProfileRepository
     return Promise.resolve(this.bodas.get(fichaId)?.size ?? 0)
   }
 
-  similares(ficha: { id: string; category: string }, limite: number): Promise<FichaDeProveedor[]> {
-    const categoria = ficha.category.toLowerCase()
+  similares(
+    ficha: { id: string; category: { id: string } },
+    limite: number,
+  ): Promise<FichaDeProveedor[]> {
+    const categoria = ficha.category.id
     return Promise.resolve(
       this.fichas
-        .filter(
-          (f) =>
-            f.id !== ficha.id && f.status === 'PUBLISHED' && f.category.toLowerCase() === categoria,
-        )
+        .filter((f) => f.id !== ficha.id && f.status === 'PUBLISHED' && f.category.id === categoria)
         .sort((a, b) => a.createdAt - b.createdAt)
         .slice(0, limite)
         .map((f) => this.copia(f)),

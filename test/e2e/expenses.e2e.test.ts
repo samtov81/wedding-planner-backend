@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
 
+import { categoriaId } from '../support/categorias'
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 import { crearEventoPublicado } from '../support/eventos'
@@ -73,7 +74,7 @@ describe('Gastos e2e', () => {
     const vendor = await request(url)
       .post(`/events/${evento}/vendors`)
       .set(auth)
-      .send({ externalName: 'DJ Max', category: 'Music', assignedBudget: 500 })
+      .send({ externalName: 'DJ Max', category: 'music-entertainment', assignedBudget: 500 })
       .expect(201)
     const vendorId = (vendor.body as { id: string }).id
 
@@ -141,7 +142,7 @@ describe('Gastos e2e', () => {
     const ajeno = await request(url)
       .post(`/events/${otroEvento}/vendors`)
       .set(auth)
-      .send({ externalName: 'Ajeno', category: 'X' })
+      .send({ externalName: 'Ajeno', category: 'media' })
       .expect(201)
 
     await request(url)
@@ -177,10 +178,20 @@ describe('Gastos e2e', () => {
       .expect(201)
     const draft = (creado.body as { id: string }).id
     const perfil = await prisma.vendorProfile.create({
-      data: { userId: fotografo.id, businessName: 'Luz', category: 'Photo', status: 'PUBLISHED' },
+      data: {
+        userId: fotografo.id,
+        businessName: 'Luz',
+        categoryId: await categoriaId(prisma, 'photography'),
+        status: 'PUBLISHED',
+      },
     })
     await prisma.eventVendor.create({
-      data: { eventId: draft, vendorProfileId: perfil.id, category: 'Photo', status: 'BOOKED' },
+      data: {
+        eventId: draft,
+        vendorProfileId: perfil.id,
+        categoryId: await categoriaId(prisma, 'photography'),
+        status: 'BOOKED',
+      },
     })
 
     const auth = { Authorization: `Bearer ${fotografo.accessToken}` }

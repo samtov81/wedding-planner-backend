@@ -129,7 +129,7 @@ model VendorProfile {
   id               String              @id @default(uuid()) @db.Uuid
   userId           String              @unique @db.Uuid
   businessName     String
-  category         String
+  categoryId       String              @db.Uuid
   specialty        String?
   tagline          String?
   bio              String?
@@ -153,12 +153,32 @@ model VendorProfile {
   updatedAt        DateTime            @updatedAt
 
   user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category        VendorCategory         @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   eventVendors    EventVendor[]
   packages        VendorPackage[]
   portfolioImages VendorPortfolioImage[]
 
-  @@index([category, status])
+  @@index([categoryId, status])
   @@map("vendor_profiles")
+}
+
+/// Catálogo cerrado de categorías de proveedor. Lo siembran las migraciones;
+/// el `slug` es el identificador público y estable (la API escribe y filtra
+/// por él), `name` es lo que se muestra. Una categoría no se borra: se
+/// desactiva (`active = false`) y deja de ofrecerse, sin tocar las fichas ni
+/// los proveedores de evento que ya la usan (FK `Restrict`).
+model VendorCategory {
+  id        String   @id @default(uuid()) @db.Uuid
+  slug      String   @unique
+  name      String   @unique
+  position  Int
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  vendorProfiles VendorProfile[]
+  eventVendors   EventVendor[]
+
+  @@map("vendor_categories")
 }
 
 /// Paquete de servicio de una ficha. El precio va en la moneda de la ficha.
@@ -301,7 +321,7 @@ model EventVendor {
   externalName    String?
   externalEmail   String?
   externalPhone   String?
-  category        String
+  categoryId      String            @db.Uuid
   specialty       String?
   assignedBudget  Decimal?          @db.Decimal(12, 2)
   status          EventVendorStatus @default(SHORTLISTED)
@@ -317,10 +337,12 @@ model EventVendor {
   /// (VendorProfileStatus ya tiene ese valor), que no requiere tocar
   /// ninguna fila de EventVendor.
   vendorProfile VendorProfile? @relation(fields: [vendorProfileId], references: [id], onDelete: Restrict)
+  category      VendorCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   expenses      Expense[]
 
   @@index([eventId])
   @@index([vendorProfileId])
+  @@index([categoryId])
   @@map("event_vendors")
 }
 

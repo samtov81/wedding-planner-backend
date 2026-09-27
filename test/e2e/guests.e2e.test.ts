@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
 
+import { categoriaId } from '../support/categorias'
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 import { crearEventoPublicado } from '../support/eventos'
@@ -770,7 +771,7 @@ describe('Invitados e2e', () => {
       data: {
         userId: fotografoPropio.id,
         businessName: 'Lumière',
-        category: 'Fotografía',
+        categoryId: await categoriaId(prisma, 'photography'),
         status: 'PUBLISHED',
       },
     })
@@ -778,7 +779,7 @@ describe('Invitados e2e', () => {
       data: {
         eventId: bodaPropia,
         vendorProfileId: perfil.id,
-        category: 'Fotografía',
+        categoryId: await categoriaId(prisma, 'photography'),
         status: 'BOOKED',
       },
     })

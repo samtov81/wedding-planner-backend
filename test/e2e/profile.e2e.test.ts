@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
 
+import { categoriaId } from '../support/categorias'
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 
@@ -109,7 +110,7 @@ describe('Perfil de usuario y modo proveedor e2e', () => {
 
     it('nombre y categoría son obligatorios', async () => {
       await comoAna(request(url).put('/users/me/vendor-profile'))
-        .send({ businessName: '', category: 'Photography' })
+        .send({ businessName: '', category: 'photography' })
         .expect(400)
     })
 
@@ -117,7 +118,7 @@ describe('Perfil de usuario y modo proveedor e2e', () => {
       const guardada = await comoAna(request(url).put('/users/me/vendor-profile'))
         .send({
           businessName: 'Aurelia Luxe',
-          category: 'Photography',
+          category: 'photography',
           tagline: 'Luxury Destination Photography',
           yearsExperience: 12,
           responseTime: '< 2h',
@@ -129,6 +130,10 @@ describe('Perfil de usuario y modo proveedor e2e', () => {
         .expect(200)
       const ficha = guardada.body as Ficha
       expect(ficha.status).toBe('DRAFT')
+      expect((guardada.body as { category: unknown }).category).toEqual({
+        slug: 'photography',
+        name: 'Photography',
+      })
       expect(ficha.location).toMatchObject({ address: 'Paris, France', lat: 48.8566 })
 
       await request(url).get(`/vendors/${ficha.id}`).expect(404)
@@ -216,7 +221,7 @@ describe('Perfil de usuario y modo proveedor e2e', () => {
       await request(url)
         .put('/users/me/vendor-profile')
         .set('Authorization', `Bearer ${beto.accessToken}`)
-        .send({ businessName: 'Beto Flores', category: 'Floral' })
+        .send({ businessName: 'Beto Flores', category: 'decor-floral' })
         .expect(200)
       await prisma.vendorProfile.update({
         where: { userId: beto.id },
@@ -242,7 +247,7 @@ describe('Perfil de usuario y modo proveedor e2e', () => {
         data: {
           userId: otro.id,
           businessName: 'Maison',
-          category: 'photography',
+          categoryId: await categoriaId(prisma, 'photography'),
           status: 'PUBLISHED',
         },
       })
@@ -251,7 +256,7 @@ describe('Perfil de usuario y modo proveedor e2e', () => {
         data: {
           eventId: evento.id,
           vendorProfileId: aurelia.id,
-          category: 'Photography',
+          categoryId: await categoriaId(prisma, 'photography'),
           status: 'BOOKED',
         },
       })

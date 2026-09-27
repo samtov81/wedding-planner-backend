@@ -18,7 +18,7 @@ export class PrismaVendorCatalogRepository implements VendorCatalogRepository {
     const { q, category, cursor, limit } = busqueda
     const where: Prisma.VendorProfileWhereInput = {
       status: 'PUBLISHED',
-      ...(category !== null ? { category: { equals: category, mode: 'insensitive' } } : {}),
+      ...(category !== null ? { category: { slug: category } } : {}),
       ...(q !== null
         ? {
             OR: [
@@ -45,7 +45,13 @@ export class PrismaVendorCatalogRepository implements VendorCatalogRepository {
       where,
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       take: limit + 1,
-      select: { id: true, businessName: true, category: true, specialty: true, createdAt: true },
+      select: {
+        id: true,
+        businessName: true,
+        category: { select: { slug: true, name: true } },
+        specialty: true,
+        createdAt: true,
+      },
     })
     const items = filas.slice(0, limit)
     const ultimo = items.at(-1)

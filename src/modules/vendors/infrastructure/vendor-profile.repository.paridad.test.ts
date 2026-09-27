@@ -4,13 +4,18 @@ import type { PrismaService } from '@/modules/database/prisma.service'
 
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 import type { VendorProfileRepository } from '../application/vendor-profile.repository'
+import type { CategoriaDeProveedor } from '../domain/categoria'
 import type { DatosDeFicha, FichaDeProveedor } from '../domain/vendor-profile'
 import { PrismaVendorProfileRepository } from './prisma-vendor-profile.repository'
 import { VendorProfileRepositoryEnMemoria } from './vendor-profile.repository.fake'
 
-const DATOS: DatosDeFicha = {
+/** Categorías reales de la base (las siembra la migración), cargadas en `beforeAll`. */
+let foto: CategoriaDeProveedor
+let flores: CategoriaDeProveedor
+
+const datos = (): DatosDeFicha => ({
   businessName: 'Aurelia Luxe',
-  category: 'Photography',
+  category: foto,
   specialty: 'Destination',
   tagline: 'Luxury Destination Photography',
   bio: 'Fotografía de bodas',
@@ -27,7 +32,7 @@ const DATOS: DatosDeFicha = {
     lng: 2.3522,
     mapboxId: 'mb1',
   },
-}
+})
 
 /** Sin ids: lo único que cambia entre el doble y Postgres. */
 function sinIds(ficha: FichaDeProveedor | null) {
@@ -48,6 +53,13 @@ describe('Paridad: VendorProfileRepositoryEnMemoria vs PrismaVendorProfileReposi
   beforeAll(async () => {
     pg = await startPostgres()
     prisma = new PrismaClient({ datasources: { db: { url: pg.url } } })
+    const categoria = (slug: string) =>
+      prisma.vendorCategory.findUniqueOrThrow({
+        where: { slug },
+        select: { id: true, slug: true, name: true },
+      })
+    foto = await categoria('photography')
+    flores = await categoria('decor-floral')
     usuarios = await Promise.all(
       ['a', 'b', 'c', 'd'].map(async (n) => {
         const u = await prisma.user.create({
@@ -85,14 +97,14 @@ describe('Paridad: VendorProfileRepositoryEnMemoria vs PrismaVendorProfileReposi
     for (const [, repo] of sujetos()) {
       await limpiar()
       expect(await repo.buscarPorUsuario(usuario(0))).toBeNull()
-      await repo.guardarDatos(usuario(0), { ...DATOS, tagline: null })
-      const editada = await repo.guardarDatos(usuario(0), DATOS)
+      await repo.guardarDatos(usuario(0), { ...datos(), tagline: null })
+      const editada = await repo.guardarDatos(usuario(0), datos())
       resultados.push({
         editada: sinIds(editada),
         leida: sinIds(await repo.buscarPorUsuario(usuario(0))),
       })
     }
-    expect(resultados[0]?.editada).toMatchObject({ ...DATOS, status: 'DRAFT', avatarKey: null })
+    expect(resultados[0]?.editada).toMatchObject({ ...datos(), status: 'DRAFT', avatarKey: null })
     expect(resultados[0]?.leida).toEqual(resultados[0]?.editada)
     expect(resultados[1]).toEqual(resultados[0])
   })
@@ -104,7 +116,7 @@ describe('Paridad: VendorProfileRepositoryEnMemoria vs PrismaVendorProfileReposi
       resultados.push(
         sinIds(
           await repo.guardarDatos(usuario(0), {
-            ...DATOS,
+            ...datos(),
             location: null,
             contact: { email: null, phone: null, website: null },
           }),
@@ -118,7 +130,7 @@ describe('Paridad: VendorProfileRepositoryEnMemoria vs PrismaVendorProfileReposi
   it('el estado decide la visibilidad pública', async () => {
     for (const [nombre, repo] of sujetos()) {
       await limpiar()
-      const ficha = await repo.guardarDatos(usuario(0), DATOS)
+      const ficha = await repo.guardarDatos(usuario(0), datos())
       expect(await repo.buscarPublicada(ficha.id), nombre).toBeNull()
       await repo.fijarEstado(ficha.id, 'PUBLISHED')
       expect((await repo.buscarPublicada(ficha.id))?.status, nombre).toBe('PUBLISHED')
@@ -131,7 +143,7 @@ describe('Paridad: VendorProfileRepositoryEnMemoria vs PrismaVendorProfileReposi
     const resultados = []
     for (const [, repo] of sujetos()) {
       await limpiar()
-      const ficha = await repo.guardarDatos(usuario(0), DATOS)
+      const ficha = await repo.guardarDatos(usuario(0), datos())
       await repo.reemplazarPaquetes(ficha.id, [
         { name: 'Uno', description: 'd1', price: '100.00' },
         { name: 'Dos', description: 'd2', price: '50.50' },
@@ -153,8 +165,8 @@ describe('Paridad: VendorProfileRepositoryEnMemoria vs PrismaVendorProfileReposi
     const resultados = []
     for (const [nombre, repo] of sujetos()) {
       await limpiar()
-      const ficha = await repo.guardarDatos(usuario(0), DATOS)
-      const ajena = await repo.guardarDatos(usuario(1), DATOS)
+      const ficha = await repo.guardarDatos(usuario(0), datos())
+      const ajena = await repo.guardarDatos(usuario(1), datos())
       const a = await repo.agregarFoto(ficha.id, { storageKey: `${nombre}/a.jpg`, alt: 'A' })
       const b = await repo.agregarFoto(ficha.id, { storageKey: `${nombre}/b.jpg`, alt: 'B' })
       const c = await repo.agregarFoto(ficha.id, { storageKey: `${nombre}/c.jpg`, alt: 'C' })
@@ -181,21 +193,21 @@ describe('Paridad: VendorProfileRepositoryEnMemoria vs PrismaVendorProfileReposi
     expect(resultados[1]).toEqual(resultados[0])
   })
 
-  it('similares: publicadas, misma categoría sin distinguir mayúsculas, sin ella misma', async () => {
+  it('similares: publicadas, de la misma categoría, sin ella misma', async () => {
     const resultados = []
     for (const [, repo] of sujetos()) {
       await limpiar()
-      const propia = await repo.guardarDatos(usuario(0), DATOS)
+      const propia = await repo.guardarDatos(usuario(0), datos())
       const par = await repo.guardarDatos(usuario(1), {
-        ...DATOS,
+        ...datos(),
         businessName: 'Maison',
-        category: 'PHOTOGRAPHY',
+        category: foto,
       })
-      await repo.guardarDatos(usuario(2), { ...DATOS, businessName: 'Borrador' })
+      await repo.guardarDatos(usuario(2), { ...datos(), businessName: 'Borrador' })
       const otra = await repo.guardarDatos(usuario(3), {
-        ...DATOS,
+        ...datos(),
         businessName: 'Flores',
-        category: 'Floral',
+        category: flores,
       })
       for (const f of [propia, par, otra]) await repo.fijarEstado(f.id, 'PUBLISHED')
 
@@ -208,15 +220,15 @@ describe('Paridad: VendorProfileRepositoryEnMemoria vs PrismaVendorProfileReposi
   it('Postgres: cuenta bodas por evento distinto y sólo BOOKED', async () => {
     await limpiar()
     const repo = new PrismaVendorProfileRepository(prisma as unknown as PrismaService)
-    const ficha = await repo.guardarDatos(usuario(0), DATOS)
+    const ficha = await repo.guardarDatos(usuario(0), datos())
     const [e1, e2] = await Promise.all(
       ['E1', 'E2'].map((name) => prisma.event.create({ data: { name, ownerId: usuario(1) } })),
     )
     if (e1 === undefined || e2 === undefined) throw new Error('sin eventos')
     await prisma.eventVendor.createMany({
       data: [
-        { eventId: e1.id, vendorProfileId: ficha.id, category: 'Photo', status: 'BOOKED' },
-        { eventId: e2.id, vendorProfileId: ficha.id, category: 'Photo', status: 'SHORTLISTED' },
+        { eventId: e1.id, vendorProfileId: ficha.id, categoryId: foto.id, status: 'BOOKED' },
+        { eventId: e2.id, vendorProfileId: ficha.id, categoryId: foto.id, status: 'SHORTLISTED' },
       ],
     })
 

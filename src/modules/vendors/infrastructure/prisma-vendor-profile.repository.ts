@@ -18,6 +18,7 @@ import type {
 
 const CON_HIJOS = {
   user: { select: { avatarKey: true } },
+  category: { select: { id: true, slug: true, name: true } },
   packages: { orderBy: [{ position: 'asc' }, { id: 'asc' }] },
   portfolioImages: { orderBy: [{ position: 'asc' }, { id: 'asc' }] },
 } satisfies Prisma.VendorProfileInclude
@@ -46,7 +47,7 @@ function aFicha(fila: FilaCompleta): FichaDeProveedor {
     status: fila.status,
     avatarKey: fila.user.avatarKey,
     businessName: fila.businessName,
-    category: fila.category,
+    category: { id: fila.category.id, slug: fila.category.slug, name: fila.category.name },
     specialty: fila.specialty,
     tagline: fila.tagline,
     bio: fila.bio,
@@ -82,7 +83,7 @@ function aFicha(fila: FilaCompleta): FichaDeProveedor {
 function aColumnas(datos: DatosDeFicha): Omit<Prisma.VendorProfileUncheckedCreateInput, 'userId'> {
   return {
     businessName: datos.businessName,
-    category: datos.category,
+    categoryId: datos.category.id,
     specialty: datos.specialty,
     tagline: datos.tagline,
     bio: datos.bio,
@@ -212,14 +213,14 @@ export class PrismaVendorProfileRepository implements VendorProfileRepository {
   }
 
   async similares(
-    ficha: { id: string; category: string },
+    ficha: { id: string; category: { id: string } },
     limite: number,
   ): Promise<FichaDeProveedor[]> {
     const filas = await this.prisma.vendorProfile.findMany({
       where: {
         id: { not: ficha.id },
         status: 'PUBLISHED',
-        category: { equals: ficha.category, mode: 'insensitive' },
+        categoryId: ficha.category.id,
       },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       take: limite,

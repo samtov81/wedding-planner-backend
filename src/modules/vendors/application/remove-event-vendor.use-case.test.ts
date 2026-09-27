@@ -1,3 +1,4 @@
+import { categoriaSembrada } from '../infrastructure/vendor-category.repository.fake'
 import { EventVendorNoEncontradoError, ProveedorConGastosError } from '../domain/vendor-errors'
 import { EventVendorRepositoryEnMemoria } from '../infrastructure/event-vendor.repository.fake'
 import { RemoveEventVendorUseCase } from './remove-event-vendor.use-case'
@@ -12,7 +13,7 @@ describe('RemoveEventVendorUseCase', () => {
     const vista = await vendors.crear({
       eventId: EVENTO,
       vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
-      category: 'Floristería',
+      category: categoriaSembrada('decor-floral'),
       specialty: null,
       assignedBudget: null,
       actorUserId: 'ana',
@@ -29,7 +30,7 @@ describe('RemoveEventVendorUseCase', () => {
     const vista = await vendors.crear({
       eventId: EVENTO,
       vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
-      category: 'Floristería',
+      category: categoriaSembrada('decor-floral'),
       specialty: null,
       assignedBudget: null,
       actorUserId: 'ana',
@@ -60,7 +61,7 @@ describe('RemoveEventVendorUseCase', () => {
     const vista = await vendors.crear({
       eventId: OTRO_EVENTO,
       vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
-      category: 'Floristería',
+      category: categoriaSembrada('decor-floral'),
       specialty: null,
       assignedBudget: null,
       actorUserId: 'ana',
@@ -77,7 +78,7 @@ describe('RemoveEventVendorUseCase', () => {
     const vista = await vendors.crear({
       eventId: EVENTO,
       vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
-      category: 'Floristería',
+      category: categoriaSembrada('decor-floral'),
       specialty: null,
       assignedBudget: '1500.00',
       actorUserId: 'ana',

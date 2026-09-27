@@ -2,11 +2,17 @@ import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
 
+import { categoriaId } from '../support/categorias'
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 
 interface CuerpoCatalogo {
-  items: Array<{ id: string; businessName: string; category: string; specialty: string | null }>
+  items: Array<{
+    id: string
+    businessName: string
+    category: { slug: string; name: string }
+    specialty: string | null
+  }>
   nextCursor: string | null
 }
 
@@ -64,7 +70,7 @@ describe('Catálogo de proveedores e2e', () => {
       data: {
         userId: publicado.id,
         businessName: 'Lumière',
-        category: 'Catering',
+        categoryId: await categoriaId(prisma, 'catering'),
         status: 'PUBLISHED',
       },
     })
@@ -76,7 +82,7 @@ describe('Catálogo de proveedores e2e', () => {
       data: {
         userId: oculto.id,
         businessName: 'Oculto',
-        category: 'Catering',
+        categoryId: await categoriaId(prisma, 'catering'),
         status: 'DRAFT',
       },
     })
@@ -103,7 +109,7 @@ describe('Catálogo de proveedores e2e', () => {
     expect(cuerpo.items).toHaveLength(1)
     expect(cuerpo.items[0]).toMatchObject({
       businessName: 'Lumière',
-      category: 'Catering',
+      category: { slug: 'catering', name: 'Catering' },
       specialty: null,
     })
   })
@@ -117,5 +123,50 @@ describe('Catálogo de proveedores e2e', () => {
       .get('/vendors?limit=500')
       .set('Authorization', `Bearer ${ana.accessToken}`)
       .expect(400)
+  })
+
+  it('filtra por el slug de la categoría', async () => {
+    const porSlug = await request(url)
+      .get('/vendors?category=catering')
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(200)
+    expect((porSlug.body as CuerpoCatalogo).items.map((i) => i.businessName)).toEqual(['Lumière'])
+
+    const otra = await request(url)
+      .get('/vendors?category=photography')
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(200)
+    expect((otra.body as CuerpoCatalogo).items).toEqual([])
+
+    await request(url)
+      .get('/vendors?category=Catering')
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(400)
+  })
+
+  describe('GET /vendor-categories', () => {
+    it('sin sesión → 401', async () => {
+      await request(url).get('/vendor-categories').expect(401)
+    })
+
+    it('lista las categorías activas en su orden, con slug y nombre', async () => {
+      const res = await request(url)
+        .get('/vendor-categories')
+        .set('Authorization', `Bearer ${ana.accessToken}`)
+        .expect(200)
+
+      expect(res.body).toEqual({
+        items: [
+          { slug: 'venue', name: 'Venue' },
+          { slug: 'catering', name: 'Catering' },
+          { slug: 'photography', name: 'Photography' },
+          { slug: 'decor-floral', name: 'Decor & Floral' },
+          { slug: 'music-entertainment', name: 'Music & Entertainment' },
+          { slug: 'attire-beauty', name: 'Attire & Beauty' },
+          { slug: 'stationery', name: 'Stationery' },
+          { slug: 'media', name: 'Media' },
+        ],
+      })
+    })
   })
 })

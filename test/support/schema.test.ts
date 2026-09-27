@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client'
 
+import { categoriaId } from './categorias'
 import { startPostgres, type PostgresDeTest } from './containers'
 
 describe('restricciones del esquema', () => {
@@ -30,7 +31,11 @@ describe('restricciones del esquema', () => {
       data: { email: 'vendor@test.com', passwordHash: 'x', fullName: 'Vendor' },
     })
     const perfil = await prisma.vendorProfile.create({
-      data: { userId: perfilUser.id, businessName: 'Lumière', category: 'Catering' },
+      data: {
+        userId: perfilUser.id,
+        businessName: 'Lumière',
+        categoryId: await categoriaId(prisma, 'catering'),
+      },
     })
 
     await expect(
@@ -39,7 +44,7 @@ describe('restricciones del esquema', () => {
           eventId,
           vendorProfileId: perfil.id,
           externalName: 'También externo',
-          category: 'Catering',
+          categoryId: await categoriaId(prisma, 'catering'),
         },
       }),
     ).rejects.toThrow(/event_vendors_origen_exclusivo/)
@@ -47,7 +52,9 @@ describe('restricciones del esquema', () => {
 
   it('rechaza un EventVendor sin ninguno de los dos orígenes', async () => {
     await expect(
-      prisma.eventVendor.create({ data: { eventId, category: 'Flores' } }),
+      prisma.eventVendor.create({
+        data: { eventId, categoryId: await categoriaId(prisma, 'decor-floral') },
+      }),
     ).rejects.toThrow(/event_vendors_origen_exclusivo/)
   })
 
@@ -84,10 +91,18 @@ describe('restricciones del esquema', () => {
       data: { email: 'con-historial@test.com', passwordHash: 'x', fullName: 'Con Historial' },
     })
     const perfil = await prisma.vendorProfile.create({
-      data: { userId: perfilUser.id, businessName: 'Con Historial SL', category: 'Fotografía' },
+      data: {
+        userId: perfilUser.id,
+        businessName: 'Con Historial SL',
+        categoryId: await categoriaId(prisma, 'photography'),
+      },
     })
     await prisma.eventVendor.create({
-      data: { eventId, vendorProfileId: perfil.id, category: 'Fotografía' },
+      data: {
+        eventId,
+        vendorProfileId: perfil.id,
+        categoryId: await categoriaId(prisma, 'photography'),
+      },
     })
 
     await expect(prisma.vendorProfile.delete({ where: { id: perfil.id } })).rejects.toThrow(
@@ -100,7 +115,11 @@ describe('restricciones del esquema', () => {
       data: { email: 'sin-historial@test.com', passwordHash: 'x', fullName: 'Sin Historial' },
     })
     const perfil = await prisma.vendorProfile.create({
-      data: { userId: perfilUser.id, businessName: 'Sin Historial SL', category: 'DJ' },
+      data: {
+        userId: perfilUser.id,
+        businessName: 'Sin Historial SL',
+        categoryId: await categoriaId(prisma, 'music-entertainment'),
+      },
     })
 
     await expect(prisma.vendorProfile.delete({ where: { id: perfil.id } })).resolves.toMatchObject({
@@ -162,7 +181,11 @@ describe('restricciones del esquema', () => {
 
     it('rechaza un gasto con proveedor Y beneficiario externo', async () => {
       const vendor = await prisma.eventVendor.create({
-        data: { eventId, externalName: 'DJ', category: 'Music' },
+        data: {
+          eventId,
+          externalName: 'DJ',
+          categoryId: await categoriaId(prisma, 'music-entertainment'),
+        },
       })
       await expect(
         prisma.expense.create({
@@ -220,7 +243,11 @@ describe('restricciones del esquema', () => {
 
     it('impide borrar un EventVendor que tiene gastos', async () => {
       const vendor = await prisma.eventVendor.create({
-        data: { eventId, externalName: 'Flores', category: 'Floral' },
+        data: {
+          eventId,
+          externalName: 'Flores',
+          categoryId: await categoriaId(prisma, 'decor-floral'),
+        },
       })
       await prisma.expense.create({
         data: {

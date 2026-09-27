@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
 
+import { categoriaId } from '../support/categorias'
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 import { crearEventoPublicado } from '../support/eventos'
@@ -321,10 +322,18 @@ describe('Acceso a eventos e2e', () => {
     // se cubre la otra mitad, BOOKED vs SHORTLISTED (un vendor nunca ve un
     // DRAFT, regla probada aparte).
     const perfil = await prisma.vendorProfile.create({
-      data: { userId: extrano.id, businessName: 'Lumière', category: 'Catering' },
+      data: {
+        userId: extrano.id,
+        businessName: 'Lumière',
+        categoryId: await categoriaId(prisma, 'catering'),
+      },
     })
     const contratacion = await prisma.eventVendor.create({
-      data: { eventId: eventoDeAna, vendorProfileId: perfil.id, category: 'Catering' },
+      data: {
+        eventId: eventoDeAna,
+        vendorProfileId: perfil.id,
+        categoryId: await categoriaId(prisma, 'catering'),
+      },
     })
 
     // SHORTLISTED: todavía no es nadie en este evento.

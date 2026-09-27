@@ -137,10 +137,10 @@ export class EventRepositoryEnMemoria implements EventRepository {
     const evento = this.eventos.find((e) => e.id === eventId)
     if (evento === undefined) return Promise.reject(new EventoNoEncontradoError())
     // `undefined` = no tocar; `null` = borrar. Igual que el `updateMany` de Prisma.
-    for (const clave of Object.keys(cambios) as Array<keyof CambiosEvento>) {
-      const valor = cambios[clave]
-      if (valor !== undefined) Object.assign(evento, { [clave]: valor })
-    }
+    Object.assign(
+      evento,
+      Object.fromEntries(Object.entries(cambios).filter(([, valor]) => valor !== undefined)),
+    )
     return Promise.resolve(this.materializar(evento))
   }
 

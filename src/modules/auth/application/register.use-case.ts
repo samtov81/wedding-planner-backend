@@ -29,7 +29,8 @@ export class RegisterUseCase {
     @Inject(USER_REPOSITORY) private readonly usuarios: UserRepository,
     @Inject(PASSWORD_HASHER) private readonly hasher: PasswordHasher,
     @Inject(QUEUE_PORT) private readonly cola: QueuePort,
-    @Inject(EMAIL_VERIFICATION_TOKEN_REPOSITORY) private readonly tokens: EmailVerificationTokenRepository,
+    @Inject(EMAIL_VERIFICATION_TOKEN_REPOSITORY)
+    private readonly tokens: EmailVerificationTokenRepository,
     @Inject(ENV) private readonly env: Env,
   ) {}
 
@@ -93,7 +94,9 @@ export class RegisterUseCase {
     return await this.notificarExistente(email)
   }
 
-  private async notificarExistente(email: string): Promise<{ id: string; email: string; fullName: string }> {
+  private async notificarExistente(
+    email: string,
+  ): Promise<{ id: string; email: string; fullName: string }> {
     const usuario = await this.usuarios.findByEmail(email)
     if (usuario === null) {
       // Edge case: se borró entre el primer findByEmail y aquí (muy improbable).

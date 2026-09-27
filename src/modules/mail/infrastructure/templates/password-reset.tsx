@@ -15,14 +15,20 @@ function PasswordReset({ fullName, resetUrl, minutosDeValidez }: Props) {
         <Container style={{ padding: '32px' }}>
           <Heading>Reset your password</Heading>
           <Text>Hi {fullName},</Text>
-          <Text>We received a request to reset your password. Click the button below to choose a new one.</Text>
+          <Text>
+            We received a request to reset your password. Click the button below to choose a new
+            one.
+          </Text>
           <Button href={resetUrl} style={{ padding: '12px 24px' }}>
             Reset password
           </Button>
-          <Text style={{ fontSize: '12px' }}>If the button does not work, open this link: {resetUrl}</Text>
+          <Text style={{ fontSize: '12px' }}>
+            If the button does not work, open this link: {resetUrl}
+          </Text>
           <Text style={{ fontSize: '12px', marginTop: '24px', color: '#666' }}>
-            This link will expire in {minutosDeValidez} minutes and can only be used once. If you did
-            not request a password reset, you can safely ignore this email: your password will not change.
+            This link will expire in {minutosDeValidez} minutes and can only be used once. If you
+            did not request a password reset, you can safely ignore this email: your password will
+            not change.
           </Text>
         </Container>
       </Body>

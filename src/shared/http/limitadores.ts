@@ -36,6 +36,7 @@ export const LIMITADOR_RESEND_VERIFICATION = 'resend-verification'
 export const LIMITADOR_FORGOT_PASSWORD = 'forgot-password'
 export const LIMITADOR_RESET_PASSWORD = 'reset-password'
 export const LIMITADOR_VENDOR_CATALOG = 'vendor-catalog'
+export const LIMITADOR_VENDOR_PROFILE = 'vendor-profile'
 
 type LimitadorDeRuta =
   | typeof LIMITADOR_RSVP
@@ -47,6 +48,7 @@ type LimitadorDeRuta =
   | typeof LIMITADOR_FORGOT_PASSWORD
   | typeof LIMITADOR_RESET_PASSWORD
   | typeof LIMITADOR_VENDOR_CATALOG
+  | typeof LIMITADOR_VENDOR_PROFILE
 
 const reflector = new Reflector()
 const marca = (nombre: LimitadorDeRuta): string => `limitador-de-ruta:${nombre}`
@@ -142,6 +144,14 @@ export function crearLimitadores(limiteGlobalPorMinuto: number): ThrottlerOption
       ttl: 60_000,
       limit: 60,
       skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_VENDOR_CATALOG),
+    },
+    // La ficha pública se lee SIN sesión: el límite propio acota el raspado
+    // del marketplace desde una IP (cada lectura firma URLs de R2).
+    {
+      name: LIMITADOR_VENDOR_PROFILE,
+      ttl: 60_000,
+      limit: 60,
+      skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_VENDOR_PROFILE),
     },
   ]
 }

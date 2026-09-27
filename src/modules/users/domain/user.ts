@@ -22,3 +22,8 @@ export interface UserConHash extends User {
 export function normalizarEmail(email: string): string {
   return email.trim().toLowerCase()
 }
+
+/** Carpeta de R2 donde vive el avatar de un usuario. */
+export function prefijoDeAvatar(userId: string): string {
+  return `users/${userId}/avatar`
+}

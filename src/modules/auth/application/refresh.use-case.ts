@@ -3,7 +3,11 @@ import { Inject, Injectable } from '@nestjs/common'
 import { USER_REPOSITORY, type UserRepository } from '@/modules/users/application/user.repository'
 
 import { RefreshInvalidoError, RefreshReutilizadoError } from '../domain/token-errors'
-import { SESSION_REPOSITORY, type SesionPersistida, type SessionRepository } from './session.repository'
+import {
+  SESSION_REPOSITORY,
+  type SesionPersistida,
+  type SessionRepository,
+} from './session.repository'
 import { hashToken, TokenService } from './token.service'
 
 /**

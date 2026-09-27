@@ -208,7 +208,11 @@ describe('Equivalencia: UserRepositoryEnMemoria vs PrismaUserRepository', () => 
 
   it('actualizarPassword cambia el hash y marca verificado si no lo estaba, en ambas impls', async () => {
     for (const repo of [repoReal, repoFake]) {
-      const creado = await repo.create({ email: 'reset@test.com', passwordHash: 'viejo', fullName: 'R' })
+      const creado = await repo.create({
+        email: 'reset@test.com',
+        passwordHash: 'viejo',
+        fullName: 'R',
+      })
 
       await repo.actualizarPassword(creado.id, 'nuevo')
 
@@ -220,7 +224,11 @@ describe('Equivalencia: UserRepositoryEnMemoria vs PrismaUserRepository', () => 
 
   it('actualizarPassword NO reescribe emailVerifiedAt si ya estaba verificado, en ambas impls', async () => {
     for (const repo of [repoReal, repoFake]) {
-      const creado = await repo.create({ email: 'yaverif@test.com', passwordHash: 'viejo', fullName: 'V' })
+      const creado = await repo.create({
+        email: 'yaverif@test.com',
+        passwordHash: 'viejo',
+        fullName: 'V',
+      })
       await repo.marcarEmailVerificado(creado.id)
       const antes = (await repo.findByEmail('yaverif@test.com'))?.emailVerifiedAt
 
@@ -228,6 +236,30 @@ describe('Equivalencia: UserRepositoryEnMemoria vs PrismaUserRepository', () => 
       await repo.actualizarPassword(creado.id, 'nuevo')
 
       expect((await repo.findByEmail('yaverif@test.com'))?.emailVerifiedAt).toEqual(antes)
+    }
+  })
+
+  it('nombre y avatar: se leen, se cambian y fijarAvatar devuelve la key anterior', async () => {
+    for (const repo of [repoReal, repoFake]) {
+      const u = await repo.create({
+        email: 'avatar@example.com',
+        passwordHash: 'h',
+        fullName: 'Ana',
+      })
+
+      await repo.actualizarNombre(u.id, 'Ana María')
+      expect((await repo.findById(u.id))?.fullName).toBe('Ana María')
+
+      expect(await repo.leerAvatar(u.id)).toBeNull()
+      expect(await repo.fijarAvatar(u.id, 'users/a/avatar/1.jpg')).toBeNull()
+      expect(await repo.fijarAvatar(u.id, 'users/a/avatar/2.jpg')).toBe('users/a/avatar/1.jpg')
+      expect(await repo.leerAvatar(u.id)).toBe('users/a/avatar/2.jpg')
+      expect(await repo.fijarAvatar(u.id, null)).toBe('users/a/avatar/2.jpg')
+      expect(await repo.leerAvatar(u.id)).toBeNull()
+
+      // El avatar no se cuela en `User`.
+      expect(await repo.findById(u.id)).not.toHaveProperty('avatarKey')
+      expect(await repo.findByEmail('avatar@example.com')).not.toHaveProperty('avatarKey')
     }
   })
 })

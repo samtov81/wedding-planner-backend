@@ -83,6 +83,9 @@ model User {
   fullName        String
   systemRole      SystemRole @default(USER)
   emailVerifiedAt DateTime?
+  /// Key del objeto en R2 (`users/{id}/avatar/...`), nunca una URL: las URLs
+  /// de lectura son prefirmadas y caducan.
+  avatarKey       String?
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
@@ -120,24 +123,74 @@ model Session {
 }
 
 /// Ficha de marketplace. Existe sin ningún evento: un proveedor puede
-/// registrarse y publicarse con cero bodas contratadas.
+/// registrarse y publicarse con cero bodas contratadas. Todo usuario puede
+/// tener una; el switch "soy proveedor" es `status` (PUBLISHED ↔ DRAFT).
 model VendorProfile {
-  id           String              @id @default(uuid()) @db.Uuid
-  userId       String              @unique @db.Uuid
-  businessName String
-  category     String
-  specialty    String?
-  bio          String?
-  contact      Json?
-  status       VendorProfileStatus @default(DRAFT)
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  id               String              @id @default(uuid()) @db.Uuid
+  userId           String              @unique @db.Uuid
+  businessName     String
+  category         String
+  specialty        String?
+  tagline          String?
+  bio              String?
+  quote            String?
+  /// Declarado por el proveedor; no se deriva de nada.
+  yearsExperience  Int?
+  /// Texto corto tal cual lo muestra la ficha ("< 2h").
+  responseTime     String?
+  /// Moneda de todos sus paquetes (ISO 4217).
+  currency         String              @default("USD") @db.Char(3)
+  /// "As Seen In": nombres de publicaciones, en orden.
+  publications     String[]            @default([])
+  contact          Json?
+  locationName     String?
+  locationAddress  String?
+  locationLat      Decimal?            @db.Decimal(9, 6)
+  locationLng      Decimal?            @db.Decimal(9, 6)
+  locationMapboxId String?
+  status           VendorProfileStatus @default(DRAFT)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
 
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  eventVendors EventVendor[]
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventVendors    EventVendor[]
+  packages        VendorPackage[]
+  portfolioImages VendorPortfolioImage[]
 
   @@index([category, status])
   @@map("vendor_profiles")
+}
+
+/// Paquete de servicio de una ficha. El precio va en la moneda de la ficha.
+model VendorPackage {
+  id              String   @id @default(uuid()) @db.Uuid
+  vendorProfileId String   @db.Uuid
+  name            String
+  description     String
+  price           Decimal  @db.Decimal(12, 2)
+  position        Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  vendorProfile VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+
+  @@index([vendorProfileId, position])
+  @@map("vendor_packages")
+}
+
+/// Foto del portfolio. Se guarda la key de R2, no la URL.
+model VendorPortfolioImage {
+  id              String   @id @default(uuid()) @db.Uuid
+  vendorProfileId String   @db.Uuid
+  storageKey      String   @unique
+  alt             String
+  position        Int
+  createdAt       DateTime @default(now())
+
+  vendorProfile VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+
+  @@index([vendorProfileId, position])
+  @@map("vendor_portfolio_images")
 }
 
 model Event {
@@ -158,13 +211,15 @@ model Event {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
-  owner         User              @relation("EventOwner", fields: [ownerId], references: [id])
-  memberships   EventMembership[]
-  vendors       EventVendor[]
-  guests        Guest[]
-  notifications Notification[]
-  scheduleItems ScheduleItem[]
-  expenses      Expense[]
+  owner           User              @relation("EventOwner", fields: [ownerId], references: [id])
+  memberships     EventMembership[]
+  vendors         EventVendor[]
+  guests          Guest[]
+  notifications   Notification[]
+  scheduleItems   ScheduleItem[]
+  expenses        Expense[]
+  seatingTables   SeatingTable[]
+  seatAssignments SeatAssignment[]
 
   @@index([ownerId])
   @@map("events")
@@ -287,8 +342,9 @@ model Guest {
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
 
-  event       Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  invitations GuestInvitation[]
+  event           Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  invitations     GuestInvitation[]
+  seatAssignments SeatAssignment[]
 
   // Orden estable de paginación por cursor: (createdAt, id) es único y total.
   @@index([eventId, createdAt, id])
@@ -375,4 +431,44 @@ model AuditLog {
   @@index([eventId, createdAt])
   @@index([actorUserId, createdAt])
   @@map("audit_logs")
+}
+
+/// Una mesa redonda de la distribución. Sus asientos son los índices
+/// 0..seatCount-1; no hay fila por asiento. Rango en CHECK SQL.
+model SeatingTable {
+  id          String           @id @default(uuid()) @db.Uuid
+  eventId     String           @db.Uuid
+  name        String
+  minSeats    Int
+  maxSeats    Int
+  seatCount   Int
+  x           Int              @default(0)
+  y           Int              @default(0)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  event       Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  assignments SeatAssignment[]
+
+  @@index([eventId, createdAt])
+  @@map("seating_tables")
+}
+
+/// Quién ocupa un asiento: el invitado (companionIndex = 0) o uno de sus
+/// acompañantes (1..10). Una persona ocupa a lo sumo un asiento.
+model SeatAssignment {
+  id             String       @id @default(uuid()) @db.Uuid
+  eventId        String       @db.Uuid
+  tableId        String       @db.Uuid
+  seatIndex      Int
+  guestId        String       @db.Uuid
+  companionIndex Int
+  createdAt      DateTime     @default(now())
+  event          Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  table          SeatingTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  guest          Guest        @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  @@unique([tableId, seatIndex])
+  @@unique([guestId, companionIndex])
+  @@index([eventId])
+  @@map("seat_assignments")
 }

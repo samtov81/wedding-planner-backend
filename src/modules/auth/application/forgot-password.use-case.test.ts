@@ -33,7 +33,9 @@ describe('ForgotPasswordUseCase', () => {
     ])
     tokens = new PasswordResetTokenRepositoryFake()
     cola = new InMemoryQueueAdapter()
-    caso = new ForgotPasswordUseCase(usuarios, tokens, cola, { PASSWORD_RESET_TTL_MINUTES: 30 } as never)
+    caso = new ForgotPasswordUseCase(usuarios, tokens, cola, {
+      PASSWORD_RESET_TTL_MINUTES: 30,
+    } as never)
   })
 
   it('encola el correo con el token en claro para una cuenta verificada', async () => {
@@ -42,7 +44,12 @@ describe('ForgotPasswordUseCase', () => {
 
     expect(cola.encolados).toHaveLength(1)
     const encolado = cola.encolados[0]
-    const datos = encolado?.datos as { tokenId: string; token: string; email: string; userId: string }
+    const datos = encolado?.datos as {
+      tokenId: string
+      token: string
+      email: string
+      userId: string
+    }
     expect(encolado?.cola).toBe('email')
     expect(encolado?.nombre).toBe('send-password-reset-email')
     expect(datos.email).toBe('verificada@test.com')

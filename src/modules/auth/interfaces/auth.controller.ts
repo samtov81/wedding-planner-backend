@@ -173,7 +173,11 @@ export class AuthController {
    */
   @Post('forgot-password')
   @HttpCode(202)
-  @LimiteDeRuta(LIMITADOR_FORGOT_PASSWORD, { limit: 3, ttl: 3_600_000, getTracker: rastreoPorIpYCorreo })
+  @LimiteDeRuta(LIMITADOR_FORGOT_PASSWORD, {
+    limit: 3,
+    ttl: 3_600_000,
+    getTracker: rastreoPorIpYCorreo,
+  })
   async forgotPassword(@Body() body: unknown): Promise<{ ok: true }> {
     const datos = validarCon(forgotPasswordSchema, body)
     await this.forgotPasswordUseCase.ejecutar(datos)

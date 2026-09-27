@@ -55,10 +55,14 @@ describe('Paridad: PasswordResetTokenRepositoryFake vs PrismaPasswordResetTokenR
     prisma = new PrismaClient({ datasources: { db: { url: pg.url } } })
     real = new PrismaPasswordResetTokenRepository(prisma as unknown as PrismaService)
     userId = (
-      await prisma.user.create({ data: { email: 'mio@reset.test', passwordHash: 'x', fullName: 'Mío' } })
+      await prisma.user.create({
+        data: { email: 'mio@reset.test', passwordHash: 'x', fullName: 'Mío' },
+      })
     ).id
     otroUserId = (
-      await prisma.user.create({ data: { email: 'otro@reset.test', passwordHash: 'x', fullName: 'Otro' } })
+      await prisma.user.create({
+        data: { email: 'otro@reset.test', passwordHash: 'x', fullName: 'Otro' },
+      })
     ).id
   }, 240_000)
 
@@ -76,7 +80,10 @@ describe('Paridad: PasswordResetTokenRepositoryFake vs PrismaPasswordResetTokenR
     const ids = await sembrarEnAmbos({ hash: 'vigente' })
 
     for (const [nombre, repo] of implementaciones()) {
-      expect(await repo.consumirPorHash('vigente', AHORA)).toEqual({ userId, tokenId: ids.get(nombre) })
+      expect(await repo.consumirPorHash('vigente', AHORA)).toEqual({
+        userId,
+        tokenId: ids.get(nombre),
+      })
     }
   })
 
@@ -129,7 +136,9 @@ describe('Paridad: PasswordResetTokenRepositoryFake vs PrismaPasswordResetTokenR
     await sembrarEnAmbos({ hash: 'repetido' })
 
     for (const [, repo] of implementaciones()) {
-      await expect(repo.crear({ userId, tokenHash: 'repetido', expiresAt: LUEGO })).rejects.toThrow()
+      await expect(
+        repo.crear({ userId, tokenHash: 'repetido', expiresAt: LUEGO }),
+      ).rejects.toThrow()
     }
   })
 

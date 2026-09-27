@@ -125,7 +125,8 @@ describe('Paridad: EmailVerificationTokenRepositoryFake vs PrismaEmailVerificati
     }
     // Y sigue PENDING: caducar no es consumir.
     expect(
-      (await prisma.emailVerificationToken.findUnique({ where: { tokenHash: 'caducado' } }))?.status,
+      (await prisma.emailVerificationToken.findUnique({ where: { tokenHash: 'caducado' } }))
+        ?.status,
     ).toBe('PENDING')
   })
 

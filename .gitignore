@@ -1,8 +1,7 @@
 node_modules/
 dist/
-.env
-.env.docker
+.env*
+!.env*.example
+*.log
 coverage/
-.mail-outbox/
-
-/generated/prisma
+.DS_Store

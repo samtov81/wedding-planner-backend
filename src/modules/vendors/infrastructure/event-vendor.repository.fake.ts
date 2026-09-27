@@ -6,6 +6,7 @@ import type {
   EventVendorRepository,
   EventVendorVista,
 } from '../application/event-vendor.repository'
+import { aCategoriaVista, type CategoriaVista } from '../domain/categoria'
 import type { VendorRef } from '../domain/vendor-ref'
 
 export interface PerfilPublicadoEnMemoria {
@@ -18,7 +19,7 @@ interface FilaEnMemoria {
   id: string
   eventId: string
   vendorRef: VendorRef
-  category: string
+  category: CategoriaVista
   specialty: string | null
   assignedBudget: string | null
   status: 'SHORTLISTED' | 'BOOKED' | 'CANCELLED'
@@ -54,7 +55,7 @@ export class EventVendorRepositoryEnMemoria implements EventVendorRepository {
       id: randomUUID(),
       eventId: datos.eventId,
       vendorRef: datos.vendorRef,
-      category: datos.category,
+      category: aCategoriaVista(datos.category),
       specialty: datos.specialty,
       assignedBudget: datos.assignedBudget,
       status: 'SHORTLISTED',
@@ -90,7 +91,7 @@ export class EventVendorRepositoryEnMemoria implements EventVendorRepository {
   ): Promise<EventVendorVista> {
     const fila = this.filas.find((f) => f.id === eventVendorId && f.eventId === eventId)
     if (fila === undefined) throw new Error('fila inexistente en el doble en memoria')
-    if (cambios.category !== undefined) fila.category = cambios.category
+    if (cambios.category !== undefined) fila.category = aCategoriaVista(cambios.category)
     if (cambios.specialty !== undefined) fila.specialty = cambios.specialty
     if (cambios.assignedBudget !== undefined) fila.assignedBudget = cambios.assignedBudget
     if (cambios.status !== undefined) fila.status = cambios.status

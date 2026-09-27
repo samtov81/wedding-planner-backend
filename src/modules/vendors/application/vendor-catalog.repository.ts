@@ -1,15 +1,18 @@
 import type { CursorPage, CursorValue } from '@/shared/domain'
 
+import type { CategoriaVista } from '../domain/categoria'
+
 export interface PerfilDeCatalogo {
   id: string
   businessName: string
-  category: string
+  category: CategoriaVista
   specialty: string | null
   createdAt: Date
 }
 
 export interface BusquedaCatalogo {
   q: string | null
+  /** `slug` de la categoría. */
   category: string | null
   cursor: CursorValue | null
   limit: number

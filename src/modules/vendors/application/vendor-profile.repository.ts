@@ -36,8 +36,11 @@ export interface VendorProfileRepository {
   reordenarFotos(fichaId: string, ids: string[]): Promise<void>
   /** Eventos distintos en los que la ficha está BOOKED. */
   contarBodas(fichaId: string): Promise<number>
-  /** Otras fichas PUBLISHED de la misma categoría (sin distinguir mayúsculas). */
-  similares(ficha: { id: string; category: string }, limite: number): Promise<FichaDeProveedor[]>
+  /** Otras fichas PUBLISHED de la misma categoría. */
+  similares(
+    ficha: { id: string; category: { id: string } },
+    limite: number,
+  ): Promise<FichaDeProveedor[]>
 }
 
 export const VENDOR_PROFILE_REPOSITORY = Symbol('VENDOR_PROFILE_REPOSITORY')

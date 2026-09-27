@@ -6,12 +6,13 @@ import { LIMITADOR_VENDOR_CATALOG, LimiteDeRuta } from '@/shared/http/limitadore
 import { validarCon } from '@/shared/http/validar-con'
 
 import { SearchVendorCatalogUseCase } from '../application/search-vendor-catalog.use-case'
+import type { CategoriaVista } from '../domain/categoria'
 import { vendorCatalogQuerySchema } from './vendor-catalog.dto'
 
 interface PerfilRespuesta {
   id: string
   businessName: string
-  category: string
+  category: CategoriaVista
   specialty: string | null
 }
 

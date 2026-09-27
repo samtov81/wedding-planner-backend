@@ -11,11 +11,11 @@ export class VendorCatalogRepositoryEnMemoria implements VendorCatalogRepository
 
   buscar(busqueda: BusquedaCatalogo): Promise<CursorPage<PerfilDeCatalogo>> {
     const q = busqueda.q?.toLowerCase() ?? null
-    const categoria = busqueda.category?.toLowerCase() ?? null
+    const categoria = busqueda.category
     const { cursor } = busqueda
     const candidatos = this.perfiles
       .filter((p) => p.status === 'PUBLISHED')
-      .filter((p) => categoria === null || p.category.toLowerCase() === categoria)
+      .filter((p) => categoria === null || p.category.slug === categoria)
       .filter(
         (p) =>
           q === null ||

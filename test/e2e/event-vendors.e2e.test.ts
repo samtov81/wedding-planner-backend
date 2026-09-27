@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
 
+import { categoriaId } from '../support/categorias'
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 import { crearEventoPublicado } from '../support/eventos'
@@ -17,7 +18,7 @@ interface CuerpoEventVendor {
   id: string
   eventId: string
   vendorRef: { kind: 'linked'; vendorProfileId: string } | { kind: 'external'; name: string }
-  category: string
+  category: { slug: string; name: string }
   status: string
 }
 
@@ -119,14 +120,14 @@ describe('Vendors por evento e2e', () => {
       .send({
         externalName: 'Flores Pepa',
         externalEmail: 'pepa@flores.es',
-        category: 'Floristería',
+        category: 'decor-floral',
       })
       .expect(201)
 
     const cuerpo = respuesta.body as CuerpoEventVendor
     expect(cuerpo).toMatchObject({
       eventId: evento,
-      category: 'Floristería',
+      category: { slug: 'decor-floral', name: 'Decor & Floral' },
       status: 'SHORTLISTED',
       vendorRef: { kind: 'external', name: 'Flores Pepa' },
     })
@@ -146,7 +147,11 @@ describe('Vendors por evento e2e', () => {
     const respuesta = await request(url)
       .post(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
-      .send({ vendorProfileId: 'lo-que-sea', externalName: 'Flores Pepa', category: 'Floristería' })
+      .send({
+        vendorProfileId: 'lo-que-sea',
+        externalName: 'Flores Pepa',
+        category: 'decor-floral',
+      })
       .expect(422)
 
     expect((respuesta.body as CuerpoError).code).toBe('VENDOR_REF_AMBIGUA')
@@ -154,13 +159,17 @@ describe('Vendors por evento e2e', () => {
 
   it('rechaza enlazar una ficha del marketplace que no está PUBLISHED: 404', async () => {
     const perfil = await prisma.vendorProfile.create({
-      data: { userId: fotografo.id, businessName: 'Lumière', category: 'Fotografía' },
+      data: {
+        userId: fotografo.id,
+        businessName: 'Lumière',
+        categoryId: await categoriaId(prisma, 'photography'),
+      },
     })
 
     const respuesta = await request(url)
       .post(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
-      .send({ vendorProfileId: perfil.id, category: 'Fotografía' })
+      .send({ vendorProfileId: perfil.id, category: 'photography' })
       .expect(404)
 
     expect((respuesta.body as CuerpoError).code).toBe('VENDOR_PROFILE_NOT_AVAILABLE')
@@ -180,7 +189,7 @@ describe('Vendors por evento e2e', () => {
       data: {
         userId: fotografoPropio.id,
         businessName: 'Lumière',
-        category: 'Fotografía',
+        categoryId: await categoriaId(prisma, 'photography'),
         status: 'PUBLISHED',
       },
     })
@@ -188,7 +197,7 @@ describe('Vendors por evento e2e', () => {
     const respuesta = await request(url)
       .post(`/events/${eventoPropio}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
-      .send({ vendorProfileId: perfil.id, category: 'Fotografía' })
+      .send({ vendorProfileId: perfil.id, category: 'photography' })
       .expect(201)
 
     expect((respuesta.body as CuerpoEventVendor).vendorRef).toEqual({
@@ -206,7 +215,7 @@ describe('Vendors por evento e2e', () => {
       .send({
         externalName: 'Flores Pepa',
         externalEmail: 'pepa@flores.es',
-        category: 'Floristería',
+        category: 'decor-floral',
       })
       .expect(201)
     await request(url)
@@ -215,7 +224,7 @@ describe('Vendors por evento e2e', () => {
       .send({
         externalName: 'Catering Uno',
         externalEmail: 'catering@uno.es',
-        category: 'Catering',
+        category: 'catering',
       })
       .expect(201)
 
@@ -229,6 +238,22 @@ describe('Vendors por evento e2e', () => {
     expect(proveedores.every((v) => v.eventId === eventoPropio)).toBe(true)
   })
 
+  it('la categoría tiene que ser del catálogo', async () => {
+    await request(url)
+      .post(`/events/${evento}/vendors`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ externalName: 'Flores Pepa', category: 'floristeria' })
+      .expect(422)
+      .expect((res) => {
+        expect((res.body as { code: string }).code).toBe('VENDOR_CATEGORY_UNKNOWN')
+      })
+    await request(url)
+      .post(`/events/${evento}/vendors`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ externalName: 'Flores Pepa', category: 'Decor & Floral' })
+      .expect(400)
+  })
+
   it('actualiza el status de un proveedor', async () => {
     const eventoPropio = await crearEvento(ana.accessToken, 'Boda para actualizar status')
 
@@ -238,7 +263,7 @@ describe('Vendors por evento e2e', () => {
       .send({
         externalName: 'Flores Pepa',
         externalEmail: 'pepa@flores.es',
-        category: 'Floristería',
+        category: 'decor-floral',
       })
       .expect(201)
     const id = (creado.body as CuerpoEventVendor).id
@@ -288,7 +313,7 @@ describe('Vendors por evento e2e', () => {
       data: {
         userId: fotografoPropio.id,
         businessName: 'Lumière',
-        category: 'Fotografía',
+        categoryId: await categoriaId(prisma, 'photography'),
         status: 'PUBLISHED',
       },
     })
@@ -296,7 +321,7 @@ describe('Vendors por evento e2e', () => {
       data: {
         eventId: eventoPropio,
         vendorProfileId: perfil.id,
-        category: 'Fotografía',
+        categoryId: await categoriaId(prisma, 'photography'),
         status: 'BOOKED',
       },
     })
@@ -308,7 +333,7 @@ describe('Vendors por evento e2e', () => {
     const negado = await request(url)
       .post(`/events/${eventoPropio}/vendors`)
       .set('Authorization', `Bearer ${fotografoPropio.accessToken}`)
-      .send({ externalName: 'Otro', category: 'Otra' })
+      .send({ externalName: 'Otro', category: 'media' })
       .expect(403)
     expect((negado.body as CuerpoError).code).toBe('FORBIDDEN')
 
@@ -349,7 +374,7 @@ describe('Vendors por evento e2e', () => {
         externalName: nombre,
         externalEmail: email,
         externalPhone: telefono,
-        category: 'Floristería',
+        category: 'decor-floral',
       })
       .expect(201)
     const id = (creado.body as CuerpoEventVendor).id
@@ -387,7 +412,7 @@ describe('Vendors por evento e2e', () => {
     const creado = await request(url)
       .post(`/events/${evento}/vendors`)
       .set('Authorization', `Bearer ${ana.accessToken}`)
-      .send({ externalName: 'Para borrar', category: 'Varios' })
+      .send({ externalName: 'Para borrar', category: 'stationery' })
       .expect(201)
     const id = (creado.body as CuerpoEventVendor).id
 

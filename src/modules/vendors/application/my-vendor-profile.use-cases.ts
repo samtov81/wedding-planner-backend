@@ -12,6 +12,7 @@ import {
   type FichaDeProveedor,
 } from '../domain/vendor-profile'
 import { FichaNoEncontradaError, FichaSuspendidaError } from '../domain/vendor-profile-errors'
+import { CategoriasDeProveedor } from './categorias'
 import { aVista, type FichaVista } from './ficha-vista'
 import {
   type NuevoPaquete,
@@ -42,15 +43,25 @@ export class GetMyVendorProfileUseCase {
   }
 }
 
+/** Lo que pide la API: la categoría llega como `slug`. */
+export interface EntradaFicha extends Omit<DatosDeFicha, 'category'> {
+  category: string
+}
+
 /** Alta (en DRAFT: el switch es otro paso) o edición de los datos de la ficha. */
 @Injectable()
 export class SaveMyVendorProfileUseCase {
   constructor(
     @Inject(VENDOR_PROFILE_REPOSITORY) private readonly fichas: VendorProfileRepository,
+    private readonly categorias: CategoriasDeProveedor,
     private readonly leer: GetMyVendorProfileUseCase,
   ) {}
 
-  async ejecutar(userId: string, datos: DatosDeFicha): Promise<FichaVista> {
+  async ejecutar(userId: string, entrada: EntradaFicha): Promise<FichaVista> {
+    const datos: DatosDeFicha = {
+      ...entrada,
+      category: await this.categorias.resolver(entrada.category),
+    }
     return await this.leer.vista(await this.fichas.guardarDatos(userId, datos))
   }
 }

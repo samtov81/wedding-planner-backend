@@ -16,6 +16,7 @@ import type { EventVendorVista } from '../application/event-vendor.repository'
 import { ListEventVendorsUseCase } from '../application/list-event-vendors.use-case'
 import { RemoveEventVendorUseCase } from '../application/remove-event-vendor.use-case'
 import { UpdateEventVendorUseCase } from '../application/update-event-vendor.use-case'
+import type { CategoriaVista } from '../domain/categoria'
 import { EventVendorNoEncontradoError } from '../domain/vendor-errors'
 import { createEventVendorSchema, updateEventVendorSchema } from './event-vendor.dto'
 
@@ -23,7 +24,7 @@ interface EventVendorRespuesta {
   id: string
   eventId: string
   vendorRef: EventVendorVista['vendorRef']
-  category: string
+  category: CategoriaVista
   specialty: string | null
   assignedBudget: string | null
   name: string

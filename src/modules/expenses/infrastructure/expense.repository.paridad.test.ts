@@ -5,6 +5,7 @@ import { PrismaClient } from '@prisma/client'
 import type { PrismaService } from '@/modules/database/prisma.service'
 import { decodeCursor } from '@/shared/domain'
 
+import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 import type { ExpenseRepository } from '../application/expense.repository'
 import { ExpenseRepositoryEnMemoria, type ProveedorEnMemoria } from './expense.repository.fake'
@@ -66,7 +67,7 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         data: {
           eventId: evento.id,
           externalName: p.name,
-          category: 'Music',
+          categoryId: await categoriaId(prisma, 'music-entertainment'),
           assignedBudget: p.assignedBudget,
           status: p.status,
         },

@@ -8,6 +8,8 @@ import {
 } from '../domain/vendor-profile'
 import type { Ubicacion } from '@/shared/domain'
 
+import { aCategoriaVista, type CategoriaVista } from '../domain/categoria'
+
 export interface FotoVista {
   id: string
   alt: string
@@ -29,7 +31,7 @@ export interface FichaVista {
   /** Avatar del dueño, prefirmado; `null` sin avatar o sin almacenamiento. */
   avatarUrl: string | null
   businessName: string
-  category: string
+  category: CategoriaVista
   specialty: string | null
   tagline: string | null
   bio: string | null
@@ -51,7 +53,7 @@ export interface FichaVista {
 export interface SimilarVista {
   id: string
   businessName: string
-  category: string
+  category: CategoriaVista
   specialty: string | null
   currency: string
   priceFrom: string | null
@@ -82,7 +84,7 @@ export async function aVista(
     status: ficha.status,
     avatarUrl: ficha.avatarKey === null ? null : await imagenes.firmarLectura(ficha.avatarKey),
     businessName: ficha.businessName,
-    category: ficha.category,
+    category: aCategoriaVista(ficha.category),
     specialty: ficha.specialty,
     tagline: ficha.tagline,
     bio: ficha.bio,
@@ -108,7 +110,7 @@ export async function aSimilar(
   return {
     id: ficha.id,
     businessName: ficha.businessName,
-    category: ficha.category,
+    category: aCategoriaVista(ficha.category),
     specialty: ficha.specialty,
     currency: ficha.currency,
     priceFrom: precioDesde(ficha.packages),

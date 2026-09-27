@@ -4,6 +4,7 @@ import type { PrismaService } from '@/modules/database/prisma.service'
 import { PrismaUnidadDeTrabajo } from '@/modules/database/transaccion'
 import { decodeCursor } from '@/shared/domain'
 
+import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 import { PrismaNotificationRepository } from './prisma-notification.repository'
 
@@ -73,10 +74,19 @@ describe('PrismaNotificationRepository', () => {
       ],
     })
     const perfil = await prisma.vendorProfile.create({
-      data: { userId: vendorId, businessName: 'Catering', category: 'CATERING' },
+      data: {
+        userId: vendorId,
+        businessName: 'Catering',
+        categoryId: await categoriaId(prisma, 'catering'),
+      },
     })
     await prisma.eventVendor.create({
-      data: { eventId, vendorProfileId: perfil.id, category: 'CATERING', status: 'BOOKED' },
+      data: {
+        eventId,
+        vendorProfileId: perfil.id,
+        categoryId: perfil.categoryId,
+        status: 'BOOKED',
+      },
     })
   }, 240_000)
 

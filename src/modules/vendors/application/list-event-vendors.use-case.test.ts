@@ -1,3 +1,4 @@
+import { categoriaSembrada } from '../infrastructure/vendor-category.repository.fake'
 import { EventVendorRepositoryEnMemoria } from '../infrastructure/event-vendor.repository.fake'
 import { ListEventVendorsUseCase } from './list-event-vendors.use-case'
 
@@ -12,7 +13,7 @@ describe('ListEventVendorsUseCase', () => {
     await vendors.crear({
       eventId: EVENTO_A,
       vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
-      category: 'Floristería',
+      category: categoriaSembrada('decor-floral'),
       specialty: null,
       assignedBudget: null,
       actorUserId: 'ana',
@@ -20,7 +21,7 @@ describe('ListEventVendorsUseCase', () => {
     await vendors.crear({
       eventId: EVENTO_B,
       vendorRef: { kind: 'external', name: 'Catering Ruta', email: null, phone: null },
-      category: 'Catering',
+      category: categoriaSembrada('catering'),
       specialty: null,
       assignedBudget: null,
       actorUserId: 'pedro',
@@ -29,7 +30,10 @@ describe('ListEventVendorsUseCase', () => {
     const resultado = await caso.ejecutar(EVENTO_A)
 
     expect(resultado).toHaveLength(1)
-    expect(resultado[0]).toMatchObject({ eventId: EVENTO_A, category: 'Floristería' })
+    expect(resultado[0]).toMatchObject({
+      eventId: EVENTO_A,
+      category: { slug: 'decor-floral', name: 'Decor & Floral' },
+    })
   })
 
   it('un evento sin proveedores devuelve una lista vacía', async () => {

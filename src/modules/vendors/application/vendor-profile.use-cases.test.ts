@@ -3,9 +3,15 @@ import { SubidaDeImagenes } from '@/modules/storage/application/subida-de-imagen
 import { ObjectStorageEnMemoria } from '@/modules/storage/infrastructure/object-storage.fake'
 
 import type { DatosDeFicha } from '../domain/vendor-profile'
+import {
+  categoriaSembrada,
+  VendorCategoryRepositoryEnMemoria,
+} from '../infrastructure/vendor-category.repository.fake'
 import { VendorProfileRepositoryEnMemoria } from '../infrastructure/vendor-profile.repository.fake'
 import { GetPublicVendorProfileUseCase } from './get-public-vendor-profile.use-case'
+import { CategoriasDeProveedor } from './categorias'
 import {
+  type EntradaFicha,
   GetMyVendorProfileUseCase,
   ReplacePackagesUseCase,
   SaveMyVendorProfileUseCase,
@@ -21,10 +27,16 @@ import {
 
 const USER = '11111111-1111-4111-8111-111111111111'
 
+/** Lo que manda la API: categoría por `slug`. */
+function entrada(cambios: Partial<EntradaFicha> = {}): EntradaFicha {
+  return { ...datos(), category: 'photography', ...cambios }
+}
+
+/** Lo que guarda el repositorio: categoría ya resuelta. */
 function datos(cambios: Partial<DatosDeFicha> = {}): DatosDeFicha {
   return {
     businessName: 'Aurelia Luxe',
-    category: 'Photography',
+    category: categoriaSembrada('photography'),
     specialty: null,
     tagline: null,
     bio: null,
@@ -45,11 +57,12 @@ function montar() {
   const imagenes = new SubidaDeImagenes(almacen)
   const udt = new UnidadDeTrabajoEnMemoria()
   const leer = new GetMyVendorProfileUseCase(repo, imagenes)
+  const categorias = new CategoriasDeProveedor(new VendorCategoryRepositoryEnMemoria())
   return {
     repo,
     almacen,
     leer,
-    guardar: new SaveMyVendorProfileUseCase(repo, leer),
+    guardar: new SaveMyVendorProfileUseCase(repo, categorias, leer),
     modo: new SetVendorModeUseCase(repo, leer),
     paquetes: new ReplacePackagesUseCase(repo, udt, leer),
     preparar: new PreparePortfolioUploadUseCase(leer, imagenes),
@@ -71,7 +84,7 @@ describe('Ficha de proveedor', () => {
   it('guardar crea la ficha en DRAFT: el switch sigue apagado', async () => {
     const { guardar } = montar()
 
-    const ficha = await guardar.ejecutar(USER, datos())
+    const ficha = await guardar.ejecutar(USER, entrada())
 
     expect(ficha.status).toBe('DRAFT')
     expect(ficha.priceFrom).toBeNull()
@@ -80,7 +93,7 @@ describe('Ficha de proveedor', () => {
 
   it('el switch publica y oculta sin perder datos', async () => {
     const { guardar, modo } = montar()
-    await guardar.ejecutar(USER, datos({ tagline: 'Luxury' }))
+    await guardar.ejecutar(USER, entrada({ tagline: 'Luxury' }))
 
     expect((await modo.ejecutar(USER, true)).status).toBe('PUBLISHED')
     const oculta = await modo.ejecutar(USER, false)
@@ -103,17 +116,31 @@ describe('Ficha de proveedor', () => {
     })
   })
 
+  it('la categoría se elige del catálogo y sale con su nombre', async () => {
+    const { guardar } = montar()
+
+    expect((await guardar.ejecutar(USER, entrada({ category: 'decor-floral' }))).category).toEqual({
+      slug: 'decor-floral',
+      name: 'Decor & Floral',
+    })
+    await expect(guardar.ejecutar(USER, entrada({ category: 'floral' }))).rejects.toMatchObject({
+      code: 'VENDOR_CATEGORY_UNKNOWN',
+    })
+  })
+
   it('editar los datos no cambia el estado', async () => {
     const { guardar, modo } = montar()
-    await guardar.ejecutar(USER, datos())
+    await guardar.ejecutar(USER, entrada())
     await modo.ejecutar(USER, true)
 
-    expect((await guardar.ejecutar(USER, datos({ businessName: 'Otra' }))).status).toBe('PUBLISHED')
+    expect((await guardar.ejecutar(USER, entrada({ businessName: 'Otra' }))).status).toBe(
+      'PUBLISHED',
+    )
   })
 
   it('los paquetes se reemplazan en orden y fijan "Pricing From"', async () => {
     const { guardar, paquetes } = montar()
-    await guardar.ejecutar(USER, datos())
+    await guardar.ejecutar(USER, entrada())
 
     const ficha = await paquetes.ejecutar(USER, [
       { name: 'Signature', description: 'Todo el día', price: '7200.00' },
@@ -128,7 +155,7 @@ describe('Ficha de proveedor', () => {
   describe('portfolio', () => {
     async function conFotos(n: number) {
       const m = montar()
-      await m.guardar.ejecutar(USER, datos())
+      await m.guardar.ejecutar(USER, entrada())
       for (let i = 0; i < n; i++) {
         const { key } = await m.preparar.ejecutar(USER, { contentType: 'image/jpeg', size: 100 })
         m.almacen.simularSubida(key)
@@ -183,7 +210,7 @@ describe('Ficha de proveedor', () => {
   describe('ficha pública', () => {
     it('sólo existe si está publicada', async () => {
       const { guardar, modo, publica } = montar()
-      const { id } = await guardar.ejecutar(USER, datos())
+      const { id } = await guardar.ejecutar(USER, entrada())
 
       await expect(publica.ejecutar(id)).rejects.toMatchObject({ httpStatus: 404 })
       await modo.ejecutar(USER, true)
@@ -193,9 +220,17 @@ describe('Ficha de proveedor', () => {
     it('no expone el estado y trae bodas reales y similares de la misma categoría', async () => {
       const { repo, publica } = montar()
       const propia = repo.sembrar(USER, datos(), 'PUBLISHED')
-      repo.sembrar('u2', datos({ businessName: 'Maison', category: 'photography' }), 'PUBLISHED')
+      repo.sembrar(
+        'u2',
+        datos({ businessName: 'Maison', category: categoriaSembrada('photography') }),
+        'PUBLISHED',
+      )
       repo.sembrar('u3', datos({ businessName: 'Oculta' }), 'DRAFT')
-      repo.sembrar('u4', datos({ businessName: 'Flores', category: 'Floral' }), 'PUBLISHED')
+      repo.sembrar(
+        'u4',
+        datos({ businessName: 'Flores', category: categoriaSembrada('decor-floral') }),
+        'PUBLISHED',
+      )
       repo.sembrarBoda(propia.id, 'e1')
       repo.sembrarBoda(propia.id, 'e2')
 

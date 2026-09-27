@@ -3,7 +3,9 @@ import { z } from 'zod'
 import { MONEDAS } from '@/modules/events/domain/moneda'
 import { montoSchema, ubicacionSchema } from '@/shared/http/esquemas'
 
-import { MAX_PAQUETES, MAX_PUBLICACIONES, type DatosDeFicha } from '../domain/vendor-profile'
+import type { EntradaFicha } from '../application/my-vendor-profile.use-cases'
+import { MAX_PAQUETES, MAX_PUBLICACIONES } from '../domain/vendor-profile'
+import { slugDeCategoriaSchema } from './categoria.dto'
 
 /** Texto opcional: vacío o ausente se guarda como `null`. */
 function opcional(max: number) {
@@ -23,7 +25,8 @@ function opcional(max: number) {
 export const fichaSchema = z
   .object({
     businessName: z.string().trim().min(1).max(200),
-    category: z.string().trim().min(1).max(200),
+    /** `slug` del catálogo de categorías (`GET /vendor-categories`). */
+    category: slugDeCategoriaSchema,
     specialty: opcional(200),
     tagline: opcional(200),
     bio: opcional(5000),
@@ -52,7 +55,7 @@ export const fichaSchema = z
     location: ubicacionSchema.nullable().optional().default(null),
   })
   .strict()
-  .transform((f): DatosDeFicha => ({
+  .transform((f): EntradaFicha => ({
     ...f,
     yearsExperience: f.yearsExperience ?? null,
     contact: {

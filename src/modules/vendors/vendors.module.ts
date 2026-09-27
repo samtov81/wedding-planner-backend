@@ -7,6 +7,7 @@ import { StorageModule } from '@/modules/storage/storage.module'
 import { UsersModule } from '@/modules/users/users.module'
 
 import { AddEventVendorUseCase } from './application/add-event-vendor.use-case'
+import { CategoriasDeProveedor } from './application/categorias'
 import { GetPublicVendorProfileUseCase } from './application/get-public-vendor-profile.use-case'
 import {
   GetMyVendorProfileUseCase,
@@ -21,6 +22,7 @@ import {
   ReorderPortfolioUseCase,
   UpdatePortfolioImageUseCase,
 } from './application/portfolio.use-cases'
+import { VENDOR_CATEGORY_REPOSITORY } from './application/vendor-category.repository'
 import { VENDOR_PROFILE_REPOSITORY } from './application/vendor-profile.repository'
 import { EVENT_VENDOR_REPOSITORY } from './application/event-vendor.repository'
 import { ListEventVendorsUseCase } from './application/list-event-vendors.use-case'
@@ -30,11 +32,13 @@ import { UpdateEventVendorUseCase } from './application/update-event-vendor.use-
 import { VENDOR_CATALOG_REPOSITORY } from './application/vendor-catalog.repository'
 import { PrismaEventVendorRepository } from './infrastructure/prisma-event-vendor.repository'
 import { PrismaVendorCatalogRepository } from './infrastructure/prisma-vendor-catalog.repository'
+import { PrismaVendorCategoryRepository } from './infrastructure/prisma-vendor-category.repository'
 import { PrismaVendorProfileRepository } from './infrastructure/prisma-vendor-profile.repository'
 import { EventVendorsController } from './interfaces/event-vendors.controller'
 import { MyVendorProfileController } from './interfaces/my-vendor-profile.controller'
 import { PublicVendorProfileController } from './interfaces/public-vendor-profile.controller'
 import { VendorCatalogController } from './interfaces/vendor-catalog.controller'
+import { VendorCategoriesController } from './interfaces/vendor-categories.controller'
 
 /**
  * `EventsModule` se IMPORTA (no se reconstruye nada suyo): `EventAccessGuard`
@@ -53,6 +57,7 @@ import { VendorCatalogController } from './interfaces/vendor-catalog.controller'
   controllers: [
     EventVendorsController,
     VendorCatalogController,
+    VendorCategoriesController,
     PublicVendorProfileController,
     MyVendorProfileController,
   ],
@@ -77,6 +82,12 @@ import { VendorCatalogController } from './interfaces/vendor-catalog.controller'
       useFactory: (prisma: PrismaService) => new PrismaVendorProfileRepository(prisma),
       inject: [PrismaService],
     },
+    {
+      provide: VENDOR_CATEGORY_REPOSITORY,
+      useFactory: (prisma: PrismaService) => new PrismaVendorCategoryRepository(prisma),
+      inject: [PrismaService],
+    },
+    CategoriasDeProveedor,
     GetMyVendorProfileUseCase,
     SaveMyVendorProfileUseCase,
     SetVendorModeUseCase,

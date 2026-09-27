@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import request from 'supertest'
 
+import { categoriaId } from '../support/categorias'
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 import { crearEventoPublicado } from '../support/eventos'
@@ -75,10 +76,20 @@ describe('Distribución de mesas e2e', () => {
       data: { eventId: evento, userId: planner.id, role: 'PLANNER', status: 'ACTIVE' },
     })
     const perfil = await prisma.vendorProfile.create({
-      data: { userId: fotografo.id, businessName: 'Luz', category: 'Photo', status: 'PUBLISHED' },
+      data: {
+        userId: fotografo.id,
+        businessName: 'Luz',
+        categoryId: await categoriaId(prisma, 'photography'),
+        status: 'PUBLISHED',
+      },
     })
     await prisma.eventVendor.create({
-      data: { eventId: evento, vendorProfileId: perfil.id, category: 'Photo', status: 'BOOKED' },
+      data: {
+        eventId: evento,
+        vendorProfileId: perfil.id,
+        categoryId: await categoriaId(prisma, 'photography'),
+        status: 'BOOKED',
+      },
     })
   }, 180_000)
 

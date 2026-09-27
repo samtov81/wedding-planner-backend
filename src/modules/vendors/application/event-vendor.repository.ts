@@ -1,3 +1,4 @@
+import type { CategoriaDeProveedor, CategoriaVista } from '../domain/categoria'
 import type { VendorRef } from '../domain/vendor-ref'
 
 export type EventVendorStatus = 'SHORTLISTED' | 'BOOKED' | 'CANCELLED'
@@ -12,7 +13,7 @@ export interface EventVendorVista {
   id: string
   eventId: string
   vendorRef: VendorRef
-  category: string
+  category: CategoriaVista
   specialty: string | null
   assignedBudget: string | null
   /** `businessName` de la ficha si está vinculada, `externalName` si es externo. */
@@ -25,14 +26,15 @@ export interface EventVendorVista {
 export interface DatosCrearEventVendor {
   eventId: string
   vendorRef: VendorRef
-  category: string
+  /** Ya resuelta y activa: la valida el caso de uso. */
+  category: CategoriaDeProveedor
   specialty: string | null
   assignedBudget: string | null
   actorUserId: string
 }
 
 export interface CambiosEventVendor {
-  category?: string | undefined
+  category?: CategoriaDeProveedor | undefined
   specialty?: string | null | undefined
   assignedBudget?: string | null | undefined
   status?: EventVendorStatus | undefined

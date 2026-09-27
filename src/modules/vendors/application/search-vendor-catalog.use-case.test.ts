@@ -10,7 +10,7 @@ describe('SearchVendorCatalogUseCase', () => {
       {
         id: '11111111-1111-4111-8111-111111111111',
         businessName: 'Lumière Catering',
-        category: 'Catering',
+        category: { slug: 'catering', name: 'Catering' },
         specialty: null,
         createdAt: new Date('2026-03-01T00:00:00.000Z'),
         status: 'PUBLISHED',
@@ -18,7 +18,7 @@ describe('SearchVendorCatalogUseCase', () => {
       {
         id: '22222222-2222-4222-8222-222222222222',
         businessName: 'Foto Luz',
-        category: 'Photography',
+        category: { slug: 'photography', name: 'Photography' },
         specialty: null,
         createdAt: new Date('2026-03-01T00:01:00.000Z'),
         status: 'PUBLISHED',
@@ -26,7 +26,7 @@ describe('SearchVendorCatalogUseCase', () => {
       {
         id: '33333333-3333-4333-8333-333333333333',
         businessName: 'Oculto',
-        category: 'Catering',
+        category: { slug: 'catering', name: 'Catering' },
         specialty: null,
         createdAt: new Date('2026-03-01T00:02:00.000Z'),
         status: 'DRAFT',

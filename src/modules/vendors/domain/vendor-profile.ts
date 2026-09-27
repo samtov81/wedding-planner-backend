@@ -1,5 +1,7 @@
 import { aCentimos, type Ubicacion } from '@/shared/domain'
 
+import type { CategoriaDeProveedor } from './categoria'
+
 export type EstadoDeFicha = 'DRAFT' | 'PUBLISHED' | 'SUSPENDED'
 
 export interface Contacto {
@@ -25,7 +27,8 @@ export interface FotoDePortfolio {
 /** Lo que el proveedor escribe de su ficha (todo menos estado, paquetes y fotos). */
 export interface DatosDeFicha {
   businessName: string
-  category: string
+  /** Ya resuelta y activa: la valida el caso de uso. */
+  category: CategoriaDeProveedor
   specialty: string | null
   tagline: string | null
   bio: string | null

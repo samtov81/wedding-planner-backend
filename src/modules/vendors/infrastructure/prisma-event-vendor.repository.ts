@@ -12,6 +12,12 @@ import type {
 import { EventVendorNoEncontradoError } from '../domain/vendor-errors'
 import type { VendorRef } from '../domain/vendor-ref'
 
+/** Lo que `aVista` necesita de cada fila. */
+const INCLUIR = {
+  vendorProfile: { select: { businessName: true } },
+  category: { select: { slug: true, name: true } },
+} as const
+
 @Injectable()
 export class PrismaEventVendorRepository implements EventVendorRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -29,7 +35,7 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
       const fila = await tx.eventVendor.create({
         data: {
           eventId: datos.eventId,
-          category: datos.category,
+          categoryId: datos.category.id,
           specialty: datos.specialty,
           assignedBudget: datos.assignedBudget,
           ...(datos.vendorRef.kind === 'linked'
@@ -40,7 +46,7 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
                 externalPhone: datos.vendorRef.phone,
               }),
         },
-        include: { vendorProfile: { select: { businessName: true } } },
+        include: INCLUIR,
       })
 
       await tx.auditLog.create({
@@ -70,7 +76,7 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
     const filas = await this.prisma.eventVendor.findMany({
       where: { eventId },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      include: { vendorProfile: { select: { businessName: true } } },
+      include: INCLUIR,
     })
     return filas.map((fila) => this.aVista(fila))
   }
@@ -78,7 +84,7 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
   async buscarPorId(eventId: string, eventVendorId: string): Promise<EventVendorVista | null> {
     const fila = await this.prisma.eventVendor.findFirst({
       where: { id: eventVendorId, eventId },
-      include: { vendorProfile: { select: { businessName: true } } },
+      include: INCLUIR,
     })
     return fila === null ? null : this.aVista(fila)
   }
@@ -103,7 +109,7 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
       await tx.eventVendor.updateMany({
         where: { id: eventVendorId, eventId },
         data: {
-          ...(cambios.category !== undefined ? { category: cambios.category } : {}),
+          ...(cambios.category !== undefined ? { categoryId: cambios.category.id } : {}),
           ...(cambios.specialty !== undefined ? { specialty: cambios.specialty } : {}),
           ...(cambios.assignedBudget !== undefined
             ? { assignedBudget: cambios.assignedBudget }
@@ -119,7 +125,7 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
       // no queda un `AuditLog` de un cambio que nunca se leyó de vuelta.
       const fila = await tx.eventVendor.findFirst({
         where: { id: eventVendorId, eventId },
-        include: { vendorProfile: { select: { businessName: true } } },
+        include: INCLUIR,
       })
       if (fila === null) throw new EventVendorNoEncontradoError()
 
@@ -130,7 +136,7 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
           action: 'event_vendor.updated',
           target: `event_vendor:${eventVendorId}`,
           // Sin datos personales: sólo QUÉ campos cambiaron, nunca su valor
-          // (`category`/`specialty` son texto libre y podrían llevarlos).
+          // (`specialty` es texto libre y podría llevarlos).
           metadata: { eventVendorId, campos: Object.keys(cambios) },
         },
       })
@@ -161,7 +167,10 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
 
   /** La fila de Prisma no sale de infrastructure/: reconstruye el `VendorRef`. */
   private aVista(
-    fila: EventVendorFila & { vendorProfile: { businessName: string } | null },
+    fila: EventVendorFila & {
+      vendorProfile: { businessName: string } | null
+      category: { slug: string; name: string }
+    },
   ): EventVendorVista {
     const vendorRef: VendorRef =
       fila.vendorProfileId !== null
@@ -177,7 +186,7 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
       id: fila.id,
       eventId: fila.eventId,
       vendorRef,
-      category: fila.category,
+      category: { slug: fila.category.slug, name: fila.category.name },
       specialty: fila.specialty,
       assignedBudget: fila.assignedBudget === null ? null : fila.assignedBudget.toFixed(2),
       name: fila.vendorProfile?.businessName ?? fila.externalName ?? '',

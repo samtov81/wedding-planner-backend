@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common'
 
+import { CategoriasDeProveedor } from './categorias'
 import { VendorProfileNoDisponibleError } from '../domain/vendor-errors'
 import { parseVendorRef, type EntradaVendorRef } from '../domain/vendor-ref'
 import {
@@ -9,6 +10,7 @@ import {
 } from './event-vendor.repository'
 
 export interface CrearEventVendor extends EntradaVendorRef {
+  /** `slug` de una categoría activa. */
   category: string
   specialty?: string | undefined
   assignedBudget?: string | undefined
@@ -17,7 +19,10 @@ export interface CrearEventVendor extends EntradaVendorRef {
 
 @Injectable()
 export class AddEventVendorUseCase {
-  constructor(@Inject(EVENT_VENDOR_REPOSITORY) private readonly vendors: EventVendorRepository) {}
+  constructor(
+    @Inject(EVENT_VENDOR_REPOSITORY) private readonly vendors: EventVendorRepository,
+    private readonly categorias: CategoriasDeProveedor,
+  ) {}
 
   async ejecutar(eventId: string, datos: CrearEventVendor): Promise<EventVendorVista> {
     // Falla pronto y con un mensaje útil: el 422 del dominio, no el error de
@@ -31,10 +36,12 @@ export class AddEventVendorUseCase {
       if (perfil === null) throw new VendorProfileNoDisponibleError()
     }
 
+    const category = await this.categorias.resolver(datos.category)
+
     return await this.vendors.crear({
       eventId,
       vendorRef,
-      category: datos.category,
+      category,
       specialty: datos.specialty ?? null,
       assignedBudget: datos.assignedBudget ?? null,
       actorUserId: datos.actorUserId,

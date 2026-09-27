@@ -158,13 +158,15 @@ model Event {
   createdAt        DateTime    @default(now())
   updatedAt        DateTime    @updatedAt
 
-  owner         User              @relation("EventOwner", fields: [ownerId], references: [id])
-  memberships   EventMembership[]
-  vendors       EventVendor[]
-  guests        Guest[]
-  notifications Notification[]
-  scheduleItems ScheduleItem[]
-  expenses      Expense[]
+  owner           User              @relation("EventOwner", fields: [ownerId], references: [id])
+  memberships     EventMembership[]
+  vendors         EventVendor[]
+  guests          Guest[]
+  notifications   Notification[]
+  scheduleItems   ScheduleItem[]
+  expenses        Expense[]
+  seatingTables   SeatingTable[]
+  seatAssignments SeatAssignment[]
 
   @@index([ownerId])
   @@map("events")
@@ -287,8 +289,9 @@ model Guest {
   createdAt           DateTime   @default(now())
   updatedAt           DateTime   @updatedAt
 
-  event       Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  invitations GuestInvitation[]
+  event           Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  invitations     GuestInvitation[]
+  seatAssignments SeatAssignment[]
 
   // Orden estable de paginación por cursor: (createdAt, id) es único y total.
   @@index([eventId, createdAt, id])
@@ -375,4 +378,44 @@ model AuditLog {
   @@index([eventId, createdAt])
   @@index([actorUserId, createdAt])
   @@map("audit_logs")
+}
+
+/// Una mesa redonda de la distribución. Sus asientos son los índices
+/// 0..seatCount-1; no hay fila por asiento. Rango en CHECK SQL.
+model SeatingTable {
+  id          String           @id @default(uuid()) @db.Uuid
+  eventId     String           @db.Uuid
+  name        String
+  minSeats    Int
+  maxSeats    Int
+  seatCount   Int
+  x           Int              @default(0)
+  y           Int              @default(0)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  event       Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  assignments SeatAssignment[]
+
+  @@index([eventId, createdAt])
+  @@map("seating_tables")
+}
+
+/// Quién ocupa un asiento: el invitado (companionIndex = 0) o uno de sus
+/// acompañantes (1..10). Una persona ocupa a lo sumo un asiento.
+model SeatAssignment {
+  id             String       @id @default(uuid()) @db.Uuid
+  eventId        String       @db.Uuid
+  tableId        String       @db.Uuid
+  seatIndex      Int
+  guestId        String       @db.Uuid
+  companionIndex Int
+  createdAt      DateTime     @default(now())
+  event          Event        @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  table          SeatingTable @relation(fields: [tableId], references: [id], onDelete: Cascade)
+  guest          Guest        @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  @@unique([tableId, seatIndex])
+  @@unique([guestId, companionIndex])
+  @@index([eventId])
+  @@map("seat_assignments")
 }

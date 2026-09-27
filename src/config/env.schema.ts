@@ -195,6 +195,17 @@ export const objetoBaseDeEntorno = z.object({
    * depende de `NODE_ENV`).
    */
   DOCS_ENABLED: opcional(z.enum(['true', 'false']).transform((v) => v === 'true')),
+
+  /**
+   * Cloudflare R2 (API S3) para las fotos de perfil y portfolio. Las cuatro
+   * van juntas o ninguna (ver `validarReglasCruzadas`). Sin configurar, subir
+   * responde 503 y las fotos ya guardadas salen sin URL: el resto del perfil
+   * funciona igual.
+   */
+  R2_ENDPOINT: opcional(z.url({ protocol: /^https?$/ })),
+  R2_ACCESS_KEY_ID: opcional(z.string().min(1)),
+  R2_SECRET_ACCESS_KEY: opcional(z.string().min(1)),
+  R2_BUCKET: opcional(z.string().min(1)),
 })
 
 /**
@@ -290,8 +301,23 @@ export function validarReglasCruzadas(source: NodeJS.ProcessEnv): EnvIssue[] {
     })
   }
 
+  // Media configuración de R2 no es "sin R2": es un despliegue que cree tener
+  // fotos y responde 503 en cada subida. Mejor que no arranque.
+  // eslint-disable-next-line security/detect-object-injection -- `clave` sale de la constante R2_CLAVES
+  const r2 = R2_CLAVES.filter((clave) => (source[clave] ?? '') !== '')
+  if (r2.length > 0 && r2.length < R2_CLAVES.length) {
+    for (const clave of R2_CLAVES.filter((c) => !r2.includes(c))) {
+      issues.push({
+        path: [clave],
+        message: 'Las variables R2_* se configuran las cuatro o ninguna',
+      })
+    }
+  }
+
   return issues
 }
+
+const R2_CLAVES = ['R2_ENDPOINT', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET'] as const
 
 /**
  * La ÚNICA allowlist de orígenes, compartida por el HTTP (`enableCors`) y por

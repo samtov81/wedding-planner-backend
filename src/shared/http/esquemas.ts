@@ -37,3 +37,15 @@ export const ubicacionSchema = z
 export const fechaSchema = z
   .union([z.iso.date(), z.iso.datetime({ offset: true })])
   .transform((valor) => new Date(valor))
+
+/**
+ * Lo que el cliente DECLARA de una foto antes de subirla (avatar, portfolio).
+ * Tipo y tamaño se vuelven a comprobar en R2 al confirmar: esto sólo decide
+ * qué se firma.
+ */
+export const archivoDeImagenSchema = z
+  .object({
+    contentType: z.string().trim().min(1).max(100),
+    size: z.number().int().positive(),
+  })
+  .strict()

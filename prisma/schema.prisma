@@ -83,6 +83,9 @@ model User {
   fullName        String
   systemRole      SystemRole @default(USER)
   emailVerifiedAt DateTime?
+  /// Key del objeto en R2 (`users/{id}/avatar/...`), nunca una URL: las URLs
+  /// de lectura son prefirmadas y caducan.
+  avatarKey       String?
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
@@ -120,24 +123,74 @@ model Session {
 }
 
 /// Ficha de marketplace. Existe sin ningún evento: un proveedor puede
-/// registrarse y publicarse con cero bodas contratadas.
+/// registrarse y publicarse con cero bodas contratadas. Todo usuario puede
+/// tener una; el switch "soy proveedor" es `status` (PUBLISHED ↔ DRAFT).
 model VendorProfile {
-  id           String              @id @default(uuid()) @db.Uuid
-  userId       String              @unique @db.Uuid
-  businessName String
-  category     String
-  specialty    String?
-  bio          String?
-  contact      Json?
-  status       VendorProfileStatus @default(DRAFT)
-  createdAt    DateTime            @default(now())
-  updatedAt    DateTime            @updatedAt
+  id               String              @id @default(uuid()) @db.Uuid
+  userId           String              @unique @db.Uuid
+  businessName     String
+  category         String
+  specialty        String?
+  tagline          String?
+  bio              String?
+  quote            String?
+  /// Declarado por el proveedor; no se deriva de nada.
+  yearsExperience  Int?
+  /// Texto corto tal cual lo muestra la ficha ("< 2h").
+  responseTime     String?
+  /// Moneda de todos sus paquetes (ISO 4217).
+  currency         String              @default("USD") @db.Char(3)
+  /// "As Seen In": nombres de publicaciones, en orden.
+  publications     String[]            @default([])
+  contact          Json?
+  locationName     String?
+  locationAddress  String?
+  locationLat      Decimal?            @db.Decimal(9, 6)
+  locationLng      Decimal?            @db.Decimal(9, 6)
+  locationMapboxId String?
+  status           VendorProfileStatus @default(DRAFT)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
 
-  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  eventVendors EventVendor[]
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventVendors    EventVendor[]
+  packages        VendorPackage[]
+  portfolioImages VendorPortfolioImage[]
 
   @@index([category, status])
   @@map("vendor_profiles")
+}
+
+/// Paquete de servicio de una ficha. El precio va en la moneda de la ficha.
+model VendorPackage {
+  id              String   @id @default(uuid()) @db.Uuid
+  vendorProfileId String   @db.Uuid
+  name            String
+  description     String
+  price           Decimal  @db.Decimal(12, 2)
+  position        Int
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  vendorProfile VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+
+  @@index([vendorProfileId, position])
+  @@map("vendor_packages")
+}
+
+/// Foto del portfolio. Se guarda la key de R2, no la URL.
+model VendorPortfolioImage {
+  id              String   @id @default(uuid()) @db.Uuid
+  vendorProfileId String   @db.Uuid
+  storageKey      String   @unique
+  alt             String
+  position        Int
+  createdAt       DateTime @default(now())
+
+  vendorProfile VendorProfile @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+
+  @@index([vendorProfileId, position])
+  @@map("vendor_portfolio_images")
 }
 
 model Event {

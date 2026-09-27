@@ -238,4 +238,28 @@ describe('Equivalencia: UserRepositoryEnMemoria vs PrismaUserRepository', () => 
       expect((await repo.findByEmail('yaverif@test.com'))?.emailVerifiedAt).toEqual(antes)
     }
   })
+
+  it('nombre y avatar: se leen, se cambian y fijarAvatar devuelve la key anterior', async () => {
+    for (const repo of [repoReal, repoFake]) {
+      const u = await repo.create({
+        email: 'avatar@example.com',
+        passwordHash: 'h',
+        fullName: 'Ana',
+      })
+
+      await repo.actualizarNombre(u.id, 'Ana María')
+      expect((await repo.findById(u.id))?.fullName).toBe('Ana María')
+
+      expect(await repo.leerAvatar(u.id)).toBeNull()
+      expect(await repo.fijarAvatar(u.id, 'users/a/avatar/1.jpg')).toBeNull()
+      expect(await repo.fijarAvatar(u.id, 'users/a/avatar/2.jpg')).toBe('users/a/avatar/1.jpg')
+      expect(await repo.leerAvatar(u.id)).toBe('users/a/avatar/2.jpg')
+      expect(await repo.fijarAvatar(u.id, null)).toBe('users/a/avatar/2.jpg')
+      expect(await repo.leerAvatar(u.id)).toBeNull()
+
+      // El avatar no se cuela en `User`.
+      expect(await repo.findById(u.id)).not.toHaveProperty('avatarKey')
+      expect(await repo.findByEmail('avatar@example.com')).not.toHaveProperty('avatarKey')
+    }
+  })
 })

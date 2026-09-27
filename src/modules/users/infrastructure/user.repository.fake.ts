@@ -10,7 +10,11 @@ import { EmailYaRegistradoError } from '../domain/user-errors'
  * el passwordHash en findById, devuelve createdAt/updatedAt.
  * Usado por Tarea 8 (autenticación) para escribir tests sin dependencia en Prisma.
  */
-type UserWithTimestamps = UserConHash & { createdAt: Date; updatedAt: Date }
+type UserWithTimestamps = UserConHash & {
+  createdAt: Date
+  updatedAt: Date
+  avatarKey?: string | null
+}
 
 export class UserRepositoryEnMemoria implements UserRepository {
   private usuarios: UserWithTimestamps[] = []
@@ -22,14 +26,16 @@ export class UserRepositoryEnMemoria implements UserRepository {
   async findByEmail(email: string): Promise<UserConHash | null> {
     const normalizado = normalizarEmail(email)
     const usuario = this.usuarios.find((u) => u.email === normalizado)
-    return await Promise.resolve(usuario ? { ...usuario } : null)
+    if (!usuario) return await Promise.resolve(null)
+    const { avatarKey: _avatar, ...conHash } = usuario
+    return await Promise.resolve(conHash)
   }
 
   async findById(id: string): Promise<User | null> {
     const usuario = this.usuarios.find((u) => u.id === id)
     if (!usuario) return await Promise.resolve(null)
 
-    const { passwordHash: _oculto, ...publico } = usuario
+    const { passwordHash: _oculto, avatarKey: _avatar, ...publico } = usuario
     return await Promise.resolve(publico)
   }
 
@@ -74,5 +80,23 @@ export class UserRepositoryEnMemoria implements UserRepository {
       usuario.emailVerifiedAt ??= new Date()
     }
     await Promise.resolve()
+  }
+
+  async actualizarNombre(id: string, fullName: string): Promise<void> {
+    const usuario = this.usuarios.find((u) => u.id === id)
+    if (usuario) usuario.fullName = fullName
+    await Promise.resolve()
+  }
+
+  async leerAvatar(id: string): Promise<string | null> {
+    return await Promise.resolve(this.usuarios.find((u) => u.id === id)?.avatarKey ?? null)
+  }
+
+  async fijarAvatar(id: string, key: string | null): Promise<string | null> {
+    const usuario = this.usuarios.find((u) => u.id === id)
+    if (!usuario) return await Promise.resolve(null)
+    const anterior = usuario.avatarKey ?? null
+    usuario.avatarKey = key
+    return await Promise.resolve(anterior)
   }
 }

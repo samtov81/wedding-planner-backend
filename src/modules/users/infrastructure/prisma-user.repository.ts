@@ -14,14 +14,17 @@ export class PrismaUserRepository implements UserRepository {
 
   async findByEmail(email: string): Promise<UserConHash | null> {
     const fila = await this.prisma.user.findUnique({ where: { email: normalizarEmail(email) } })
-    return fila === null ? null : { ...fila }
+    if (fila === null) return null
+    const { avatarKey: _avatar, ...conHash } = fila
+    return conHash
   }
 
   async findById(id: string): Promise<User | null> {
     const fila = await this.prisma.user.findUnique({ where: { id } })
     if (fila === null) return null
 
-    const { passwordHash: _oculto, ...publico } = fila
+    // `avatarKey` tampoco es de `User`: lo lee quien lo necesita (`leerAvatar`).
+    const { passwordHash: _oculto, avatarKey: _avatar, ...publico } = fila
     return publico
   }
 
@@ -30,7 +33,7 @@ export class PrismaUserRepository implements UserRepository {
       const fila = await this.prisma.user.create({
         data: { ...datos, email: normalizarEmail(datos.email) },
       })
-      const { passwordHash: _oculto, ...publico } = fila
+      const { passwordHash: _oculto, avatarKey: _avatar, ...publico } = fila
       return publico
     } catch (error) {
       // P2002 = violación de índice único. Se traduce a un error de DOMINIO
@@ -55,6 +58,24 @@ export class PrismaUserRepository implements UserRepository {
     await db.user.updateMany({
       where: { id, emailVerifiedAt: null },
       data: { emailVerifiedAt: new Date() },
+    })
+  }
+
+  async actualizarNombre(id: string, fullName: string): Promise<void> {
+    await this.prisma.user.updateMany({ where: { id }, data: { fullName } })
+  }
+
+  async leerAvatar(id: string): Promise<string | null> {
+    const fila = await this.prisma.user.findUnique({ where: { id }, select: { avatarKey: true } })
+    return fila?.avatarKey ?? null
+  }
+
+  async fijarAvatar(id: string, key: string | null): Promise<string | null> {
+    return await this.prisma.$transaction(async (tx) => {
+      const [fila] = await tx.$queryRaw<Array<{ avatarKey: string | null }>>`
+        SELECT "avatarKey" FROM "users" WHERE "id" = ${id}::uuid FOR UPDATE`
+      await tx.user.updateMany({ where: { id }, data: { avatarKey: key } })
+      return fila?.avatarKey ?? null
     })
   }
 }

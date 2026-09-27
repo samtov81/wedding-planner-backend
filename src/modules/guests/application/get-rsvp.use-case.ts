@@ -20,6 +20,10 @@ export interface VistaPublicaRsvp {
   weddingDate: string | null
   rsvp: RsvpStatus
   dietary: string | null
+  /** Cupo de acompañantes que la pareja le dio. */
+  companionsAllowed: number
+  /** Los que dijo que trae; `null` si aún no respondió. */
+  companionsConfirmed: number | null
   /**
    * ISO 8601. Desde este instante el POST responde `RSVP_CLOSED`; antes, el
    * invitado puede cambiar su respuesta (bloque A §2). `null` cuando el evento
@@ -62,6 +66,8 @@ export class GetRsvpUseCase {
       weddingDate: invitacion.event.weddingDate?.toISOString() ?? null,
       rsvp: invitado.rsvp,
       dietary: invitado.dietary,
+      companionsAllowed: invitado.companionsAllowed,
+      companionsConfirmed: invitado.companionsConfirmed,
       rsvpClosesAt: cierreRsvp(invitacion.event)?.toISOString() ?? null,
     }
   }

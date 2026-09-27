@@ -66,11 +66,52 @@ export class GuestRepositoryEnMemoria implements GuestRepository {
     return Promise.resolve(base)
   }
 
+  sumarAcompanantesConfirmados(eventId: string): Promise<number> {
+    let suma = 0
+    for (const fila of this.filas) {
+      if (fila.eventId === eventId && fila.rsvp === 'CONFIRMED') {
+        suma += fila.companionsConfirmed ?? 0
+      }
+    }
+    return Promise.resolve(suma)
+  }
+
   crear(datos: DatosCrearInvitado): Promise<Guest> {
     if (datos.email !== null && this.correoOcupado(datos.eventId, datos.email, null)) {
       return Promise.reject(new EmailDuplicadoError())
     }
+    return Promise.resolve({ ...this.insertar(datos) })
+  }
 
+  crearVarios(datos: DatosCrearInvitado[]): Promise<number> {
+    // Todo o nada, como el INSERT multi-fila real: se comprueba el lote
+    // entero —contra la tabla y contra sí mismo— antes de insertar ninguna.
+    const vistos = new Set<string>()
+    for (const d of datos) {
+      if (d.email === null) continue
+      const clave = `${d.eventId}|${d.email}`
+      if (vistos.has(clave) || this.correoOcupado(d.eventId, d.email, null)) {
+        return Promise.reject(new EmailDuplicadoError())
+      }
+      vistos.add(clave)
+    }
+    for (const d of datos) this.insertar(d)
+    return Promise.resolve(datos.length)
+  }
+
+  emailsExistentes(eventId: string, emails: string[]): Promise<Set<string>> {
+    const buscados = new Set(emails.map((e) => e.toLowerCase()))
+    const encontrados = new Set<string>()
+    for (const fila of this.filas) {
+      const correo = fila.email?.toLowerCase()
+      if (fila.eventId === eventId && correo !== undefined && buscados.has(correo)) {
+        encontrados.add(correo)
+      }
+    }
+    return Promise.resolve(encontrados)
+  }
+
+  private insertar(datos: DatosCrearInvitado): Guest {
     const fila: Guest = {
       id: randomUUID(),
       eventId: datos.eventId,
@@ -79,12 +120,14 @@ export class GuestRepositoryEnMemoria implements GuestRepository {
       group: datos.group,
       rsvp: 'PENDING',
       dietary: datos.dietary,
+      companionsAllowed: datos.companionsAllowed,
+      companionsConfirmed: null,
       // Marca creciente: dos `crear()` seguidos deben quedar en orden, como en
       // Postgres. Con una constante fija el cursor no distinguiría filas.
       createdAt: new Date(Date.UTC(2026, 0, 1) + this.filas.length),
     }
     this.filas.push(fila)
-    return Promise.resolve({ ...fila })
+    return fila
   }
 
   buscar(eventId: string, guestId: string): Promise<Guest | null> {
@@ -109,6 +152,10 @@ export class GuestRepositoryEnMemoria implements GuestRepository {
     if (cambios.group !== undefined) fila.group = cambios.group
     if (cambios.rsvp !== undefined) fila.rsvp = cambios.rsvp
     if (cambios.dietary !== undefined) fila.dietary = cambios.dietary
+    if (cambios.companionsAllowed !== undefined) fila.companionsAllowed = cambios.companionsAllowed
+    if (cambios.companionsConfirmed !== undefined) {
+      fila.companionsConfirmed = cambios.companionsConfirmed
+    }
 
     return Promise.resolve({ ...fila })
   }

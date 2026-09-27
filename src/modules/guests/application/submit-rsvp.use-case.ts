@@ -10,7 +10,8 @@ import {
 } from '@/modules/notifications/application/notification.port'
 import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
 
-import { InvitacionNoValidaError } from '../domain/guest-errors'
+import { cupoCubreConfirmados } from '../domain/guest'
+import { AcompanantesExcedidosError, InvitacionNoValidaError } from '../domain/guest-errors'
 import { GUEST_REPOSITORY, type GuestRepository } from './guest.repository'
 import { buscarInvitacionRespondible } from './invitacion-valida'
 import { INVITATION_REPOSITORY, type InvitationRepository } from './invitation.repository'
@@ -49,6 +50,8 @@ export function jobIdDeAvisoRsvp(invitationId: string, respondidaEn: Date): stri
 export interface RespuestaRsvp {
   rsvp: 'CONFIRMED' | 'DECLINED'
   dietary?: string | null | undefined
+  /** Acompañantes que trae. Ausente = 0; en un DECLINED se ignora y queda 0. */
+  companions?: number | undefined
 }
 
 @Injectable()
@@ -95,6 +98,16 @@ export class SubmitRsvpUseCase {
     const { eventId, id: guestId, name: guestName } = invitacion.guest
     const aviso = { guestId, guestName, rsvp: respuesta.rsvp }
 
+    // Quien no viene no trae a nadie, diga lo que diga el cuerpo.
+    const acompanantes = respuesta.rsvp === 'DECLINED' ? 0 : (respuesta.companions ?? 0)
+    // El cupo se lee FUERA de la transacción: si la pareja lo baja justo entre
+    // medias, el CHECK de la tabla sigue impidiendo que el confirmado lo supere.
+    const invitado = await this.invitados.buscar(eventId, guestId)
+    if (invitado === null) throw new InvitacionNoValidaError()
+    if (!cupoCubreConfirmados(invitado.companionsAllowed, acompanantes)) {
+      throw new AcompanantesExcedidosError()
+    }
+
     await this.unidadDeTrabajo.ejecutar(async () => {
       // La lectura de arriba no basta: un reenvío o un cambio de email (C24)
       // puede caducar el token entre ella y aquí. La guarda de verdad de la
@@ -104,6 +117,7 @@ export class SubmitRsvpUseCase {
 
       await this.invitados.actualizar(eventId, guestId, {
         rsvp: respuesta.rsvp,
+        companionsConfirmed: acompanantes,
         ...(respuesta.dietary !== undefined ? { dietary: respuesta.dietary } : {}),
       })
       await this.notificaciones.crearParaMiembros(eventId, TIPO_RSVP_ACTUALIZADO, aviso)

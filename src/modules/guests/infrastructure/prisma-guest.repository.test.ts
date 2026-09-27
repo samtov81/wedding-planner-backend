@@ -233,6 +233,7 @@ describe('PrismaGuestRepository — paginación por cursor', () => {
         email: 'g00@boda.test',
         group: 'Family',
         dietary: null,
+        companionsAllowed: 0,
       }),
     ).rejects.toBeInstanceOf(EmailDuplicadoError)
   })
@@ -244,6 +245,7 @@ describe('PrismaGuestRepository — paginación por cursor', () => {
       email: null,
       group: 'Family',
       dietary: null,
+      companionsAllowed: 0,
     })
     const dos = await repo.crear({
       eventId: otroEventId,
@@ -251,6 +253,7 @@ describe('PrismaGuestRepository — paginación por cursor', () => {
       email: null,
       group: 'Family',
       dietary: null,
+      companionsAllowed: 0,
     })
 
     expect(uno.email).toBeNull()
@@ -266,6 +269,7 @@ describe('PrismaGuestRepository — paginación por cursor', () => {
       email: null,
       group: 'Work',
       dietary: null,
+      companionsAllowed: 0,
     })
 
     expect(await repo.buscar(otroEventId, creado.id)).toBeNull()
@@ -279,6 +283,95 @@ describe('PrismaGuestRepository — paginación por cursor', () => {
 
     await repo.borrar(eventId, creado.id)
     expect(await repo.buscar(eventId, creado.id)).toBeNull()
+  })
+
+  it('crearVarios es todo o nada: un correo repetido no deja filas a medias', async () => {
+    const antes = await prisma.guest.count({ where: { eventId } })
+
+    await expect(
+      repo.crearVarios([
+        {
+          eventId,
+          name: 'Nueva',
+          email: 'nueva@boda.test',
+          group: 'Family',
+          dietary: null,
+          companionsAllowed: 1,
+        },
+        {
+          eventId,
+          name: 'Repetida',
+          email: 'g00@boda.test',
+          group: 'Family',
+          dietary: null,
+          companionsAllowed: 0,
+        },
+      ]),
+    ).rejects.toBeInstanceOf(EmailDuplicadoError)
+    expect(await prisma.guest.count({ where: { eventId } })).toBe(antes)
+
+    const creados = await repo.crearVarios([
+      {
+        eventId: otroEventId,
+        name: 'L1',
+        email: 'l1@boda.test',
+        group: 'F',
+        dietary: null,
+        companionsAllowed: 2,
+      },
+      {
+        eventId: otroEventId,
+        name: 'L2',
+        email: null,
+        group: 'F',
+        dietary: null,
+        companionsAllowed: 0,
+      },
+    ])
+    expect(creados).toBe(2)
+    const l1 = await prisma.guest.findFirst({ where: { eventId: otroEventId, name: 'L1' } })
+    expect(l1).toMatchObject({ companionsAllowed: 2, companionsConfirmed: null })
+
+    await prisma.guest.deleteMany({ where: { eventId: otroEventId } })
+  })
+
+  it('emailsExistentes no distingue mayúsculas y no cruza eventos (igual que el doble)', async () => {
+    const fake = new GuestRepositoryEnMemoria()
+    for (const g of await repo.listarTodos(eventId)) fake.sembrar(g)
+    const buscados = ['G00@BODA.TEST', 'nadie@boda.test']
+
+    const reales = await repo.emailsExistentes(eventId, buscados)
+
+    expect(reales).toEqual(new Set(['g00@boda.test']))
+    expect(await fake.emailsExistentes(eventId, buscados)).toEqual(reales)
+    expect(await repo.emailsExistentes(otroEventId, buscados)).toEqual(new Set())
+    expect(await repo.emailsExistentes(eventId, [])).toEqual(new Set())
+  })
+
+  it('suma los acompañantes de los CONFIRMED, y el CHECK impide superar el cupo', async () => {
+    const creado = await repo.crear({
+      eventId: otroEventId,
+      name: 'Con acompañantes',
+      email: null,
+      group: 'Family',
+      dietary: null,
+      companionsAllowed: 2,
+    })
+    await repo.actualizar(otroEventId, creado.id, { rsvp: 'CONFIRMED', companionsConfirmed: 2 })
+
+    expect(await repo.sumarAcompanantesConfirmados(otroEventId)).toBe(2)
+    const fake = new GuestRepositoryEnMemoria()
+    for (const g of await repo.listarTodos(otroEventId)) fake.sembrar(g)
+    expect(await fake.sumarAcompanantesConfirmados(otroEventId)).toBe(2)
+
+    await expect(
+      repo.actualizar(otroEventId, creado.id, { companionsConfirmed: 3 }),
+    ).rejects.toThrow()
+    await expect(
+      repo.actualizar(otroEventId, creado.id, { companionsAllowed: 11 }),
+    ).rejects.toThrow()
+
+    await prisma.guest.deleteMany({ where: { eventId: otroEventId } })
   })
 
   it('el doble en memoria no es más permisivo que Postgres', async () => {
@@ -319,7 +412,14 @@ describe('PrismaGuestRepository — paginación por cursor', () => {
     // Y la restricción que de verdad separa un doble ingenuo del real: el
     // índice único parcial (eventId, email).
     await expect(
-      fake.crear({ eventId, name: 'Repetido', email: 'g00@boda.test', group: 'F', dietary: null }),
+      fake.crear({
+        eventId,
+        name: 'Repetido',
+        email: 'g00@boda.test',
+        group: 'F',
+        dietary: null,
+        companionsAllowed: 0,
+      }),
     ).rejects.toBeInstanceOf(EmailDuplicadoError)
   })
 

@@ -14,6 +14,10 @@ export class GuestSummaryUseCase {
   constructor(@Inject(GUEST_REPOSITORY) private readonly invitados: GuestRepository) {}
 
   async ejecutar(eventId: string): Promise<GuestSummary> {
-    return resumirPorEstado(await this.invitados.contarPorEstado(eventId))
+    const [conteo, acompanantes] = await Promise.all([
+      this.invitados.contarPorEstado(eventId),
+      this.invitados.sumarAcompanantesConfirmados(eventId),
+    ])
+    return resumirPorEstado(conteo, acompanantes)
   }
 }

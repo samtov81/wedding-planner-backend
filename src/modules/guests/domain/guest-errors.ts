@@ -85,6 +85,37 @@ export class InvitacionNoValidaError extends NotFoundError {
   }
 }
 
+/**
+ * Más acompañantes de los que el cupo permite: al confirmar el RSVP, o al
+ * bajar el cupo por debajo de lo ya confirmado. 422: la petición está bien
+ * formada, es el cupo del invitado lo que la hace imposible.
+ */
+export class AcompanantesExcedidosError extends UnprocessableError {
+  constructor() {
+    super('Los acompañantes superan el cupo del invitado', 'COMPANIONS_EXCEEDED')
+  }
+}
+
+/** Una fila de la importación que no se puede cargar, y por qué. */
+export interface ErrorDeFila {
+  /** 1-based, sin contar la cabecera: la fila tal como la numera quien mira su CSV. */
+  row: number
+  field: string
+  code: 'INVALID' | 'DUPLICATED_IN_FILE' | 'ALREADY_INVITED'
+  message: string
+}
+
+/**
+ * La importación es todo o nada: si alguna fila falla no se carga ninguna, y
+ * `details` lleva TODAS las filas con problema —no la primera—, para que se
+ * corrija el archivo de una vez.
+ */
+export class ImportacionInvalidaError extends UnprocessableError {
+  constructor(errores: ErrorDeFila[]) {
+    super('Hay filas que no se pueden importar', 'GUEST_IMPORT_INVALID', errores)
+  }
+}
+
 /** Token válido pero fuera de plazo: verlo exige tener el token, así que no filtra nada. */
 export class RsvpCerradoError extends UnprocessableError {
   constructor() {

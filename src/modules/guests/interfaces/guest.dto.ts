@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
-import { RSVP_STATUSES } from '../domain/guest'
+import type { FilaImportacion } from '../application/import-guests.use-case'
+import { MAX_ACOMPANANTES, RSVP_STATUSES } from '../domain/guest'
 
 /**
  * DESIGN-GAP: el brief de la Tarea 11 escribe estos DTOs con `nestjs-zod`
@@ -34,12 +35,56 @@ export const crearInvitadoSchema = z.object({
   email: z.email().optional(),
   group: z.string().trim().min(1).max(50),
   dietary: z.string().trim().min(1).max(200).nullable().optional(),
+  /** Cupo de acompañantes. Ausente = 0: la mayoría de invitados viene sola. */
+  companionsAllowed: z.number().int().min(0).max(MAX_ACOMPANANTES).default(0),
 })
 export type CrearInvitadoDto = z.infer<typeof crearInvitadoSchema>
+
+/**
+ * Tope de filas por importación. Una boda grande ronda los 300-400 invitados;
+ * sin tope, un cuerpo enorme es una denegación gratis y un INSERT gigante.
+ */
+export const MAX_FILAS_IMPORTACION = 500
+
+/**
+ * Sólo la FORMA del lote: cada fila se valida después, una a una, en el caso
+ * de uso, para poder decir QUÉ fila falla. Con `z.array(crearInvitadoSchema)`
+ * el 400 diría "guests.37.email" mezclado con los demás y sin los duplicados.
+ */
+export const importarInvitadosSchema = z.object({
+  guests: z.array(z.unknown()).min(1).max(MAX_FILAS_IMPORTACION),
+})
+
+/** Valida una fila de la importación sin lanzar: sus fallos van al informe por fila. */
+export function validarFilaImportacion(fila: unknown): FilaImportacion {
+  const resultado = crearInvitadoSchema.safeParse(fila)
+  if (!resultado.success) {
+    return {
+      ok: false,
+      fallos: resultado.error.issues.map((issue) => ({
+        field: issue.path.map(String).join('.') || 'row',
+        message: issue.message,
+      })),
+    }
+  }
+  const d = resultado.data
+  return {
+    ok: true,
+    datos: {
+      name: d.name,
+      email: d.email ?? null,
+      group: d.group,
+      dietary: d.dietary ?? null,
+      companionsAllowed: d.companionsAllowed,
+    },
+  }
+}
 
 export const actualizarInvitadoSchema = crearInvitadoSchema
   .partial()
   .extend({
+    // Sin `.default(0)`: en un PATCH, ausente significa "no lo toques".
+    companionsAllowed: z.number().int().min(0).max(MAX_ACOMPANANTES).optional(),
     rsvp: rsvpSchema.optional(),
     // A diferencia de `crearInvitadoSchema.email` (sólo ausente u ok), el PATCH
     // también acepta `null` explícito: es cómo se borra un correo ya puesto.

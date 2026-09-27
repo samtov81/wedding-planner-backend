@@ -12,6 +12,7 @@ describe('CreateGuestUseCase', () => {
       email: null,
       group: 'Family',
       dietary: null,
+      companionsAllowed: 0,
     })
 
     expect(invitado.email).toBeNull()

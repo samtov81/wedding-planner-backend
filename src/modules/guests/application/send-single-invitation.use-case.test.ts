@@ -21,6 +21,8 @@ describe('SendSingleInvitationUseCase', () => {
       group: 'Family',
       rsvp,
       dietary: null,
+      companionsAllowed: 0,
+      companionsConfirmed: null,
       createdAt: new Date(Date.UTC(2026, 0, 1, 0, 0, 0, invitados.filas.length)),
     }
     invitados.sembrar(fila)

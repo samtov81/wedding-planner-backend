@@ -241,7 +241,11 @@ describe('Equivalencia: UserRepositoryEnMemoria vs PrismaUserRepository', () => 
 
   it('nombre y avatar: se leen, se cambian y fijarAvatar devuelve la key anterior', async () => {
     for (const repo of [repoReal, repoFake]) {
-      const u = await repo.create({ email: 'avatar@example.com', passwordHash: 'h', fullName: 'Ana' })
+      const u = await repo.create({
+        email: 'avatar@example.com',
+        passwordHash: 'h',
+        fullName: 'Ana',
+      })
 
       await repo.actualizarNombre(u.id, 'Ana María')
       expect((await repo.findById(u.id))?.fullName).toBe('Ana María')

@@ -75,7 +75,7 @@ describe('Paridad: VendorProfileRepositoryEnMemoria vs PrismaVendorProfileReposi
   }
 
   function usuario(i: number): string {
-    const id = usuarios[i]
+    const id = usuarios.at(i)
     if (id === undefined) throw new Error('sin usuario')
     return id
   }

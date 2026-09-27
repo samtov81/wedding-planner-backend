@@ -225,6 +225,27 @@ describe('loadEnv', () => {
     })
   })
 
+  describe('R2_*', () => {
+    const r2 = {
+      R2_ENDPOINT: 'https://cuenta.r2.cloudflarestorage.com',
+      R2_ACCESS_KEY_ID: 'id',
+      R2_SECRET_ACCESS_KEY: 'secreto',
+      R2_BUCKET: 'fotos',
+    }
+
+    it('son opcionales: sin ninguna, arranca sin almacenamiento', () => {
+      expect(loadEnv(valido).R2_BUCKET).toBeUndefined()
+    })
+
+    it('con las cuatro, arranca', () => {
+      expect(loadEnv({ ...valido, ...r2 }).R2_BUCKET).toBe('fotos')
+    })
+
+    it('a medias no arranca, y nombra las que faltan', () => {
+      expect(() => loadEnv({ ...valido, ...r2, R2_BUCKET: '' })).toThrow(/R2_BUCKET/)
+    })
+  })
+
   it('una variable opcional vacía (`KEY=` en el .env) cuenta como ausente', () => {
     const env = loadEnv({ ...valido, RESEND_API_KEY: '', RESEND_WEBHOOK_SECRET: '', LOG_LEVEL: '' })
 

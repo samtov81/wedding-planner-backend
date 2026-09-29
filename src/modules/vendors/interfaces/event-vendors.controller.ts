@@ -32,9 +32,10 @@ interface EventVendorRespuesta {
 }
 
 /**
- * Las cuatro rutas exigen `COUPLE` o `PLANNER`: gestionar quién trabaja en el
- * evento es cosa de quien lo planifica, no de un vendor ya contratado ni de
- * cualquiera con acceso de sólo lectura.
+ * Listar exige `COUPLE` o `PLANNER`: ver quién trabaja en el evento es cosa de
+ * quien lo planifica, no de un vendor ya contratado. Crear, editar y quitar
+ * exigen `OWNER`: gestionar los proveedores es parte de la configuración del
+ * evento, que sólo toca quien lo creó.
  *
  * `@RequireEventAccess` va en CADA método, no en la clase: cuando se escribió,
  * `EventAccessGuard` sólo leía la metadata del HANDLER y el decorador de clase
@@ -59,7 +60,7 @@ export class EventVendorsController {
     return vendors.map((v) => this.aRespuesta(v))
   }
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess('OWNER')
   @Post()
   async agregarVendor(
     @CurrentUser() usuario: UsuarioAutenticado | undefined,
@@ -72,7 +73,7 @@ export class EventVendorsController {
     return this.aRespuesta(vendor)
   }
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess('OWNER')
   @Patch(':eventVendorId')
   async actualizarVendor(
     @CurrentUser() usuario: UsuarioAutenticado | undefined,
@@ -87,7 +88,7 @@ export class EventVendorsController {
     return this.aRespuesta(vendor)
   }
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess('OWNER')
   @Delete(':eventVendorId')
   async eliminarVendor(
     @CurrentUser() usuario: UsuarioAutenticado | undefined,

@@ -22,7 +22,7 @@ export class EventAccessService {
     if (systemRole === 'ADMIN') return { kind: 'admin' }
 
     const membresia = await this.repo.buscarMembresiaActiva(eventId, userId)
-    if (membresia !== null) return { kind: 'member', role: membresia.role }
+    if (membresia !== null) return { kind: 'member', role: membresia.role, owner: membresia.owner }
 
     // Sólo BOOKED, y sólo con ficha enlazada: un EventVendor externo no tiene
     // cuenta detrás, así que no puede conceder acceso a ningún usuario.

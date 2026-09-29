@@ -7,6 +7,9 @@ describe('CreateEventUseCase', () => {
     const evento = await new CreateEventUseCase(repo).ejecutar({ name: 'Boda', ownerId: 'ana' })
 
     expect(evento).toMatchObject({ name: 'Boda', status: 'DRAFT', weddingDate: null })
-    expect(await repo.buscarMembresiaActiva(evento.id, 'ana')).toEqual({ role: 'COUPLE' })
+    expect(await repo.buscarMembresiaActiva(evento.id, 'ana')).toEqual({
+      role: 'COUPLE',
+      owner: true,
+    })
   })
 })

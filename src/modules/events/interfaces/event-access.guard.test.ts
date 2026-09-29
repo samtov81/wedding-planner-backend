@@ -26,6 +26,9 @@ class ControladorDePrueba {
   @RequireEventAccess('COUPLE')
   soloPareja(this: void): void {}
 
+  @RequireEventAccess('OWNER')
+  soloCreador(this: void): void {}
+
   sinDecorador(this: void): void {}
 }
 
@@ -87,7 +90,7 @@ describe('EventAccessGuard', () => {
     }
 
     await expect(guard.canActivate(contextoCon(req, abierta))).resolves.toBe(true)
-    expect(req.eventAccess).toEqual({ kind: 'member', role: 'COUPLE' })
+    expect(req.eventAccess).toEqual({ kind: 'member', role: 'COUPLE', owner: true })
   })
 
   it('responde 404 y NO 403 a quien no tiene ningún acceso al evento', async () => {
@@ -177,6 +180,51 @@ describe('EventAccessGuard', () => {
     await expect(guard.canActivate(contextoCon(req, soloPareja))).rejects.toBeInstanceOf(
       ForbiddenError,
     )
+  })
+
+  describe('OWNER: sólo quien creó el evento', () => {
+    const soloCreador = ControladorDePrueba.prototype.soloCreador
+    const peticionDe = (id: string, systemRole: 'USER' | 'ADMIN' = 'USER'): PeticionFalsa => ({
+      params: { eventId: UUID_EVENTO },
+      user: { id, systemRole },
+    })
+
+    it('deja pasar al creador', async () => {
+      await expect(guard.canActivate(contextoCon(peticionDe('ana'), soloCreador))).resolves.toBe(
+        true,
+      )
+    })
+
+    it('un PLANNER activo recibe 403', async () => {
+      await expect(
+        guard.canActivate(contextoCon(peticionDe('pedro'), soloCreador)),
+      ).rejects.toBeInstanceOf(ForbiddenError)
+    })
+
+    it('un segundo COUPLE que no creó el evento también recibe 403', async () => {
+      repo.membresias.push({
+        eventId: UUID_EVENTO,
+        userId: 'luis',
+        role: 'COUPLE',
+        status: 'ACTIVE',
+      })
+
+      await expect(
+        guard.canActivate(contextoCon(peticionDe('luis'), soloCreador)),
+      ).rejects.toBeInstanceOf(ForbiddenError)
+    })
+
+    it('un extraño sigue recibiendo 404, no 403', async () => {
+      await expect(
+        guard.canActivate(contextoCon(peticionDe('extraño'), soloCreador)),
+      ).rejects.toBeInstanceOf(NotFoundError)
+    })
+
+    it('un ADMIN pasa, como en cualquier otra lista', async () => {
+      await expect(
+        guard.canActivate(contextoCon(peticionDe('root', 'ADMIN'), soloCreador)),
+      ).resolves.toBe(true)
+    })
   })
 
   describe('falla CERRADO: la lista de permitidos es obligatoria', () => {

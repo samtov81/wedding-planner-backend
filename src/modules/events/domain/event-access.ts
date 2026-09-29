@@ -24,7 +24,13 @@ export const CONTRATACION_CON_ACCESO = 'BOOKED'
  */
 export type EventAccess =
   | { kind: 'admin' }
-  | { kind: 'member'; role: EventRole }
+  /**
+   * `owner`: es quien creó el evento (`Event.ownerId`). No es un rol ni una
+   * fuente de acceso aparte: sólo lo lleva quien ya tiene membresía ACTIVE,
+   * y lo que añade es el permiso `OWNER`. Un segundo COUPLE invitado tiene
+   * el mismo rol, pero no es owner.
+   */
+  | { kind: 'member'; role: EventRole; owner: boolean }
   | { kind: 'vendor'; eventVendorId: string }
   | { kind: 'none' }
 
@@ -36,15 +42,18 @@ export function tieneAlgunAcceso(acceso: EventAccess): boolean {
  * Lo que `@RequireEventAccess()` sabe nombrar. `VENDOR` no es un `EventRole`
  * —no existe como membresía— pero sí es una forma de estar en el evento, así
  * que las rutas tienen que poder permitirlo o excluirlo igual que a los otros.
+ * `OWNER` tampoco es un rol: lo tiene, además del suyo, el miembro que creó
+ * el evento (ver `EventAccess`).
  */
-export type PermisoDeEvento = EventRole | 'VENDOR'
+export type PermisoDeEvento = EventRole | 'VENDOR' | 'OWNER'
 
 /**
- * Colapsa el acceso a la etiqueta con la que se compara en las rutas. `admin`
- * no aparece aquí a propósito: se resuelve antes, saltándose la lista.
+ * Los permisos con los que se compara en las rutas. Una lista y no una sola
+ * etiqueta porque el creador es a la vez `COUPLE` y `OWNER`. `admin` no
+ * aparece aquí a propósito: se resuelve antes, saltándose la lista.
  */
-export function etiquetaDe(acceso: EventAccess): PermisoDeEvento | null {
-  if (acceso.kind === 'vendor') return 'VENDOR'
-  if (acceso.kind === 'member') return acceso.role
-  return null
+export function permisosDe(acceso: EventAccess): PermisoDeEvento[] {
+  if (acceso.kind === 'vendor') return ['VENDOR']
+  if (acceso.kind === 'member') return acceso.owner ? [acceso.role, 'OWNER'] : [acceso.role]
+  return []
 }

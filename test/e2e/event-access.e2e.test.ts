@@ -146,7 +146,7 @@ describe('Acceso a eventos e2e', () => {
     expect(respuesta.body).toMatchObject({
       id: eventoDeAna,
       name: 'Boda de Ana',
-      access: { kind: 'member', role: 'COUPLE' },
+      access: { kind: 'member', role: 'COUPLE', owner: true },
     })
   })
 
@@ -279,6 +279,41 @@ describe('Acceso a eventos e2e', () => {
       .expect(403)
 
     expect((negado.body as CuerpoError).code).toBe('FORBIDDEN')
+  })
+
+  it('un planner activo no toca la configuración: editar, publicar y gestionar vendors son 403', async () => {
+    const { eventoId, planner } = await prepararEventoConPlannerActivo()
+    const auth = `Bearer ${planner.accessToken}`
+
+    const leido = await request(url)
+      .get(`/events/${eventoId}`)
+      .set('Authorization', auth)
+      .expect(200)
+    expect((leido.body as { access: unknown }).access).toEqual({
+      kind: 'member',
+      role: 'PLANNER',
+      owner: false,
+    })
+    // Leer los proveedores sigue abierto a quien planifica.
+    await request(url).get(`/events/${eventoId}/vendors`).set('Authorization', auth).expect(200)
+
+    const negados = [
+      request(url).patch(`/events/${eventoId}`).set('Authorization', auth).send({ name: 'Otra' }),
+      request(url).post(`/events/${eventoId}/publish`).set('Authorization', auth),
+      request(url)
+        .post(`/events/${eventoId}/vendors`)
+        .set('Authorization', auth)
+        .send({ externalName: 'Flores Pepa', category: 'decor-floral' }),
+      request(url)
+        .patch(`/events/${eventoId}/vendors/${randomUUID()}`)
+        .set('Authorization', auth)
+        .send({ status: 'BOOKED' }),
+      request(url).delete(`/events/${eventoId}/vendors/${randomUUID()}`).set('Authorization', auth),
+    ]
+    for (const respuesta of await Promise.all(negados)) {
+      expect(respuesta.status).toBe(403)
+      expect((respuesta.body as CuerpoError).code).toBe('FORBIDDEN')
+    }
   })
 
   it('cada quien ve en su lista sólo los eventos a los que tiene acceso', async () => {

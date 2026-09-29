@@ -107,8 +107,12 @@ export class EventsController {
     return { ...this.aRespuesta(evento), access: acceso }
   }
 
+  /**
+   * Editar y publicar son del creador: la configuración del evento no la
+   * cambia un PLANNER ni un segundo COUPLE invitado.
+   */
   @UseGuards(EventAccessGuard)
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess('OWNER')
   @Patch(':eventId')
   async editarEvento(
     @Param('eventId') eventId: string,
@@ -119,7 +123,7 @@ export class EventsController {
   }
 
   @UseGuards(EventAccessGuard)
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess('OWNER')
   @Post(':eventId/publish')
   @HttpCode(200)
   async publicarEvento(@Param('eventId') eventId: string): Promise<EventoRespuesta> {

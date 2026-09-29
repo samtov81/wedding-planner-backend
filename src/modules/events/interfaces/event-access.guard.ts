@@ -4,7 +4,7 @@ import { Reflector } from '@nestjs/core'
 import { ForbiddenError, NotFoundError, UnauthorizedError } from '@/shared/domain'
 
 import { EventAccessService } from '../application/event-access.service'
-import { etiquetaDe, type PermisoDeEvento } from '../domain/event-access'
+import { permisosDe, type PermisoDeEvento } from '../domain/event-access'
 import { PERMITIDOS } from './require-event-access.decorator'
 
 /** Mensaje ÚNICO para "aquí no hay nada para ti", exista el evento o no. */
@@ -72,10 +72,9 @@ export class EventAccessGuard implements CanActivate {
     if (resultado.kind === 'none') throw new NotFoundError(NO_EXISTE)
 
     if (resultado.kind !== 'admin') {
-      const mio = etiquetaDe(resultado)
       // Aquí SÍ 403: ya sabemos que tiene acceso al evento, así que decirle
       // que no puede hacer *esta* operación no le revela nada nuevo.
-      if (mio === null || !permitidos.includes(mio)) {
+      if (!permisosDe(resultado).some((permiso) => permitidos.includes(permiso))) {
         throw new ForbiddenError('No tienes permiso para esta operación en este evento')
       }
     }

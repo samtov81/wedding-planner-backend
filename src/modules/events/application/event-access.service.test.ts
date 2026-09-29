@@ -22,6 +22,7 @@ describe('EventAccessService', () => {
     expect(await servicio.resolve('user-pareja', 'USER', 'ev-1')).toEqual({
       kind: 'member',
       role: 'COUPLE',
+      owner: true,
     })
   })
 
@@ -43,11 +44,39 @@ describe('EventAccessService', () => {
     expect(await servicio.resolve('user-planner', 'USER', 'ev-1')).toEqual({
       kind: 'member',
       role: 'PLANNER',
+      owner: false,
     })
     expect(await servicio.resolve('user-planner', 'USER', 'ev-2')).toEqual({
       kind: 'member',
       role: 'COUPLE',
+      owner: true,
     })
+  })
+
+  it('un segundo COUPLE invitado tiene el rol, pero no es owner: owner es quien creó el evento', async () => {
+    repo.membresias.push({
+      eventId: 'ev-1',
+      userId: 'user-pareja-2',
+      role: 'COUPLE',
+      status: 'ACTIVE',
+    })
+
+    expect(await servicio.resolve('user-pareja-2', 'USER', 'ev-1')).toEqual({
+      kind: 'member',
+      role: 'COUPLE',
+      owner: false,
+    })
+  })
+
+  it('ser owner no concede acceso sin membresía activa', async () => {
+    repo.membresias.push({
+      eventId: 'ev-1',
+      userId: 'user-pareja',
+      role: 'COUPLE',
+      status: 'REVOKED',
+    })
+
+    expect(await servicio.resolve('user-pareja', 'USER', 'ev-1')).toEqual({ kind: 'none' })
   })
 
   it('una membresía REVOKED no da acceso', async () => {

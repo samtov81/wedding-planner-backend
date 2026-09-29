@@ -42,8 +42,14 @@ export interface EventRepository {
    * Membresía ACTIVA, y sólo ACTIVA. Que el filtro de estado viva dentro del
    * repositorio (y no en el servicio) es deliberado: así ningún adaptador
    * futuro puede devolver una `INVITED` y conceder acceso sin querer.
+   *
+   * `owner` sale de la MISMA lectura (`event.ownerId === userId`): resolver el
+   * acceso sigue costando una consulta por fuente.
    */
-  buscarMembresiaActiva(eventId: string, userId: string): Promise<{ role: EventRole } | null>
+  buscarMembresiaActiva(
+    eventId: string,
+    userId: string,
+  ): Promise<{ role: EventRole; owner: boolean } | null>
 
   /**
    * Contratación BOOKED cuya `VendorProfile` pertenece a este usuario, en un

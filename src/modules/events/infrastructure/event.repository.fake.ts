@@ -86,11 +86,16 @@ export class EventRepositoryEnMemoria implements EventRepository {
   readonly eventVendors: EventVendorEnMemoria[] = []
   readonly auditoria: AuditoriaEnMemoria[] = []
 
-  buscarMembresiaActiva(eventId: string, userId: string): Promise<{ role: EventRole } | null> {
+  buscarMembresiaActiva(
+    eventId: string,
+    userId: string,
+  ): Promise<{ role: EventRole; owner: boolean } | null> {
     const membresia = this.membresias.find(
       (m) => m.eventId === eventId && m.userId === userId && m.status === MEMBRESIA_CON_ACCESO,
     )
-    return Promise.resolve(membresia === undefined ? null : { role: membresia.role })
+    if (membresia === undefined) return Promise.resolve(null)
+    const evento = this.eventos.find((e) => e.id === eventId)
+    return Promise.resolve({ role: membresia.role, owner: evento?.ownerId === userId })
   }
 
   buscarContratacionReservada(eventId: string, userId: string): Promise<{ id: string } | null> {

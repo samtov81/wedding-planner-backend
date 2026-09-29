@@ -130,7 +130,7 @@ resto de módulos.
 - `event-settings-schema.ts` se reescribe: fecha y presupuesto opcionales
   (formato validado), venue fuera de zod como en `vendor-details-form`. El
   backend permite `null` en borrador; en un evento publicado rechaza dejar
-  vacío un campo requerido (422) y ese mensaje se muestra en un `Banner`.
+  vacío un campo requerido (422) y ese mensaje se muestra en un `<p role="alert">` (patrón de `add-table-modal`; `Banner` es el aviso offline, no un error).
 - "Save Changes" (chrome) y "Update Event Profile" (footer) son el mismo
   submit (`form="event-settings-form"`, como hoy). "Discard changes" vuelve a
   los últimos valores guardados. Tras guardar, el formulario se reinicia con la
@@ -140,7 +140,7 @@ resto de módulos.
 
 Indicador "Draft" / "Published" según `status`. Con `DRAFT` aparece "Publish
 event" → `POST /publish`; en 422 se muestra el mensaje de la API en un
-`Banner`; en éxito, el status pasa a Published.
+`<p role="alert">`; en éxito, el status pasa a Published.
 
 ### 3.5 Assigned Vendors
 

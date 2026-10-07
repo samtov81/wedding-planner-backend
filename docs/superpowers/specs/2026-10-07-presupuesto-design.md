@@ -83,8 +83,10 @@ Rutas:
 | `GET expenses`, `GET budget-summary` | COUPLE, PLANNER | `budgetAccess !== 'none'` |
 | `POST/PATCH/DELETE expenses` | COUPLE, PLANNER | `budgetAccess === 'edit'` |
 
-Sin acceso → **404** (`NotFoundError`), como el resto de reglas de acceso: no
-se confirma que exista nada. Se implementa con un permiso nuevo en
+Quien no tiene acceso al evento recibe **404** del guard, como siempre. Quien
+sí está en el evento pero no tiene el permiso de presupuesto recibe **403**,
+igual que las rutas `OWNER` (el guard ya sabe que tiene acceso, así que no
+revela nada nuevo). Se implementa con un permiso nuevo en
 `@RequireEventAccess` (`'BUDGET_VIEW'`, `'BUDGET_EDIT'`) que `permisosDe`
 deriva de `accesoAlPresupuesto`, para no duplicar la regla en cada método.
 
@@ -189,7 +191,7 @@ Backend:
   `accesoAlPresupuesto` por cada forma de `EventAccess`.
 - Repositorio: `sumasPorCategoria` en la paridad fake/Prisma.
 - e2e/controlador: owner ve importes; miembro no creador recibe `totalBudget`
-  y `assignedBudget` a `null`, 404 en `GET expenses`/`budget-summary` y en las
+  y `assignedBudget` a `null`, 403 en `GET expenses`/`budget-summary` y en las
   escrituras; vendor igual; `budgetAccess` en `GET /events/:id`.
 
 Frontend:

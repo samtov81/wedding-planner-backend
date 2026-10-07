@@ -113,11 +113,21 @@ describe('Visibilidad del presupuesto e2e', () => {
     await request(url).delete(`/events/${evento}/expenses/${id}`).set(auth).expect(204)
   })
 
+  async function crearGastoDeAna(): Promise<string> {
+    const creado = await request(url)
+      .post(`/events/${evento}/expenses`)
+      .set({ Authorization: `Bearer ${ana.accessToken}` })
+      .send({ concept: 'Ajeno', category: 'Flowers', amount: '10', payeeName: 'Proveedor' })
+      .expect(201)
+    return (creado.body as { id: string }).id
+  }
+
   it.each([
     ['COUPLE no creador', () => luis],
     ['PLANNER', () => pia],
     ['proveedor contratado', () => dj],
   ])('%s recibe 403 en lectura y escritura de gastos', async (_quien, usuario) => {
+    const gasto = await crearGastoDeAna()
     const auth = { Authorization: `Bearer ${usuario().accessToken}` }
     await request(url).get(`/events/${evento}/expenses`).set(auth).expect(403)
     await request(url).get(`/events/${evento}/budget-summary`).set(auth).expect(403)
@@ -126,12 +136,38 @@ describe('Visibilidad del presupuesto e2e', () => {
       .set(auth)
       .send({ concept: 'X', category: 'Y', amount: '1', payeeName: 'Z' })
       .expect(403)
+    await request(url)
+      .patch(`/events/${evento}/expenses/${gasto}`)
+      .set(auth)
+      .send({ status: 'PAID' })
+      .expect(403)
+    await request(url).delete(`/events/${evento}/expenses/${gasto}`).set(auth).expect(403)
+
+    // Nada de lo anterior tocó los datos: el gasto sigue ahí, pendiente, y el POST no creó otro.
+    const lista = await request(url)
+      .get(`/events/${evento}/expenses`)
+      .set({ Authorization: `Bearer ${ana.accessToken}` })
+      .expect(200)
+    const items = (lista.body as { items: { id: string; concept: string; status: string }[] }).items
+    expect(items.find((g) => g.id === gasto)?.status).toBe('PENDING')
+    expect(items.filter((g) => g.concept === 'X')).toHaveLength(0)
   })
 
-  it('un usuario sin acceso al evento recibe 404', async () => {
+  it('un usuario sin acceso al evento recibe 404 en las cinco rutas de gastos', async () => {
+    const gasto = await crearGastoDeAna()
+    const auth = { Authorization: `Bearer ${extrano.accessToken}` }
+    await request(url).get(`/events/${evento}/expenses`).set(auth).expect(404)
+    await request(url).get(`/events/${evento}/budget-summary`).set(auth).expect(404)
     await request(url)
-      .get(`/events/${evento}/expenses`)
-      .set({ Authorization: `Bearer ${extrano.accessToken}` })
+      .post(`/events/${evento}/expenses`)
+      .set(auth)
+      .send({ concept: 'X', category: 'Y', amount: '1', payeeName: 'Z' })
       .expect(404)
+    await request(url)
+      .patch(`/events/${evento}/expenses/${gasto}`)
+      .set(auth)
+      .send({ status: 'PAID' })
+      .expect(404)
+    await request(url).delete(`/events/${evento}/expenses/${gasto}`).set(auth).expect(404)
   })
 })

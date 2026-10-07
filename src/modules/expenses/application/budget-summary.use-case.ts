@@ -20,7 +20,15 @@ export class BudgetSummaryUseCase {
     const evento = await this.eventos.buscarPorId(eventId)
     // Solo lo alcanza un ADMIN sobre un id inexistente: el guard ya dio 404 al resto.
     if (evento === null) throw new NotFoundError('El evento no existe')
-    const sumas = await this.gastos.sumas(eventId)
-    return calcularResumen({ currency: evento.currency, totalBudget: evento.totalBudget, ...sumas })
+    const [sumas, porCategoria] = await Promise.all([
+      this.gastos.sumas(eventId),
+      this.gastos.sumasPorCategoria(eventId),
+    ])
+    return calcularResumen({
+      currency: evento.currency,
+      totalBudget: evento.totalBudget,
+      ...sumas,
+      porCategoria,
+    })
   }
 }

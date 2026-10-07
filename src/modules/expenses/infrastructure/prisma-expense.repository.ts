@@ -11,6 +11,7 @@ import type {
   ExpenseRepository,
   FiltroGastos,
   OrigenEntrada,
+  SumaPorCategoria,
   SumasPresupuesto,
 } from '../application/expense.repository'
 import type { Expense } from '../domain/expense'
@@ -162,6 +163,21 @@ export class PrismaExpenseRepository implements ExpenseRepository {
       paid: de('PAID'),
       pending: de('PENDING'),
     }
+  }
+
+  async sumasPorCategoria(eventId: string): Promise<SumaPorCategoria[]> {
+    const grupos = await this.prisma.expense.groupBy({
+      by: ['category', 'status'],
+      where: { eventId },
+      _sum: { amount: true },
+      _count: { _all: true },
+    })
+    return grupos.map((g) => ({
+      category: g.category,
+      status: g.status,
+      amount: (g._sum.amount ?? new Prisma.Decimal(0)).toFixed(2),
+      count: g._count._all,
+    }))
   }
 }
 

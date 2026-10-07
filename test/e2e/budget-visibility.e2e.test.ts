@@ -84,8 +84,16 @@ describe('Visibilidad del presupuesto e2e', () => {
         vendorProfileId: perfil.id,
         categoryId: categoria,
         status: 'BOOKED',
+        assignedBudget: '500.00',
       },
     })
+
+    // La creadora fija el total del evento.
+    await request(url)
+      .patch(`/events/${evento}`)
+      .set({ Authorization: `Bearer ${ana.accessToken}` })
+      .send({ totalBudget: '30000' })
+      .expect(200)
   }, 180_000)
 
   afterAll(async () => {
@@ -169,5 +177,46 @@ describe('Visibilidad del presupuesto e2e', () => {
       .send({ status: 'PAID' })
       .expect(404)
     await request(url).delete(`/events/${evento}/expenses/${gasto}`).set(auth).expect(404)
+  })
+
+  it('la creadora ve total, asignado y budgetAccess edit', async () => {
+    const auth = { Authorization: `Bearer ${ana.accessToken}` }
+    const ev = await request(url).get(`/events/${evento}`).set(auth).expect(200)
+    expect(ev.body).toMatchObject({ totalBudget: '30000.00', budgetAccess: 'edit' })
+    const lista = await request(url).get('/events').set(auth).expect(200)
+    expect(
+      (lista.body as Array<{ id: string; totalBudget: string | null }>).find((e) => e.id === evento)
+        ?.totalBudget,
+    ).toBe('30000.00')
+    const vendors = await request(url).get(`/events/${evento}/vendors`).set(auth).expect(200)
+    expect((vendors.body as Array<{ assignedBudget: string | null }>)[0]?.assignedBudget).toBe(
+      '500.00',
+    )
+  })
+
+  it.each([
+    ['COUPLE no creador', () => luis],
+    ['PLANNER', () => pia],
+  ])('%s no ve importes y recibe budgetAccess none', async (_quien, usuario) => {
+    const auth = { Authorization: `Bearer ${usuario().accessToken}` }
+    const ev = await request(url).get(`/events/${evento}`).set(auth).expect(200)
+    expect(ev.body).toMatchObject({ totalBudget: null, budgetAccess: 'none' })
+    const lista = await request(url).get('/events').set(auth).expect(200)
+    expect(
+      (lista.body as Array<{ id: string; totalBudget: string | null }>).find((e) => e.id === evento)
+        ?.totalBudget,
+    ).toBeNull()
+    const vendors = await request(url).get(`/events/${evento}/vendors`).set(auth).expect(200)
+    const filas = vendors.body as Array<{ assignedBudget: string | null }>
+    expect(filas.length).toBeGreaterThan(0)
+    for (const v of filas) expect(v.assignedBudget).toBeNull()
+  })
+
+  it('el proveedor contratado no ve el total', async () => {
+    const ev = await request(url)
+      .get(`/events/${evento}`)
+      .set({ Authorization: `Bearer ${dj.accessToken}` })
+      .expect(200)
+    expect(ev.body).toMatchObject({ totalBudget: null, budgetAccess: 'none' })
   })
 })

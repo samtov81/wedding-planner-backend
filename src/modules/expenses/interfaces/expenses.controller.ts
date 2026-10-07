@@ -46,6 +46,11 @@ interface GastoRespuesta {
   createdAt: string
 }
 
+/**
+ * El presupuesto es privado del creador (`accesoAlPresupuesto`): leer exige
+ * `BUDGET_VIEW` y escribir `BUDGET_EDIT`; quien está en el evento sin ese
+ * permiso recibe 403.
+ */
 @UseGuards(JwtAuthGuard, EventAccessGuard)
 @Controller('events/:eventId')
 export class ExpensesController {
@@ -57,7 +62,7 @@ export class ExpensesController {
     private readonly resumen: BudgetSummaryUseCase,
   ) {}
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess('BUDGET_VIEW')
   @Get('expenses')
   async listarGastos(
     @Param('eventId') eventId: string,
@@ -77,7 +82,7 @@ export class ExpensesController {
     return { items: pagina.items.map(aRespuesta), nextCursor: pagina.nextCursor }
   }
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess('BUDGET_EDIT')
   @Post('expenses')
   async crearGasto(
     @CurrentUser() usuario: UsuarioAutenticado | undefined,
@@ -103,7 +108,7 @@ export class ExpensesController {
     )
   }
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess('BUDGET_EDIT')
   @Patch('expenses/:expenseId')
   async editarGasto(
     @Param('eventId') eventId: string,
@@ -116,7 +121,7 @@ export class ExpensesController {
     )
   }
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess('BUDGET_EDIT')
   @Delete('expenses/:expenseId')
   @HttpCode(204)
   async borrarGasto(
@@ -129,7 +134,7 @@ export class ExpensesController {
     )
   }
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess('BUDGET_VIEW')
   @Get('budget-summary')
   async verResumen(@Param('eventId') eventId: string): Promise<ResumenPresupuesto> {
     return await this.resumen.ejecutar(eventId)

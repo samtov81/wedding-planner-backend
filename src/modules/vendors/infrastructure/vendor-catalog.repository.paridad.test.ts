@@ -6,7 +6,10 @@ import { decodeCursor } from '@/shared/domain'
 import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 import type { VendorCatalogRepository } from '../application/vendor-catalog.repository'
-import { VendorCatalogRepositoryEnMemoria } from './vendor-catalog.repository.fake'
+import {
+  type FotoEnMemoria,
+  VendorCatalogRepositoryEnMemoria,
+} from './vendor-catalog.repository.fake'
 import { categoriaSembrada } from './vendor-category.repository.fake'
 import { PrismaVendorCatalogRepository } from './prisma-vendor-catalog.repository'
 
@@ -30,6 +33,12 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
       category: string
       specialty?: string
       status?: 'DRAFT' | 'PUBLISHED' | 'SUSPENDED'
+      /** Sin ella, la de la columna (`USD`). */
+      currency?: string
+      /** Precio de cada paquete, en el orden en que se crean. */
+      precios?: string[]
+      /** Fotos en el orden en que se INSERTAN; `position` decide cuál es la primera. */
+      fotos?: Array<{ storageKey: string; position: number }>
     },
   ) {
     const user = await prisma.user.create({
@@ -43,17 +52,38 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
         categoryId: await categoriaId(prisma, datos.category),
         specialty: datos.specialty ?? null,
         status: datos.status ?? 'PUBLISHED',
+        ...(datos.currency !== undefined ? { currency: datos.currency } : {}),
         createdAt,
       },
     })
+    const precios = datos.precios ?? []
+    await prisma.vendorPackage.createMany({
+      data: precios.map((price, position) => ({
+        vendorProfileId: fila.id,
+        name: `Paquete ${position}`,
+        description: 'Descripción',
+        price,
+        position,
+      })),
+    })
+    const fotos: FotoEnMemoria[] = []
+    for (const foto of datos.fotos ?? []) {
+      const creada = await prisma.vendorPortfolioImage.create({
+        data: { vendorProfileId: fila.id, alt: 'Foto', ...foto },
+      })
+      fotos.push({ id: creada.id, storageKey: creada.storageKey, position: creada.position })
+    }
     const { slug, name } = categoriaSembrada(datos.category)
     doble.perfiles.push({
       id: fila.id,
       businessName: datos.businessName,
       category: { slug, name },
       specialty: datos.specialty ?? null,
+      currency: fila.currency,
       status: datos.status ?? 'PUBLISHED',
       createdAt,
+      precios,
+      fotos,
     })
   }
 
@@ -63,15 +93,38 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
     real = new PrismaVendorCatalogRepository(prisma as unknown as PrismaService)
     doble = new VendorCatalogRepositoryEnMemoria()
 
-    await sembrar(1, { businessName: 'Lumière Catering', category: 'catering' })
+    // Varios paquetes y dos fotos insertadas al revés de su `position`.
+    await sembrar(1, {
+      businessName: 'Lumière Catering',
+      category: 'catering',
+      currency: 'EUR',
+      precios: ['4500.00', '1200.50', '9000.00'],
+      fotos: [
+        { storageKey: 'users/v1/portfolio/segunda.jpg', position: 1 },
+        { storageKey: 'users/v1/portfolio/primera.jpg', position: 0 },
+      ],
+    })
+    // Ni paquetes ni fotos.
     await sembrar(2, {
       businessName: 'Foto Luz',
       category: 'photography',
       specialty: 'Bodas al aire libre',
     })
-    await sembrar(3, { businessName: 'Oculto', category: 'catering', status: 'DRAFT' })
+    await sembrar(3, {
+      businessName: 'Oculto',
+      category: 'catering',
+      status: 'DRAFT',
+      precios: ['10.00'],
+      fotos: [{ storageKey: 'users/v3/portfolio/oculta.jpg', position: 0 }],
+    })
     await sembrar(4, { businessName: 'Suspendido', category: 'catering', status: 'SUSPENDED' })
-    await sembrar(5, { businessName: 'Banquetes Sol', category: 'catering' })
+    // '10000.00' < '9000.00' como texto: el mínimo tiene que ser numérico.
+    await sembrar(5, {
+      businessName: 'Banquetes Sol',
+      category: 'catering',
+      precios: ['10000.00', '9000.00'],
+      fotos: [{ storageKey: 'users/v5/portfolio/unica.jpg', position: 0 }],
+    })
   }, 120_000)
 
   afterAll(async () => {
@@ -107,6 +160,34 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
       })
       expect(p2.items.map((p) => p.businessName)).toEqual(['Banquetes Sol'])
       expect(p2.nextCursor).toBeNull()
+    }
+  })
+
+  it('trae la moneda, el paquete más barato y la key de la primera foto por su orden', async () => {
+    for (const repo of [real, doble] as VendorCatalogRepository[]) {
+      const pagina = await repo.buscar({ q: null, category: null, cursor: null, limit: 20 })
+      expect(
+        pagina.items.map(({ businessName, currency, priceFrom, imageKey }) => ({
+          businessName,
+          currency,
+          priceFrom,
+          imageKey,
+        })),
+      ).toEqual([
+        {
+          businessName: 'Lumière Catering',
+          currency: 'EUR',
+          priceFrom: '1200.50',
+          imageKey: 'users/v1/portfolio/primera.jpg',
+        },
+        { businessName: 'Foto Luz', currency: 'USD', priceFrom: null, imageKey: null },
+        {
+          businessName: 'Banquetes Sol',
+          currency: 'USD',
+          priceFrom: '9000.00',
+          imageKey: 'users/v5/portfolio/unica.jpg',
+        },
+      ])
     }
   })
 })

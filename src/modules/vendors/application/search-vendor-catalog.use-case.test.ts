@@ -14,6 +14,9 @@ describe('SearchVendorCatalogUseCase', () => {
         specialty: null,
         createdAt: new Date('2026-03-01T00:00:00.000Z'),
         status: 'PUBLISHED',
+        currency: 'USD',
+        precios: [],
+        fotos: [],
       },
       {
         id: '22222222-2222-4222-8222-222222222222',
@@ -22,6 +25,9 @@ describe('SearchVendorCatalogUseCase', () => {
         specialty: null,
         createdAt: new Date('2026-03-01T00:01:00.000Z'),
         status: 'PUBLISHED',
+        currency: 'USD',
+        precios: [],
+        fotos: [],
       },
       {
         id: '33333333-3333-4333-8333-333333333333',
@@ -30,6 +36,9 @@ describe('SearchVendorCatalogUseCase', () => {
         specialty: null,
         createdAt: new Date('2026-03-01T00:02:00.000Z'),
         status: 'DRAFT',
+        currency: 'USD',
+        precios: [],
+        fotos: [],
       },
     )
 

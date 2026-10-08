@@ -12,8 +12,25 @@ interface CuerpoCatalogo {
     businessName: string
     category: { slug: string; name: string }
     specialty: string | null
+    currency: string
+    priceFrom: string | null
+    imageUrl: string | null
   }>
   nextCursor: string | null
+}
+
+/**
+ * R2 "de pega": firmar una URL de lectura es local (SigV4, sin red), así que
+ * con las cuatro variables puestas la app usa `R2ObjectStorage` de verdad y
+ * el e2e ve la URL firmada sin tocar ningún bucket. Cada fichero de test corre
+ * en su propio proceso: esto no se filtra a `profile.e2e.test.ts`, que prueba
+ * justo el caso sin R2.
+ */
+const R2_DE_PEGA = {
+  R2_ENDPOINT: 'https://cuenta.r2.cloudflarestorage.com',
+  R2_ACCESS_KEY_ID: 'id',
+  R2_SECRET_ACCESS_KEY: 'secreto',
+  R2_BUCKET: 'fotos',
 }
 
 /**
@@ -28,6 +45,9 @@ describe('Catálogo de proveedores e2e', () => {
   let prisma: PrismaClient
 
   let ana: { id: string; accessToken: string }
+  let lumiereUserId: string
+  let lumiereId: string
+  let jardinId: string
 
   async function registrarYEntrar(
     email: string,
@@ -57,7 +77,7 @@ describe('Catálogo de proveedores e2e', () => {
   beforeAll(async () => {
     pg = await startPostgres()
     redis = await new RedisContainer('redis:7-alpine').start()
-    fijarEntorno({ databaseUrl: pg.url, redisUrl: redis.getConnectionUrl() })
+    fijarEntorno({ databaseUrl: pg.url, redisUrl: redis.getConnectionUrl() }, R2_DE_PEGA)
     ;({ url, cerrar } = await arrancarAppDeTest())
     prisma = new PrismaClient({ datasources: { db: { url: pg.url } } })
 
@@ -66,14 +86,57 @@ describe('Catálogo de proveedores e2e', () => {
     const publicado = await prisma.user.create({
       data: { email: 'lumiere@catalogo.test', passwordHash: 'x', fullName: 'Lumière' },
     })
-    await prisma.vendorProfile.create({
+    lumiereUserId = publicado.id
+    const lumiere = await prisma.vendorProfile.create({
       data: {
         userId: publicado.id,
         businessName: 'Lumière',
         categoryId: await categoriaId(prisma, 'catering'),
         status: 'PUBLISHED',
+        currency: 'EUR',
       },
     })
+    lumiereId = lumiere.id
+    await prisma.vendorPackage.createMany({
+      data: [
+        {
+          vendorProfileId: lumiere.id,
+          name: 'Completo',
+          description: 'Todo incluido',
+          price: '4500.00',
+          position: 0,
+        },
+        {
+          vendorProfileId: lumiere.id,
+          name: 'Básico',
+          description: 'Lo esencial',
+          price: '1200.50',
+          position: 1,
+        },
+      ],
+    })
+    await prisma.vendorPortfolioImage.create({
+      data: {
+        vendorProfileId: lumiere.id,
+        storageKey: `users/${publicado.id}/portfolio/a.jpg`,
+        alt: 'Mesa',
+        position: 0,
+      },
+    })
+
+    // Publicada, sin paquetes ni fotos; en `venue` para no tocar los filtros de abajo.
+    const vacio = await prisma.user.create({
+      data: { email: 'jardin@catalogo.test', passwordHash: 'x', fullName: 'Jardín' },
+    })
+    const jardin = await prisma.vendorProfile.create({
+      data: {
+        userId: vacio.id,
+        businessName: 'Jardín Vacío',
+        categoryId: await categoriaId(prisma, 'venue'),
+        status: 'PUBLISHED',
+      },
+    })
+    jardinId = jardin.id
 
     const oculto = await prisma.user.create({
       data: { email: 'oculto@catalogo.test', passwordHash: 'x', fullName: 'Oculto' },
@@ -112,6 +175,40 @@ describe('Catálogo de proveedores e2e', () => {
       category: { slug: 'catering', name: 'Catering' },
       specialty: null,
     })
+  })
+
+  it('cada ítem trae currency, priceFrom e imageUrl; sin paquetes ni fotos, null', async () => {
+    const res = await request(url)
+      .get('/vendors')
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(200)
+    const cuerpo = res.body as CuerpoCatalogo
+
+    expect(cuerpo.nextCursor).toBeNull()
+    // `toEqual` exacto: ni `imageKey` ni `createdAt` salen en la respuesta.
+    expect(cuerpo.items).toEqual([
+      {
+        id: lumiereId,
+        businessName: 'Lumière',
+        category: { slug: 'catering', name: 'Catering' },
+        specialty: null,
+        currency: 'EUR',
+        priceFrom: '1200.50',
+        imageUrl: expect.any(String) as string,
+      },
+      {
+        id: jardinId,
+        businessName: 'Jardín Vacío',
+        category: { slug: 'venue', name: 'Venue' },
+        specialty: null,
+        currency: 'USD',
+        priceFrom: null,
+        imageUrl: null,
+      },
+    ])
+    const imageUrl = cuerpo.items[0]?.imageUrl ?? ''
+    expect(imageUrl).toContain(`/users/${lumiereUserId}/portfolio/a.jpg?`)
+    expect(imageUrl).toContain('X-Amz-Signature=')
   })
 
   it('cursor inválido → 400 y limit fuera de rango → 400', async () => {

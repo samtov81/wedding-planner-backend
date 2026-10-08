@@ -366,4 +366,36 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
       })
     }
   })
+
+  it('sumasPorCategoria agrupa por categoría y estado', async () => {
+    const { eventId } = await sembrarEvento()
+    const gasto = (category: string, amount: string, status: 'PAID' | 'PENDING') => ({
+      eventId,
+      origen: { kind: 'external' as const, payeeName: 'X' },
+      concept: category,
+      category,
+      amount,
+      status,
+      paidAt: status === 'PAID' ? new Date() : null,
+      dueDate: null,
+      notes: null,
+      createdById,
+    })
+    for (const [, repo] of sujetos()) {
+      await repo.crear(gasto('Flowers', '100.10', 'PAID'))
+      await repo.crear(gasto('Flowers', '0.20', 'PENDING'))
+      await repo.crear(gasto('Music', '500.00', 'PENDING'))
+    }
+    for (const [nombre, repo] of sujetos()) {
+      const filas = await repo.sumasPorCategoria(eventId)
+      const ordenadas = [...filas].sort((a, b) =>
+        `${a.category}${a.status}`.localeCompare(`${b.category}${b.status}`),
+      )
+      expect(ordenadas, nombre).toEqual([
+        { category: 'Flowers', status: 'PAID', amount: '100.10', count: 1 },
+        { category: 'Flowers', status: 'PENDING', amount: '0.20', count: 1 },
+        { category: 'Music', status: 'PENDING', amount: '500.00', count: 1 },
+      ])
+    }
+  })
 })

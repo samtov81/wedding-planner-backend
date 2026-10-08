@@ -1,6 +1,8 @@
 import type { CursorPage, CursorValue } from '@/shared/domain'
 
-import type { Expense, ExpenseStatus } from '../domain/expense'
+import type { Expense, ExpenseStatus, SumaPorCategoria } from '../domain/expense'
+
+export type { SumaPorCategoria }
 
 export type OrigenEntrada =
   { kind: 'vendor'; eventVendorId: string } | { kind: 'external'; payeeName: string }
@@ -56,6 +58,8 @@ export interface ExpenseRepository {
   actualizar(eventId: string, expenseId: string, cambios: CambiosGasto): Promise<Expense>
   eliminar(eventId: string, expenseId: string): Promise<boolean>
   sumas(eventId: string): Promise<SumasPresupuesto>
+  /** Una fila por (categoría, estado) con su suma y número de gastos. */
+  sumasPorCategoria(eventId: string): Promise<SumaPorCategoria[]>
 }
 
 export const EXPENSE_REPOSITORY = Symbol('EXPENSE_REPOSITORY')

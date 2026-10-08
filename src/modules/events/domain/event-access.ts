@@ -43,9 +43,10 @@ export function tieneAlgunAcceso(acceso: EventAccess): boolean {
  * —no existe como membresía— pero sí es una forma de estar en el evento, así
  * que las rutas tienen que poder permitirlo o excluirlo igual que a los otros.
  * `OWNER` tampoco es un rol: lo tiene, además del suyo, el miembro que creó
- * el evento (ver `EventAccess`).
+ * el evento (ver `EventAccess`). `BUDGET_VIEW` y `BUDGET_EDIT` tampoco son
+ * roles: se derivan de `accesoAlPresupuesto`.
  */
-export type PermisoDeEvento = EventRole | 'VENDOR' | 'OWNER'
+export type PermisoDeEvento = EventRole | 'VENDOR' | 'OWNER' | 'BUDGET_VIEW' | 'BUDGET_EDIT'
 
 /**
  * Los permisos con los que se compara en las rutas. Una lista y no una sola
@@ -54,6 +55,34 @@ export type PermisoDeEvento = EventRole | 'VENDOR' | 'OWNER'
  */
 export function permisosDe(acceso: EventAccess): PermisoDeEvento[] {
   if (acceso.kind === 'vendor') return ['VENDOR']
-  if (acceso.kind === 'member') return acceso.owner ? [acceso.role, 'OWNER'] : [acceso.role]
-  return []
+  if (acceso.kind !== 'member') return []
+  const base: PermisoDeEvento[] = acceso.owner ? [acceso.role, 'OWNER'] : [acceso.role]
+  const presupuesto = accesoAlPresupuesto(acceso)
+  if (presupuesto === 'edit') return [...base, 'BUDGET_VIEW', 'BUDGET_EDIT']
+  if (presupuesto === 'view') return [...base, 'BUDGET_VIEW']
+  return base
+}
+
+/**
+ * Qué puede hacer alguien con el presupuesto del evento (gastos, resumen,
+ * total y lo asignado a proveedores). Es privado del creador: sólo él lo
+ * edita, y la entrega 2 añadirá `view` para los miembros a los que se lo
+ * conceda uno a uno. Hasta entonces `view` existe en el tipo pero nadie lo
+ * obtiene. ADMIN, como en el resto de permisos, lo puede todo.
+ */
+export type BudgetAccess = 'none' | 'view' | 'edit'
+
+export function accesoAlPresupuesto(acceso: EventAccess): BudgetAccess {
+  if (acceso.kind === 'admin') return 'edit'
+  if (acceso.kind === 'member' && acceso.owner) return 'edit'
+  return 'none'
+}
+
+/**
+ * La misma regla para `GET /events`, que no resuelve un `EventAccess` por
+ * evento: sólo conoce el creador de cada uno y quién pregunta. Si la regla
+ * de arriba cambia (entrega 2), esta cambia con ella.
+ */
+export function accesoAlPresupuestoEnListado(ownerId: string, userId: string): BudgetAccess {
+  return ownerId === userId ? 'edit' : 'none'
 }

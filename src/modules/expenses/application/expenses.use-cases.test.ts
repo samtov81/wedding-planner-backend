@@ -146,6 +146,9 @@ describe('casos de uso de gastos', () => {
       paid: '0.30',
       pending: '100.00',
       remaining: '899.70',
+      byCategory: [
+        { category: 'Music', paid: '0.30', pending: '100.00', total: '100.30', count: 3 },
+      ],
     })
   })
 })

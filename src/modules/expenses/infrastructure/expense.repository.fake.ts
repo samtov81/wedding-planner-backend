@@ -14,6 +14,7 @@ import type {
   ExpenseRepository,
   FiltroGastos,
   OrigenEntrada,
+  SumaPorCategoria,
   SumasPresupuesto,
 } from '../application/expense.repository'
 import type { Expense, OrigenGasto } from '../domain/expense'
@@ -118,6 +119,25 @@ export class ExpenseRepositoryEnMemoria implements ExpenseRepository {
       paid: suma(delEvento.filter((g) => g.status === 'PAID').map((g) => g.amount)),
       pending: suma(delEvento.filter((g) => g.status === 'PENDING').map((g) => g.amount)),
     })
+  }
+
+  sumasPorCategoria(eventId: string): Promise<SumaPorCategoria[]> {
+    const acc = new Map<string, SumaPorCategoria>()
+    for (const g of this.gastos.filter((x) => x.eventId === eventId)) {
+      const clave = `${g.category}\u0000${g.status}`
+      const actual = acc.get(clave) ?? {
+        category: g.category,
+        status: g.status,
+        amount: '0.00',
+        count: 0,
+      }
+      acc.set(clave, {
+        ...actual,
+        amount: deCentimos(aCentimos(actual.amount) + aCentimos(g.amount)),
+        count: actual.count + 1,
+      })
+    }
+    return Promise.resolve([...acc.values()])
   }
 
   private aDominio(gasto: GastoEnMemoria): Expense {

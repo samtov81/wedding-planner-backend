@@ -27,6 +27,11 @@ import { UpdateEventUseCase } from '../application/update-event.use-case'
 import type { Event } from '../domain/event'
 import type { EventAccess } from '../domain/event-access'
 import { EventoNoEncontradoError } from '../domain/event-errors'
+import {
+  accesoAlPresupuesto,
+  accesoAlPresupuestoEnListado,
+  type BudgetAccess,
+} from '../domain/presupuesto'
 import { completitud, type Completitud } from '../domain/publicacion'
 import { EventAccessOf } from './event-access-of.decorator'
 import { EventAccessGuard } from './event-access.guard'
@@ -70,7 +75,7 @@ export class EventsController {
     const yo = this.exigirUsuario(usuario)
     const datos = validarCon(createEventSchema, body)
     const evento = await this.crear.ejecutar({ ...datos, ownerId: yo.id })
-    return this.aRespuesta(evento)
+    return this.aRespuesta(evento, 'edit')
   }
 
   @Get()
@@ -79,7 +84,9 @@ export class EventsController {
   ): Promise<EventoRespuesta[]> {
     const yo = this.exigirUsuario(usuario)
     const eventos = await this.listar.ejecutar(yo.id)
-    return eventos.map((evento) => this.aRespuesta(evento))
+    return eventos.map((evento) =>
+      this.aRespuesta(evento, accesoAlPresupuestoEnListado(evento.ownerId, yo.id)),
+    )
   }
 
   /**
@@ -93,7 +100,7 @@ export class EventsController {
   async verEvento(
     @Param('eventId') eventId: string,
     @EventAccessOf() acceso: EventAccess | undefined,
-  ): Promise<EventoRespuesta & { access: EventAccess }> {
+  ): Promise<EventoRespuesta & { access: EventAccess; budgetAccess: BudgetAccess }> {
     const evento = await this.eventos.buscarPorId(eventId)
     // Sólo lo alcanza un ADMIN: a cualquier otro el guard ya le habría dado
     // 404, porque no se puede tener membresía de un evento que no existe.
@@ -104,7 +111,8 @@ export class EventsController {
     // Defensa en profundidad: el guard ya niega esto por el repositorio, pero
     // un ADMIN llega aquí sin pasar por esa consulta.
     if (evento.status === 'DRAFT' && acceso.kind === 'vendor') throw new EventoNoEncontradoError()
-    return { ...this.aRespuesta(evento), access: acceso }
+    const presupuesto = accesoAlPresupuesto(acceso)
+    return { ...this.aRespuesta(evento, presupuesto), access: acceso, budgetAccess: presupuesto }
   }
 
   /**
@@ -119,7 +127,7 @@ export class EventsController {
     @Body() body: unknown,
   ): Promise<EventoRespuesta> {
     const cambios = validarCon(updateEventSchema, body)
-    return this.aRespuesta(await this.editar.ejecutar(eventId, cambios))
+    return this.aRespuesta(await this.editar.ejecutar(eventId, cambios), 'edit')
   }
 
   @UseGuards(EventAccessGuard)
@@ -127,7 +135,7 @@ export class EventsController {
   @Post(':eventId/publish')
   @HttpCode(200)
   async publicarEvento(@Param('eventId') eventId: string): Promise<EventoRespuesta> {
-    return this.aRespuesta(await this.publicar.ejecutar(eventId))
+    return this.aRespuesta(await this.publicar.ejecutar(eventId), 'edit')
   }
 
   /** Invitar toca quién manda en el evento: sólo COUPLE. */
@@ -152,7 +160,11 @@ export class EventsController {
     return usuario
   }
 
-  private aRespuesta(evento: Event): EventoRespuesta {
+  /**
+   * El total es dato del presupuesto (spec §3.2): se oculta sin acceso.
+   * `completitud` no se oculta porque no revela importes.
+   */
+  private aRespuesta(evento: Event, presupuesto: BudgetAccess): EventoRespuesta {
     return {
       id: evento.id,
       name: evento.name,
@@ -160,7 +172,7 @@ export class EventsController {
       weddingDate: evento.weddingDate?.toISOString() ?? null,
       timezone: evento.timezone,
       currency: evento.currency,
-      totalBudget: evento.totalBudget,
+      totalBudget: presupuesto === 'none' ? null : evento.totalBudget,
       venue: evento.venue,
       completitud: completitud(evento),
       rsvpDeadlineDays: evento.rsvpDeadlineDays,

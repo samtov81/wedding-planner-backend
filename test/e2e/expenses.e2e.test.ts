@@ -131,6 +131,10 @@ describe('Gastos e2e', () => {
       paid: '280.50',
       pending: '0.00',
       remaining: '9719.50',
+      byCategory: [
+        { category: 'Music', paid: '200.00', pending: '0.00', total: '200.00', count: 1 },
+        { category: 'Stationery', paid: '80.50', pending: '0.00', total: '80.50', count: 1 },
+      ],
     })
 
     await request(url).delete(`/events/${evento}/vendors/${vendorId}`).set(auth).expect(409)

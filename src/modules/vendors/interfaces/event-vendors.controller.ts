@@ -5,6 +5,9 @@ import {
   type UsuarioAutenticado,
 } from '@/modules/auth/interfaces/current-user.decorator'
 import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
+import type { EventAccess } from '@/modules/events/domain/event-access'
+import { accesoAlPresupuesto } from '@/modules/events/domain/presupuesto'
+import { EventAccessOf } from '@/modules/events/interfaces/event-access-of.decorator'
 import { EventAccessGuard } from '@/modules/events/interfaces/event-access.guard'
 import { RequireEventAccess } from '@/modules/events/interfaces/require-event-access.decorator'
 import { UnauthorizedError } from '@/shared/domain'
@@ -55,9 +58,15 @@ export class EventVendorsController {
 
   @RequireEventAccess('COUPLE', 'PLANNER')
   @Get()
-  async listarVendors(@Param('eventId') eventId: string): Promise<EventVendorRespuesta[]> {
+  async listarVendors(
+    @Param('eventId') eventId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+  ): Promise<EventVendorRespuesta[]> {
+    // El guard siempre deja el acceso resuelto; si falta, la ruta lo perdió.
+    if (acceso === undefined) throw new Error('listarVendors requires EventAccessGuard')
+    const oculto = accesoAlPresupuesto(acceso) === 'none'
     const vendors = await this.listar.ejecutar(eventId)
-    return vendors.map((v) => this.aRespuesta(v))
+    return vendors.map((v) => this.aRespuesta(v, oculto))
   }
 
   @RequireEventAccess('OWNER')
@@ -70,7 +79,7 @@ export class EventVendorsController {
     const yo = this.exigirUsuario(usuario)
     const datos = validarCon(createEventVendorSchema, body)
     const vendor = await this.agregar.ejecutar(eventId, { ...datos, actorUserId: yo.id })
-    return this.aRespuesta(vendor)
+    return this.aRespuesta(vendor, false)
   }
 
   @RequireEventAccess('OWNER')
@@ -85,7 +94,7 @@ export class EventVendorsController {
     const id = idDeRuta(eventVendorId, () => new EventVendorNoEncontradoError())
     const datos = validarCon(updateEventVendorSchema, body)
     const vendor = await this.actualizar.ejecutar(eventId, id, datos, yo.id)
-    return this.aRespuesta(vendor)
+    return this.aRespuesta(vendor, false)
   }
 
   @RequireEventAccess('OWNER')
@@ -106,14 +115,14 @@ export class EventVendorsController {
     return usuario
   }
 
-  private aRespuesta(vendor: EventVendorVista): EventVendorRespuesta {
+  private aRespuesta(vendor: EventVendorVista, oculto: boolean): EventVendorRespuesta {
     return {
       id: vendor.id,
       eventId: vendor.eventId,
       vendorRef: vendor.vendorRef,
       category: vendor.category,
       specialty: vendor.specialty,
-      assignedBudget: vendor.assignedBudget,
+      assignedBudget: oculto ? null : vendor.assignedBudget,
       name: vendor.name,
       status: vendor.status,
     }

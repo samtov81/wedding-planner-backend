@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common'
 
-import { armarDistribucion, type MesaVista } from '../domain/seating'
+import { armarDistribucion, type MesaVista, type ObjetoDeSala } from '../domain/seating'
 import { SEATING_REPOSITORY, type SeatingRepository } from './seating.repository'
 
 /** La distribución entera del evento. La reusan los casos de uso que responden con ella. */
@@ -20,7 +20,12 @@ export async function leerDistribucion(
 export class GetSeatingUseCase {
   constructor(@Inject(SEATING_REPOSITORY) private readonly repo: SeatingRepository) {}
 
-  async ejecutar(eventId: string): Promise<MesaVista[]> {
-    return await leerDistribucion(this.repo, eventId)
+  /** Mesas con sus asientos y objetos de sala, ambos en orden de creación. */
+  async ejecutar(eventId: string): Promise<{ mesas: MesaVista[]; objetos: ObjetoDeSala[] }> {
+    const [mesas, objetos] = await Promise.all([
+      leerDistribucion(this.repo, eventId),
+      this.repo.listarObjetos(eventId),
+    ])
+    return { mesas, objetos }
   }
 }

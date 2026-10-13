@@ -1,16 +1,18 @@
 import { Injectable } from '@nestjs/common'
-import type { SeatingTable as FilaMesa } from '@prisma/client'
+import type { SeatingObject as FilaObjeto, SeatingTable as FilaMesa } from '@prisma/client'
 
 import { PrismaService } from '@/modules/database/prisma.service'
 import { clienteDe } from '@/modules/database/transaccion'
 
 import type {
   CambiosMesa,
+  CambiosObjeto,
   DatosNuevaMesa,
+  DatosNuevoObjeto,
   SeatingRepository,
 } from '../application/seating.repository'
-import type { Asignacion, InvitadoSentable, Mesa, Ocupante } from '../domain/seating'
-import { MesaNoEncontradaError } from '../domain/seating-errors'
+import type { Asignacion, InvitadoSentable, Mesa, ObjetoDeSala, Ocupante } from '../domain/seating'
+import { MesaNoEncontradaError, ObjetoNoEncontradoError } from '../domain/seating-errors'
 
 /**
  * Todo va por `clienteDe(this.prisma)`, lecturas incluidas: los casos de uso
@@ -76,6 +78,7 @@ export class PrismaSeatingRepository implements SeatingRepository {
       where: { id: tableId, eventId },
       data: {
         ...(cambios.name !== undefined ? { name: cambios.name } : {}),
+        ...(cambios.shape !== undefined ? { shape: cambios.shape } : {}),
         ...(cambios.minSeats !== undefined ? { minSeats: cambios.minSeats } : {}),
         ...(cambios.maxSeats !== undefined ? { maxSeats: cambios.maxSeats } : {}),
         ...(cambios.seatCount !== undefined ? { seatCount: cambios.seatCount } : {}),
@@ -92,6 +95,62 @@ export class PrismaSeatingRepository implements SeatingRepository {
   async eliminarMesa(eventId: string, tableId: string): Promise<boolean> {
     const { count } = await clienteDe(this.prisma).seatingTable.deleteMany({
       where: { id: tableId, eventId },
+    })
+    return count > 0
+  }
+
+  async listarObjetos(eventId: string): Promise<ObjetoDeSala[]> {
+    const filas = await clienteDe(this.prisma).seatingObject.findMany({
+      where: { eventId },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    })
+    return filas.map(aObjeto)
+  }
+
+  async contarObjetos(eventId: string): Promise<number> {
+    return await clienteDe(this.prisma).seatingObject.count({ where: { eventId } })
+  }
+
+  /**
+   * Leer el máximo y luego insertar no es atómico: es seguro solo porque el caso
+   * de uso llama antes a `bloquearEvento` dentro de una unidad de trabajo, igual
+   * que con `crearMesas`.
+   */
+  async crearObjeto(eventId: string, datos: DatosNuevoObjeto): Promise<ObjetoDeSala> {
+    // Mismo motivo que en `crearMesas`: `createdAt` estrictamente creciente
+    // para que dos objetos creados en el mismo milisegundo no empaten.
+    const cliente = clienteDe(this.prisma)
+    const { _max } = await cliente.seatingObject.aggregate({
+      where: { eventId },
+      _max: { createdAt: true },
+    })
+    const createdAt = new Date(Math.max(Date.now(), (_max.createdAt?.getTime() ?? 0) + 1))
+    return aObjeto(await cliente.seatingObject.create({ data: { ...datos, eventId, createdAt } }))
+  }
+
+  async actualizarObjeto(
+    eventId: string,
+    id: string,
+    cambios: CambiosObjeto,
+  ): Promise<ObjetoDeSala> {
+    const cliente = clienteDe(this.prisma)
+    const { count } = await cliente.seatingObject.updateMany({
+      where: { id, eventId },
+      data: {
+        ...(cambios.label !== undefined ? { label: cambios.label } : {}),
+        ...(cambios.x !== undefined ? { x: cambios.x } : {}),
+        ...(cambios.y !== undefined ? { y: cambios.y } : {}),
+      },
+    })
+    if (count === 0) throw new ObjetoNoEncontradoError()
+    const fila = await cliente.seatingObject.findFirst({ where: { id, eventId } })
+    if (fila === null) throw new ObjetoNoEncontradoError()
+    return aObjeto(fila)
+  }
+
+  async eliminarObjeto(eventId: string, id: string): Promise<boolean> {
+    const { count } = await clienteDe(this.prisma).seatingObject.deleteMany({
+      where: { id, eventId },
     })
     return count > 0
   }
@@ -148,9 +207,22 @@ function aMesa(fila: FilaMesa): Mesa {
     id: fila.id,
     eventId: fila.eventId,
     name: fila.name,
+    shape: fila.shape,
     minSeats: fila.minSeats,
     maxSeats: fila.maxSeats,
     seatCount: fila.seatCount,
+    x: fila.x,
+    y: fila.y,
+    createdAt: fila.createdAt,
+  }
+}
+
+function aObjeto(fila: FilaObjeto): ObjetoDeSala {
+  return {
+    id: fila.id,
+    eventId: fila.eventId,
+    kind: fila.kind,
+    label: fila.label,
     x: fila.x,
     y: fila.y,
     createdAt: fila.createdAt,

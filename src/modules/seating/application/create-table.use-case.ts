@@ -6,6 +6,7 @@ import {
 } from '@/modules/database/application/unidad-de-trabajo'
 
 import {
+  type FormaMesa,
   MAX_MESAS_POR_EVENTO,
   type MesaVista,
   nombrePorDefecto,
@@ -17,6 +18,8 @@ import { SEATING_REPOSITORY, type SeatingRepository } from './seating.repository
 
 export interface EntradaNuevaMesa {
   name?: string | undefined
+  /** Redonda si no se indica. */
+  shape?: FormaMesa | undefined
   minSeats: number
   maxSeats: number
 }
@@ -41,6 +44,7 @@ export class CreateTableUseCase {
       const [mesa] = await this.repo.crearMesas(eventId, [
         {
           name: entrada.name ?? nombrePorDefecto(existentes + 1),
+          shape: entrada.shape ?? 'ROUND',
           minSeats,
           maxSeats,
           seatCount: minSeats,

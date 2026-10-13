@@ -5,17 +5,22 @@ import {
   AsientoFueraDeRangoError,
   AsientoOcupadoError,
   LimiteDeMesasError,
+  LimiteDeObjetosError,
   MesaNoEncontradaError,
+  ObjetoNoEncontradoError,
   OcupanteInvalidoError,
   RangoDeAsientosInvalidoError,
 } from '../domain/seating-errors'
 import { SeatingRepositoryEnMemoria } from '../infrastructure/seating.repository.fake'
 import { AssignSeatUseCase } from './assign-seat.use-case'
 import { ClearSeatUseCase } from './clear-seat.use-case'
+import { CreateObjectUseCase } from './create-object.use-case'
 import { CreateTableUseCase } from './create-table.use-case'
+import { DeleteObjectUseCase } from './delete-object.use-case'
 import { DeleteTableUseCase } from './delete-table.use-case'
 import { GenerateTablesUseCase } from './generate-tables.use-case'
 import { GetSeatingUseCase } from './get-seating.use-case'
+import { UpdateObjectUseCase } from './update-object.use-case'
 import { UpdateTableUseCase } from './update-table.use-case'
 
 const EVENTO = '11111111-1111-4111-8111-111111111111'
@@ -48,6 +53,9 @@ function montar() {
     asignar: new AssignSeatUseCase(repo, udt),
     vaciar: new ClearSeatUseCase(repo, udt),
     leer: new GetSeatingUseCase(repo),
+    crearObjeto: new CreateObjectUseCase(repo, udt),
+    actualizarObjeto: new UpdateObjectUseCase(repo),
+    eliminarObjeto: new DeleteObjectUseCase(repo),
   }
 }
 
@@ -273,7 +281,9 @@ describe('casos de uso de la distribución', () => {
     if (ana === undefined) throw new Error('falta Ana')
     ana.companionsConfirmed = 0
 
-    const [vista] = await leer.ejecutar(EVENTO)
+    const {
+      mesas: [vista],
+    } = await leer.ejecutar(EVENTO)
 
     expect(vista?.seats[0]?.occupant).toEqual({ guestId: ANA, companionIndex: 1, sobrante: true })
   })
@@ -312,5 +322,104 @@ describe('casos de uso de la distribución', () => {
       companionIndex: 0,
     })
     expect(udt.transacciones).toBe(2)
+  })
+
+  it('crea una mesa rectangular con su forma; sin forma nace redonda', async () => {
+    const { crear } = montar()
+    const larga = await crear.ejecutar(EVENTO, { shape: 'RECTANGULAR', minSeats: 2, maxSeats: 4 })
+    const sinForma = await crear.ejecutar(EVENTO, { minSeats: 2, maxSeats: 4 })
+    expect([larga.shape, sinForma.shape]).toEqual(['RECTANGULAR', 'ROUND'])
+  })
+
+  it('cambia la forma de la mesa y conserva las asignaciones', async () => {
+    const { crear, actualizar, asignar } = montar()
+    const mesa = await crear.ejecutar(EVENTO, { minSeats: 2, maxSeats: 4 })
+    await asignar.ejecutar(EVENTO, {
+      tableId: mesa.id,
+      seatIndex: 1,
+      guestId: ANA,
+      companionIndex: 0,
+    })
+
+    const cambiada = await actualizar.ejecutar(EVENTO, mesa.id, { shape: 'RECTANGULAR' })
+
+    expect(cambiada.shape).toBe('RECTANGULAR')
+    expect(ocupantes([cambiada])).toEqual([['Mesa 1', 1, ANA, 0]])
+  })
+
+  it('genera mesas redondas', async () => {
+    const { generar } = montar()
+    const mesas = await generar.ejecutar(EVENTO, { count: 2, minSeats: 2, maxSeats: 4 })
+    expect(mesas.map((m) => m.shape)).toEqual(['ROUND', 'ROUND'])
+  })
+
+  it('lee mesas y objetos del evento, no los de otro', async () => {
+    const { crear, crearObjeto, leer } = montar()
+    await crear.ejecutar(EVENTO, { minSeats: 2, maxSeats: 4 })
+    await crearObjeto.ejecutar(EVENTO, { kind: 'STAGE', label: 'Escenario', x: 1, y: 2 })
+    await crearObjeto.ejecutar(EVENTO, { kind: 'BAR', label: 'Barra', x: 3, y: 4 })
+    await crearObjeto.ejecutar(OTRO, { kind: 'BAR', label: 'Ajena', x: 0, y: 0 })
+
+    const { mesas, objetos } = await leer.ejecutar(EVENTO)
+
+    expect(mesas).toHaveLength(1)
+    expect(objetos.map((o) => o.label)).toEqual(['Escenario', 'Barra'])
+  })
+})
+
+describe('casos de uso de los objetos de sala', () => {
+  it('no deja pasar de 30 objetos por evento, pero otro evento tiene su propio cupo', async () => {
+    const { crearObjeto } = montar()
+    for (let i = 0; i < 30; i++) {
+      await crearObjeto.ejecutar(EVENTO, { kind: 'BAR', label: `Barra ${i}`, x: i, y: 0 })
+    }
+    await expect(
+      crearObjeto.ejecutar(EVENTO, { kind: 'BAR', label: 'Una más', x: 0, y: 0 }),
+    ).rejects.toBeInstanceOf(LimiteDeObjetosError)
+    await expect(
+      crearObjeto.ejecutar(OTRO, { kind: 'BAR', label: 'Otro evento', x: 0, y: 0 }),
+    ).resolves.toMatchObject({ label: 'Otro evento' })
+  })
+
+  it('crear un objeto corre en una unidad de trabajo', async () => {
+    const { crearObjeto, udt } = montar()
+    await crearObjeto.ejecutar(EVENTO, { kind: 'DANCE_FLOOR', label: 'Pista', x: 0, y: 0 })
+    expect(udt.transacciones).toBe(1)
+  })
+
+  it('actualiza solo lo pedido y da 404 desde otro evento', async () => {
+    const { crearObjeto, actualizarObjeto } = montar()
+    const objeto = await crearObjeto.ejecutar(EVENTO, {
+      kind: 'ENTRANCE',
+      label: 'Entrada',
+      x: 5,
+      y: 6,
+    })
+
+    const movido = await actualizarObjeto.ejecutar(EVENTO, objeto.id, { x: 50 })
+
+    expect(movido).toMatchObject({ kind: 'ENTRANCE', label: 'Entrada', x: 50, y: 6 })
+    await expect(actualizarObjeto.ejecutar(OTRO, objeto.id, { x: 1 })).rejects.toBeInstanceOf(
+      ObjetoNoEncontradoError,
+    )
+  })
+
+  it('eliminar dos veces da 404 la segunda, y no borra el de otro evento', async () => {
+    const { crearObjeto, eliminarObjeto, repo } = montar()
+    const objeto = await crearObjeto.ejecutar(EVENTO, {
+      kind: 'DESSERT_TABLE',
+      label: 'Postres',
+      x: 0,
+      y: 0,
+    })
+
+    await expect(eliminarObjeto.ejecutar(OTRO, objeto.id)).rejects.toBeInstanceOf(
+      ObjetoNoEncontradoError,
+    )
+    await eliminarObjeto.ejecutar(EVENTO, objeto.id)
+    expect(repo.objetos).toHaveLength(0)
+    await expect(eliminarObjeto.ejecutar(EVENTO, objeto.id)).rejects.toBeInstanceOf(
+      ObjetoNoEncontradoError,
+    )
   })
 })

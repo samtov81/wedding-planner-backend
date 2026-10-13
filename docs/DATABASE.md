@@ -51,13 +51,23 @@ CHECK constraints:
 
 ### `seating_tables`
 
-Belongs to an `Event` (`onDelete: Cascade`). A round table of the seating chart. Its seats are the indexes `0..seatCount-1`; there is no row per seat. `x`/`y` are the table's position on the canvas. Tables are listed by `createdAt, id`; the repository writes strictly increasing `createdAt` values so bulk-created tables keep their order.
+Belongs to an `Event` (`onDelete: Cascade`). A round **or rectangular** table of the seating chart (`shape`, enum `SeatingTableShape`: `ROUND` | `RECTANGULAR`, default `ROUND`; it can be changed later and the table keeps its assignments). The shape only changes the drawing: the seat range rules are the same for both. Its seats are the indexes `0..seatCount-1`; there is no row per seat. `x`/`y` are the table's position on the canvas. Tables are listed by `createdAt, id`; the repository writes strictly increasing `createdAt` values so bulk-created tables keep their order.
 
 CHECK constraints:
 - `seating_tables_asientos_rango` — `1 ≤ minSeats ≤ seatCount ≤ maxSeats ≤ 20`.
 - `seating_tables_posicion` — `x` and `y` cannot be negative.
 
 The limit of 100 tables per event is enforced by the use case, not by the database.
+
+### `seating_objects`
+
+Belongs to an `Event` (`onDelete: Cascade`). A fixture of the room drawn on the seating canvas: no seats, no size, no rotation. `kind` is the enum `SeatingObjectKind` (`DANCE_FLOOR`, `STAGE`, `BAR`, `DESSERT_TABLE`, `ENTRANCE`) and is fixed after creation; `label` is free text; `x`/`y` are the position on the canvas. Objects are listed by `createdAt, id`; the repository writes strictly increasing `createdAt` values.
+
+CHECK constraints:
+- `seating_objects_posicion` — `x` and `y` cannot be negative.
+- `seating_objects_etiqueta` — `label` has between 1 and 60 characters.
+
+The limit of 30 objects per event is enforced by the use case, not by the database.
 
 ### `seat_assignments`
 

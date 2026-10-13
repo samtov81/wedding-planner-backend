@@ -7,11 +7,14 @@ import { UsersModule } from '@/modules/users/users.module'
 
 import { AssignSeatUseCase } from './application/assign-seat.use-case'
 import { ClearSeatUseCase } from './application/clear-seat.use-case'
+import { CreateObjectUseCase } from './application/create-object.use-case'
 import { CreateTableUseCase } from './application/create-table.use-case'
+import { DeleteObjectUseCase } from './application/delete-object.use-case'
 import { DeleteTableUseCase } from './application/delete-table.use-case'
 import { GenerateTablesUseCase } from './application/generate-tables.use-case'
 import { GetSeatingUseCase } from './application/get-seating.use-case'
 import { SEATING_REPOSITORY } from './application/seating.repository'
+import { UpdateObjectUseCase } from './application/update-object.use-case'
 import { UpdateTableUseCase } from './application/update-table.use-case'
 import { PrismaSeatingRepository } from './infrastructure/prisma-seating.repository'
 import { SeatingController } from './interfaces/seating.controller'
@@ -39,6 +42,9 @@ import { SeatingController } from './interfaces/seating.controller'
     DeleteTableUseCase,
     AssignSeatUseCase,
     ClearSeatUseCase,
+    CreateObjectUseCase,
+    UpdateObjectUseCase,
+    DeleteObjectUseCase,
   ],
 })
 export class SeatingModule {}

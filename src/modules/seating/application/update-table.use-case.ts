@@ -24,6 +24,7 @@ export class UpdateTableUseCase {
   /**
    * El rango se valida contra lo guardado: un PATCH puede traer solo `maxSeats`.
    * Bajar `seatCount` quita los últimos asientos, y solo si están vacíos.
+   * Cambiar `shape` no toca las asignaciones: los índices de asiento no dependen de la forma.
    */
   async ejecutar(eventId: string, tableId: string, cambios: CambiosMesa): Promise<MesaVista> {
     return await this.unidadDeTrabajo.ejecutar(async () => {

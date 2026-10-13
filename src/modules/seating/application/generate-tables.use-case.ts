@@ -46,7 +46,7 @@ export class GenerateTablesUseCase {
         eventId,
         Array.from({ length: count }, (_, i) => ({
           name: nombrePorDefecto(existentes + i + 1),
-          // Provisional hasta la Tarea 2, que lo recibe del cuerpo de la petición.
+          // Generar no pregunta la forma: nacen redondas y se cambian con PATCH.
           shape: 'ROUND' as const,
           minSeats,
           maxSeats,

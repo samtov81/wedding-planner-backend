@@ -38,8 +38,10 @@ Decisiones del usuario:
   arrastrar una persona a un asiento (sobre la mesa va al primer asiento
   libre) y arrastrar mesas, cuya posición se guarda.
 
-Fuera de alcance: acompañantes con nombre propio, auto-asignación, zoom, mesas
-rectangulares y edición en tiempo real entre varias personas.
+Fuera de alcance: acompañantes con nombre propio, auto-asignación y edición en
+tiempo real entre varias personas. El zoom y las mesas rectangulares (y los
+objetos de sala) entraron después: ver
+`2026-10-13-mesas-formas-objetos-zoom-design.md`.
 
 ## 2. Modelo de datos
 
@@ -69,6 +71,10 @@ Todas bajo `/events/:eventId/seating`, con `@RequireEventAccess('COUPLE', 'PLANN
 | DELETE | `/tables/:tableId` | 204 | 404 |
 | PUT | `/assignments` `{tableId, seatIndex, guestId, companionIndex}` | `{ tables }` | 404, 422 `SEAT_OUT_OF_RANGE`, 422 `SEAT_OCCUPANT_INVALID` |
 | DELETE | `/tables/:tableId/seats/:seatIndex` | 204 | 404, 422 `SEAT_OUT_OF_RANGE` |
+
+Desde la revisión del 2026-10-13 hay además `shape` en las mesas y las rutas
+`/objects`; el contrato vigente está en
+`2026-10-13-mesas-formas-objetos-zoom-design.md`.
 
 Mesa: `{ id, name, minSeats, maxSeats, seatCount, x, y, seats: [{ index,
 occupant: { guestId, companionIndex, sobrante } | null }] }`.

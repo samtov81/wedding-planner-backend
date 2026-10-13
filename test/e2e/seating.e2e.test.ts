@@ -14,12 +14,21 @@ interface Asiento {
 interface MesaApi {
   id: string
   name: string
+  shape: 'ROUND' | 'RECTANGULAR'
   minSeats: number
   maxSeats: number
   seatCount: number
   x: number
   y: number
   seats: Asiento[]
+}
+
+interface ObjetoApi {
+  id: string
+  kind: string
+  label: string
+  x: number
+  y: number
 }
 
 /** Contra el servidor real: se comprueba que los guards están enganchados en cada ruta. */
@@ -177,6 +186,96 @@ describe('Distribución de mesas e2e', () => {
     expect(await prisma.seatAssignment.count({ where: { eventId: evento } })).toBe(1)
   })
 
+  it('formas y objetos: mesa rectangular que cambia a redonda, y objetos creados, movidos y borrados', async () => {
+    const base = `/events/${evento}/seating`
+    const rect = await request(url)
+      .post(`${base}/tables`)
+      .set(como(ana))
+      .send({ shape: 'RECTANGULAR', name: 'Larga', minSeats: 4, maxSeats: 8 })
+      .expect(201)
+    const mesa = rect.body as MesaApi
+    expect(mesa.shape).toBe('RECTANGULAR')
+    const redonda = await request(url)
+      .patch(`${base}/tables/${mesa.id}`)
+      .set(como(planner))
+      .send({ shape: 'ROUND' })
+      .expect(200)
+    expect((redonda.body as MesaApi).shape).toBe('ROUND')
+    await request(url)
+      .patch(`${base}/tables/${mesa.id}`)
+      .set(como(ana))
+      .send({ shape: 'TRIANGULAR' })
+      .expect(400)
+
+    const escenario = (
+      await request(url)
+        .post(`${base}/objects`)
+        .set(como(ana))
+        .send({ kind: 'STAGE', label: '  Escenario  ', x: 100, y: 50 })
+        .expect(201)
+    ).body as ObjetoApi
+    expect(escenario).toEqual({
+      id: escenario.id,
+      kind: 'STAGE',
+      label: 'Escenario',
+      x: 100,
+      y: 50,
+    })
+    const barra = (
+      await request(url)
+        .post(`${base}/objects`)
+        .set(como(planner))
+        .send({ kind: 'BAR', label: 'Barra', x: 0, y: 0 })
+        .expect(201)
+    ).body as ObjetoApi
+
+    const leida = await request(url).get(base).set(como(ana)).expect(200)
+    const cuerpo = leida.body as { tables: MesaApi[]; objects: ObjetoApi[] }
+    expect(cuerpo.objects.map((o) => o.id)).toEqual([escenario.id, barra.id])
+    expect(cuerpo.tables.find((t) => t.id === mesa.id)?.shape).toBe('ROUND')
+
+    const movido = await request(url)
+      .patch(`${base}/objects/${escenario.id}`)
+      .set(como(ana))
+      .send({ x: 300, y: 400 })
+      .expect(200)
+    expect(movido.body).toMatchObject({ kind: 'STAGE', label: 'Escenario', x: 300, y: 400 })
+    const renombrado = await request(url)
+      .patch(`${base}/objects/${escenario.id}`)
+      .set(como(ana))
+      .send({ label: 'Tarima' })
+      .expect(200)
+    expect(renombrado.body).toMatchObject({ label: 'Tarima', x: 300, y: 400 })
+
+    await request(url).delete(`${base}/objects/${escenario.id}`).set(como(ana)).expect(204)
+    await request(url).delete(`${base}/objects/${escenario.id}`).set(como(ana)).expect(404)
+    await request(url)
+      .patch(`${base}/objects/${escenario.id}`)
+      .set(como(ana))
+      .send({ x: 1 })
+      .expect(404)
+    await request(url).delete(`${base}/objects/${barra.id}`).set(como(ana)).expect(204)
+  })
+
+  it('el objeto 31 del evento responde 422 OBJECT_LIMIT_EXCEEDED', async () => {
+    const base = `/events/${evento}/seating`
+    const existentes = await prisma.seatingObject.count({ where: { eventId: evento } })
+    await prisma.seatingObject.createMany({
+      data: Array.from({ length: 30 - existentes }, (_, i) => ({
+        eventId: evento,
+        kind: 'BAR' as const,
+        label: `Relleno ${i}`,
+      })),
+    })
+    const respuesta = await request(url)
+      .post(`${base}/objects`)
+      .set(como(ana))
+      .send({ kind: 'BAR', label: 'De más', x: 0, y: 0 })
+      .expect(422)
+    expect(respuesta.body).toMatchObject({ code: 'OBJECT_LIMIT_EXCEEDED' })
+    await prisma.seatingObject.deleteMany({ where: { eventId: evento } })
+  })
+
   it('sin token → 401; extraño → 404; id no UUID → 404; PATCH vacío → 400', async () => {
     const base = `/events/${evento}/seating`
     await request(url).get(base).expect(401)
@@ -201,6 +300,35 @@ describe('Distribución de mesas e2e', () => {
       .set(como(ana))
       .send({ minSeats: 5, maxSeats: 4 })
       .expect(400)
+
+    // Objetos: id no UUID → 404; cuerpos mal formados → 400.
+    await request(url).patch(`${base}/objects/no-uuid`).set(como(ana)).send({ x: 1 }).expect(404)
+    await request(url).delete(`${base}/objects/no-uuid`).set(como(ana)).expect(404)
+    await request(url).post(`${base}/objects`).expect(401)
+    await request(url).post(`${base}/objects`).set(como(extrano)).send({}).expect(404)
+    const objeto = { kind: 'BAR', label: 'Barra', x: 0, y: 0 }
+    for (const malo of [
+      { ...objeto, label: '   ' },
+      { ...objeto, label: 'a'.repeat(61) },
+      { ...objeto, kind: 'PISCINA' },
+      { ...objeto, extra: 1 },
+      { ...objeto, x: -1 },
+    ]) {
+      await request(url).post(`${base}/objects`).set(como(ana)).send(malo).expect(400)
+    }
+    const creado = await request(url)
+      .post(`${base}/objects`)
+      .set(como(ana))
+      .send(objeto)
+      .expect(201)
+    const id = (creado.body as ObjetoApi).id
+    await request(url).patch(`${base}/objects/${id}`).set(como(ana)).send({}).expect(400)
+    await request(url)
+      .patch(`${base}/objects/${id}`)
+      .set(como(ana))
+      .send({ kind: 'STAGE' })
+      .expect(400)
+    await request(url).delete(`${base}/objects/${id}`).set(como(ana)).expect(204)
   })
 
   it('un vendor BOOKED recibe 403 en cada ruta', async () => {
@@ -213,6 +341,9 @@ describe('Distribución de mesas e2e', () => {
       request(url).patch(`${base}/tables/${mesa}`).send({ name: 'X' }),
       request(url).delete(`${base}/tables/${mesa}`),
       request(url).delete(`${base}/tables/${mesa}/seats/0`),
+      request(url).post(`${base}/objects`).send({ kind: 'BAR', label: 'X', x: 0, y: 0 }),
+      request(url).patch(`${base}/objects/${mesa}`).send({ x: 1 }),
+      request(url).delete(`${base}/objects/${mesa}`),
       request(url)
         .put(`${base}/assignments`)
         .send({ tableId: mesa, seatIndex: 0, guestId: mesa, companionIndex: 0 }),

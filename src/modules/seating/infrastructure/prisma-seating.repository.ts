@@ -111,6 +111,11 @@ export class PrismaSeatingRepository implements SeatingRepository {
     return await clienteDe(this.prisma).seatingObject.count({ where: { eventId } })
   }
 
+  /**
+   * Leer el máximo y luego insertar no es atómico: es seguro solo porque el caso
+   * de uso llama antes a `bloquearEvento` dentro de una unidad de trabajo, igual
+   * que con `crearMesas`.
+   */
   async crearObjeto(eventId: string, datos: DatosNuevoObjeto): Promise<ObjetoDeSala> {
     // Mismo motivo que en `crearMesas`: `createdAt` estrictamente creciente
     // para que dos objetos creados en el mismo milisegundo no empaten.

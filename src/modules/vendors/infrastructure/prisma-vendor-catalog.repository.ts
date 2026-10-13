@@ -42,8 +42,14 @@ export class PrismaVendorCatalogRepository implements VendorCatalogRepository {
         : {}),
     }
     // Uno de más para saber si hay página siguiente sin un COUNT aparte.
-    // Paquetes y primera foto van en la MISMA consulta (Prisma los resuelve
-    // con un IN por relación, no una consulta por ficha): sin N+1.
+    // Sin N+1, pero ojo con lo que `take: 1` NO hace: Prisma 6 usa aquí la
+    // estrategia de carga por defecto (sin `relationJoins`), así que resuelve
+    // cada relación con UNA consulta `IN (ids de la página)`. El `take: 1` de las
+    // fotos se aplica EN MEMORIA, no en la base: Postgres devuelve todas las
+    // fotos y todos los paquetes de las fichas de la página. El coste está
+    // acotado por `MAX_FOTOS_PORTFOLIO`, `MAX_PAQUETES` y `limit` ≤ 50. Si el
+    // catálogo se vuelve caliente, la alternativa es un `$queryRaw` etiquetado
+    // con `MIN(price)` y `DISTINCT ON`.
     const filas = await this.prisma.vendorProfile.findMany({
       where,
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],

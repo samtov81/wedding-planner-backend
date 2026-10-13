@@ -38,7 +38,7 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
       /** Precio de cada paquete, en el orden en que se crean. */
       precios?: string[]
       /** Fotos en el orden en que se INSERTAN; `position` decide cuál es la primera. */
-      fotos?: Array<{ storageKey: string; position: number }>
+      fotos?: Array<{ id?: string; storageKey: string; position: number }>
     },
   ) {
     const user = await prisma.user.create({
@@ -125,6 +125,25 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
       precios: ['10000.00', '9000.00'],
       fotos: [{ storageKey: 'users/v5/portfolio/unica.jpg', position: 0 }],
     })
+    // `position` no es único, sólo un índice: con dos fotos en la misma, gana el
+    // `id` menor. Se inserta PRIMERO la de id mayor, para que no gane por orden
+    // de inserción ni por azar del plan de Postgres.
+    await sembrar(6, {
+      businessName: 'Empate Fotos',
+      category: 'catering',
+      fotos: [
+        {
+          id: '00000000-0000-4000-8000-0000000000bb',
+          storageKey: 'users/v6/portfolio/perdedora.jpg',
+          position: 0,
+        },
+        {
+          id: '00000000-0000-4000-8000-0000000000aa',
+          storageKey: 'users/v6/portfolio/ganadora.jpg',
+          position: 0,
+        },
+      ],
+    })
   }, 120_000)
 
   afterAll(async () => {
@@ -133,10 +152,13 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
   })
 
   it.each([
-    [{ q: null, category: null }, ['Lumière Catering', 'Foto Luz', 'Banquetes Sol']],
+    [
+      { q: null, category: null },
+      ['Lumière Catering', 'Foto Luz', 'Banquetes Sol', 'Empate Fotos'],
+    ],
     [{ q: 'LUZ', category: null }, ['Foto Luz']],
     [{ q: 'aire libre', category: null }, ['Foto Luz']],
-    [{ q: null, category: 'catering' }, ['Lumière Catering', 'Banquetes Sol']],
+    [{ q: null, category: 'catering' }, ['Lumière Catering', 'Banquetes Sol', 'Empate Fotos']],
     [{ q: null, category: 'photography' }, ['Foto Luz']],
     [{ q: null, category: 'no-existe' }, []],
   ] as const)('buscar(%o)', async (filtro, esperado) => {
@@ -158,7 +180,7 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
         cursor: decodeCursor(p1.nextCursor ?? ''),
         limit: 2,
       })
-      expect(p2.items.map((p) => p.businessName)).toEqual(['Banquetes Sol'])
+      expect(p2.items.map((p) => p.businessName)).toEqual(['Banquetes Sol', 'Empate Fotos'])
       expect(p2.nextCursor).toBeNull()
     }
   })
@@ -186,6 +208,13 @@ describe('Paridad: VendorCatalogRepositoryEnMemoria vs PrismaVendorCatalogReposi
           currency: 'USD',
           priceFrom: '9000.00',
           imageKey: 'users/v5/portfolio/unica.jpg',
+        },
+        {
+          // Misma `position`: desempata el `id` ascendente, igual que `CON_HIJOS`.
+          businessName: 'Empate Fotos',
+          currency: 'USD',
+          priceFrom: null,
+          imageKey: 'users/v6/portfolio/ganadora.jpg',
         },
       ])
     }

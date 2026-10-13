@@ -130,9 +130,16 @@ Ciclo de vida:
 - `listarInvitacionesPendientes(userId)`: INVITED del usuario con `eventId`,
   `eventName`, `role`, `invitedByName`, `createdAt`.
 
-Las escrituras usan `UnidadDeTrabajo` y bloquean la fila del evento
-(`SELECT … FOR UPDATE`) antes de releer la membresía, como el resto de
-invariantes que cruzan tablas. El nombre y el email del miembro salen del join
+Las escrituras son CONDICIONALES sobre el estado de la membresía
+(`updateMany … WHERE status IN (...)`, como `publicarSiCompleto`) dentro de una
+`$transaction` del repositorio: el `UPDATE` bloquea la fila de la membresía
+hasta el commit, así que un PATCH y un DELETE concurrentes se serializan, y
+`count = 0` dice al caso de uso que la membresía cambió por debajo (404). No
+hace falta bloquear la fila del evento: el creador de un evento no cambia y
+el único invariante es el estado de la propia fila. `invitarMiembro` borra
+además cualquier grant de la membresía en su transacción, de modo que una
+reinvitación nace en NONE aunque una carrera hubiera dejado un grant
+huérfano. El nombre y el email del miembro salen del join
 con `users` en la consulta de Prisma, no del `UserRepository` (sería N+1).
 
 ### 3.4 API
@@ -147,8 +154,9 @@ con `users` en la consulta de Prisma, no del `UserRepository` (sería N+1).
 | `POST /events/:eventId/invitation/accept` | autenticado, sin `RequireEventAccess` | `{ eventId, status: 'ACTIVE' }` |
 | `POST /events/:eventId/invitation/decline` | autenticado, sin `RequireEventAccess` | 204 |
 
-- `Member = { id, userId, fullName, email, role, status, owner, budgetAccess: 'none' | 'view' | 'edit', invitedAt }`
-  (`edit` sólo en la fila del creador).
+- `Member = { id, userId, fullName, email, role, status, owner, budgetAccess: 'none' | 'view' | 'edit' }`
+  (`edit` sólo en la fila del creador). Sin fecha de invitación: una fila
+  REVOKED reinvitada conserva su `createdAt` original y la fecha mentiría.
 - `PATCH` body (Zod, `validarCon`): `{ role?: 'COUPLE' | 'PLANNER', budgetAccess?: 'none' | 'view' }`,
   al menos uno de los dos.
 - Accept/decline no pueden pasar por `EventAccessGuard`: una INVITED da acceso
@@ -159,8 +167,12 @@ con `users` en la consulta de Prisma, no del `UserRepository` (sería N+1).
 
 ### 3.5 Correo
 
-- Worker `events/interfaces/member-invitation.processor.ts` para el trabajo
-  `event-invitation` de la cola `email`, siguiendo
+- Hoy el trabajo `event-invitation` va a la cola compartida `email`, cuyo
+  worker (`auth/interfaces/email.processor.ts`) lanza `UnrecoverableError`
+  ante un nombre que no conoce: la invitación se pierde. Pasa a una cola
+  PROPIA, `members` (ruling C17, como `invitations`), con el trabajo
+  `member-invitation` y el worker
+  `events/interfaces/member-invitation.processor.ts`, siguiendo
   `guests/interfaces/invitation.processor.ts`.
 - Plantilla React Email `mail/infrastructure/templates/member-invitation.tsx` y
   puerto `MEMBER_INVITATION_RENDERER` en `mail/application/`, cableado en
@@ -173,7 +185,7 @@ con `users` en la consulta de Prisma, no del `UserRepository` (sería N+1).
 ## 4. Frontend
 
 Carpeta nueva `src/features/members/`, con primitivas existentes (`Modal`,
-`Table`, `Select`, `CheckboxSwitch`, `Badge`, `Banner`, `Avatar`).
+`Select`, `Switch`, `Badge`, `Avatar`, `Card`).
 
 ### 4.1 Piezas compartidas
 
@@ -181,9 +193,9 @@ Carpeta nueva `src/features/members/`, con primitivas existentes (`Modal`,
   `revokeMember`, `listMyInvitations`, `acceptInvitation`, `declineInvitation`,
   con el patrón y el mapeo de errores de `event-config/event-api.ts`.
 - `use-members.ts`: carga + mutaciones optimistas del interruptor y del rol;
-  si la petición falla, revierte y muestra un toast.
+  si la petición falla, revierte y muestra el error en línea (`role="alert"`; el frontend no tiene toasts).
 - `MembersList` (`variant: 'full' | 'budget'`): por fila avatar, nombre, email,
-  `Select` de rol, `CheckboxSwitch` "Can view budget", `Badge` "Pending" si
+  `Select` de rol, `Switch` "Can view budget", `Badge` "Pending" si
   INVITED y revocar/cancelar con confirmación. El creador es una fila fija
   ("Owner", interruptor encendido y deshabilitado). `variant="budget"` sólo
   muestra nombre e interruptor.
@@ -203,22 +215,25 @@ Carpeta nueva `src/features/members/`, con primitivas existentes (`Modal`,
 
 ### 4.3 Aceptar invitaciones
 
-- `use-my-invitations.ts` pide `GET /me/invitations` al montar el layout.
+- `lib/invitations-store.ts` (zustand, como `events-store.ts` y atado a la
+  sesión igual) pide `GET /me/invitations` al montar el layout.
 - `app/event-switcher.tsx`: bloque "Invitations" encima de los eventos, con
   nombre del evento, rol, quién invita y botones Accept / Decline.
-- Dashboard: `Banner` si hay invitaciones pendientes y el usuario no tiene
-  eventos.
+- `app/dashboard-redirect.tsx`: hoy, sin eventos, redirige a `/events/new`, así
+  que un invitado recién registrado nunca vería el selector. Si no hay eventos
+  pero sí invitaciones, muestra la lista de invitaciones pendientes (Accept /
+  Decline) con un "Create an event instead" en vez de redirigir.
 - Accept → refresca la lista de eventos y navega al dashboard del evento.
   Decline → la invitación desaparece.
 
 ### 4.4 Modo "Ver"
 
 - Vista Budget: el modo de sólo lectura ya existe (`budgetAccess === 'view'`).
-- Revisar `dashboard/dashboard-screen.tsx`, `event-vendors/event-vendors-screen.tsx`
-  y `event-vendors/my-vendors-tab.tsx`: con `view` se muestran las cifras y no
-  las acciones (separar `view` de `edit` allí donde hoy sólo se distingue
-  `none`).
-- El menú lateral muestra Budget con `view` o `edit`.
+- Dashboard (`canSeeBudget = budgetAccess !== 'none'`), proveedores
+  (`showBudget = budgetAccess !== 'none'`) y el menú lateral ya muestran las
+  cifras con `view`, y sus acciones ya dependen de `isOwner`, no del
+  presupuesto. No cambia código: se añaden tests que fijan ese comportamiento
+  con `view` (cifras sí, acciones no).
 
 ## 5. Tests
 

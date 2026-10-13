@@ -1,8 +1,20 @@
 /** Topes acordados para la distribución. Los mismos números viven en el CHECK de la migración. */
 export const MAX_ASIENTOS_POR_MESA = 20
 export const MAX_MESAS_POR_EVENTO = 100
+/** Tope de objetos de sala por evento. Lo aplica el caso de uso, no la base de datos. */
+export const MAX_OBJETOS_POR_EVENTO = 30
+/** Largo máximo de la etiqueta de un objeto; el mismo número vive en el CHECK de la migración. */
+export const MAX_ETIQUETA = 60
 /** Igual que `MAX_ACOMPANANTES` de guests; no se importa porque un dominio no mira a otro. */
 export const MAX_INDICE_ACOMPANANTE = 10
+
+/** Forma de dibujo de una mesa. Existentes en la base antes de esto: todas ROUND. */
+export const FORMAS_MESA = ['ROUND', 'RECTANGULAR'] as const
+export type FormaMesa = (typeof FORMAS_MESA)[number]
+
+/** Qué es un objeto de sala. Fijo tras crearlo: cambiar de tipo es borrar y crear otro. */
+export const TIPOS_OBJETO = ['DANCE_FLOOR', 'STAGE', 'BAR', 'DESSERT_TABLE', 'ENTRANCE'] as const
+export type TipoObjeto = (typeof TIPOS_OBJETO)[number]
 
 export type EstadoRsvp = 'CONFIRMED' | 'PENDING' | 'DECLINED'
 
@@ -15,16 +27,38 @@ export interface InvitadoSentable {
 }
 
 /**
- * Una mesa redonda. Sus asientos son los índices `0..seatCount-1`; `seatCount`
- * crece de `minSeats` a `maxSeats`.
+ * Una mesa redonda o rectangular; la forma sólo cambia el dibujo, los asientos
+ * siguen siendo `0..seatCount-1`; `seatCount` crece de `minSeats` a `maxSeats`.
+ *
+ * El rango de asientos (`rangoAsientosValido`) es el mismo para las dos formas.
+ * Cómo se reparten los asientos por los lados de una mesa rectangular es
+ * dibujo y vive sólo en el frontend: no se añade aquí ninguna regla por forma.
+ * Cambiar la forma de una mesa conserva sus asignaciones, porque los índices
+ * de asiento no dependen de ella.
  */
 export interface Mesa {
   id: string
   eventId: string
   name: string
+  shape: FormaMesa
   minSeats: number
   maxSeats: number
   seatCount: number
+  x: number
+  y: number
+  createdAt: Date
+}
+
+/**
+ * Un objeto de la sala (pista de baile, escenario, barra...). No tiene
+ * asientos, tamaño ni rotación: sólo un tipo, una etiqueta y una posición en
+ * el lienzo. El tope de `MAX_OBJETOS_POR_EVENTO` lo aplica el caso de uso.
+ */
+export interface ObjetoDeSala {
+  id: string
+  eventId: string
+  kind: TipoObjeto
+  label: string
   x: number
   y: number
   createdAt: Date

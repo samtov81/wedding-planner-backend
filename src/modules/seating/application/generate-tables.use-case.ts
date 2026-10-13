@@ -46,6 +46,8 @@ export class GenerateTablesUseCase {
         eventId,
         Array.from({ length: count }, (_, i) => ({
           name: nombrePorDefecto(existentes + i + 1),
+          // Provisional hasta la Tarea 2, que lo recibe del cuerpo de la petición.
+          shape: 'ROUND' as const,
           minSeats,
           maxSeats,
           seatCount: minSeats,

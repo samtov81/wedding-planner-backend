@@ -1,7 +1,16 @@
-import type { Asignacion, InvitadoSentable, Mesa, Ocupante } from '../domain/seating'
+import type {
+  Asignacion,
+  FormaMesa,
+  InvitadoSentable,
+  Mesa,
+  ObjetoDeSala,
+  Ocupante,
+  TipoObjeto,
+} from '../domain/seating'
 
 export interface DatosNuevaMesa {
   name: string
+  shape: FormaMesa
   minSeats: number
   maxSeats: number
   seatCount: number
@@ -11,9 +20,24 @@ export interface DatosNuevaMesa {
 
 export interface CambiosMesa {
   name?: string | undefined
+  shape?: FormaMesa | undefined
   minSeats?: number | undefined
   maxSeats?: number | undefined
   seatCount?: number | undefined
+  x?: number | undefined
+  y?: number | undefined
+}
+
+export interface DatosNuevoObjeto {
+  kind: TipoObjeto
+  label: string
+  x: number
+  y: number
+}
+
+/** Sin `kind`: el tipo queda fijo al crear el objeto. */
+export interface CambiosObjeto {
+  label?: string | undefined
   x?: number | undefined
   y?: number | undefined
 }
@@ -40,6 +64,16 @@ export interface SeatingRepository {
   actualizarMesa(eventId: string, tableId: string, cambios: CambiosMesa): Promise<Mesa>
   /** Borra la mesa y sus asignaciones. `false` si no existía. */
   eliminarMesa(eventId: string, tableId: string): Promise<boolean>
+
+  /** Orden de creación (createdAt, id). */
+  listarObjetos(eventId: string): Promise<ObjetoDeSala[]>
+  contarObjetos(eventId: string): Promise<number>
+  /** `createdAt` estrictamente creciente por evento, como `crearMesas`, para que el orden sea estable. */
+  crearObjeto(eventId: string, datos: DatosNuevoObjeto): Promise<ObjetoDeSala>
+  /** Lanza `ObjetoNoEncontradoError` si no existe en el evento. */
+  actualizarObjeto(eventId: string, id: string, cambios: CambiosObjeto): Promise<ObjetoDeSala>
+  /** `false` si no existía en el evento. */
+  eliminarObjeto(eventId: string, id: string): Promise<boolean>
 
   listarAsignaciones(eventId: string): Promise<Asignacion[]>
   asignar(eventId: string, asignacion: Asignacion): Promise<void>

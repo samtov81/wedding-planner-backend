@@ -41,6 +41,8 @@ export class CreateTableUseCase {
       const [mesa] = await this.repo.crearMesas(eventId, [
         {
           name: entrada.name ?? nombrePorDefecto(existentes + 1),
+          // Provisional hasta la Tarea 2, que lo recibe del cuerpo de la petición.
+          shape: 'ROUND' as const,
           minSeats,
           maxSeats,
           seatCount: minSeats,

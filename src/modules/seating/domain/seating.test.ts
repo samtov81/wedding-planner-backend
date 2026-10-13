@@ -5,8 +5,12 @@ import {
   type Mesa,
   plazasDe,
   posicionEnCuadricula,
+  MAX_ETIQUETA,
+  MAX_OBJETOS_POR_EVENTO,
   rangoAsientosValido,
+  TIPOS_OBJETO,
 } from './seating'
+import { LimiteDeObjetosError, ObjetoNoEncontradoError } from './seating-errors'
 
 const invitado = (cambios: Partial<InvitadoSentable> = {}): InvitadoSentable => ({
   id: 'g1',
@@ -67,6 +71,7 @@ describe('armarDistribucion', () => {
       id: 't1',
       eventId: 'e',
       name: 'Mesa 1',
+      shape: 'RECTANGULAR',
       minSeats: 2,
       maxSeats: 4,
       seatCount: 3,
@@ -82,10 +87,32 @@ describe('armarDistribucion', () => {
       ],
       [invitado({ companionsConfirmed: 1 })],
     )
+    expect(vista?.shape).toBe('RECTANGULAR')
     expect(vista?.seats).toEqual([
       { index: 0, occupant: { guestId: 'g1', companionIndex: 0, sobrante: false } },
       { index: 1, occupant: null },
       { index: 2, occupant: { guestId: 'g1', companionIndex: 2, sobrante: true } },
     ])
+  })
+})
+
+describe('objetos de sala', () => {
+  it('conoce los cinco tipos y los topes acordados', () => {
+    expect(TIPOS_OBJETO).toEqual(['DANCE_FLOOR', 'STAGE', 'BAR', 'DESSERT_TABLE', 'ENTRANCE'])
+    expect(MAX_OBJETOS_POR_EVENTO).toBe(30)
+    expect(MAX_ETIQUETA).toBe(60)
+  })
+
+  it('un objeto inexistente responde 404 con su código', () => {
+    const error = new ObjetoNoEncontradoError()
+    expect(error.httpStatus).toBe(404)
+    expect(error.code).toBe('OBJECT_NOT_FOUND')
+  })
+
+  it('pasar del tope de objetos responde 422 con su código', () => {
+    const error = new LimiteDeObjetosError()
+    expect(error.httpStatus).toBe(422)
+    expect(error.code).toBe('OBJECT_LIMIT_EXCEEDED')
+    expect(error.message).toBe('Un evento admite como máximo 30 objetos')
   })
 })

@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto'
 
 import type {
   CambiosMesa,
+  CambiosObjeto,
   DatosNuevaMesa,
+  DatosNuevoObjeto,
   SeatingRepository,
 } from '../application/seating.repository'
-import type { Asignacion, InvitadoSentable, Mesa, Ocupante } from '../domain/seating'
-import { MesaNoEncontradaError } from '../domain/seating-errors'
+import type { Asignacion, InvitadoSentable, Mesa, ObjetoDeSala, Ocupante } from '../domain/seating'
+import { MesaNoEncontradaError, ObjetoNoEncontradoError } from '../domain/seating-errors'
 
 type AsignacionGuardada = Asignacion & { eventId: string }
 type InvitadoGuardado = InvitadoSentable & { eventId: string }
@@ -19,6 +21,7 @@ type InvitadoGuardado = InvitadoSentable & { eventId: string }
  */
 export class SeatingRepositoryEnMemoria implements SeatingRepository {
   readonly mesas: Mesa[] = []
+  readonly objetos: ObjetoDeSala[] = []
   readonly asignaciones: AsignacionGuardada[] = []
   readonly invitados: InvitadoGuardado[] = []
 
@@ -79,6 +82,51 @@ export class SeatingRepositoryEnMemoria implements SeatingRepository {
     if (indice === -1) return Promise.resolve(false)
     this.mesas.splice(indice, 1)
     this.quitarDonde((a) => a.tableId === tableId)
+    return Promise.resolve(true)
+  }
+
+  listarObjetos(eventId: string): Promise<ObjetoDeSala[]> {
+    return Promise.resolve(
+      this.objetos
+        .filter((o) => o.eventId === eventId)
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1))
+        .map((o) => ({ ...o })),
+    )
+  }
+
+  contarObjetos(eventId: string): Promise<number> {
+    return Promise.resolve(this.objetos.filter((o) => o.eventId === eventId).length)
+  }
+
+  crearObjeto(eventId: string, datos: DatosNuevoObjeto): Promise<ObjetoDeSala> {
+    const ultimo = Math.max(
+      0,
+      ...this.objetos.filter((o) => o.eventId === eventId).map((o) => o.createdAt.getTime()),
+    )
+    const objeto: ObjetoDeSala = {
+      ...datos,
+      id: randomUUID(),
+      eventId,
+      createdAt: new Date(Math.max(Date.now(), ultimo + 1)),
+    }
+    this.objetos.push(objeto)
+    return Promise.resolve({ ...objeto })
+  }
+
+  actualizarObjeto(eventId: string, id: string, cambios: CambiosObjeto): Promise<ObjetoDeSala> {
+    const objeto = this.objetos.find((o) => o.id === id && o.eventId === eventId)
+    if (objeto === undefined) return Promise.reject(new ObjetoNoEncontradoError())
+    Object.assign(
+      objeto,
+      Object.fromEntries(Object.entries(cambios).filter(([, valor]) => valor !== undefined)),
+    )
+    return Promise.resolve({ ...objeto })
+  }
+
+  eliminarObjeto(eventId: string, id: string): Promise<boolean> {
+    const indice = this.objetos.findIndex((o) => o.id === id && o.eventId === eventId)
+    if (indice === -1) return Promise.resolve(false)
+    this.objetos.splice(indice, 1)
     return Promise.resolve(true)
   }
 

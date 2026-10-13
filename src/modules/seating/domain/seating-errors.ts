@@ -40,3 +40,16 @@ export class RangoDeAsientosInvalidoError extends UnprocessableError {
     )
   }
 }
+
+/** No existe o es de otro evento: mismo 404, como con las mesas. */
+export class ObjetoNoEncontradoError extends NotFoundError {
+  constructor() {
+    super('El objeto no existe en este evento', 'OBJECT_NOT_FOUND')
+  }
+}
+
+export class LimiteDeObjetosError extends UnprocessableError {
+  constructor() {
+    super('Un evento admite como máximo 30 objetos', 'OBJECT_LIMIT_EXCEEDED')
+  }
+}

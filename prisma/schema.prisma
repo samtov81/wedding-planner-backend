@@ -239,6 +239,7 @@ model Event {
   scheduleItems   ScheduleItem[]
   expenses        Expense[]
   seatingTables   SeatingTable[]
+  seatingObjects  SeatingObject[]
   seatAssignments SeatAssignment[]
 
   @@index([ownerId])
@@ -455,24 +456,55 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-/// Una mesa redonda de la distribución. Sus asientos son los índices
+enum SeatingTableShape {
+  ROUND
+  RECTANGULAR
+}
+
+enum SeatingObjectKind {
+  DANCE_FLOOR
+  STAGE
+  BAR
+  DESSERT_TABLE
+  ENTRANCE
+}
+
+/// Una mesa de la distribución, redonda o rectangular. Sus asientos son los índices
 /// 0..seatCount-1; no hay fila por asiento. Rango en CHECK SQL.
 model SeatingTable {
-  id          String           @id @default(uuid()) @db.Uuid
-  eventId     String           @db.Uuid
+  id          String            @id @default(uuid()) @db.Uuid
+  eventId     String            @db.Uuid
   name        String
+  shape       SeatingTableShape @default(ROUND)
   minSeats    Int
   maxSeats    Int
   seatCount   Int
-  x           Int              @default(0)
-  y           Int              @default(0)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  event       Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  x           Int               @default(0)
+  y           Int               @default(0)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  event       Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
   assignments SeatAssignment[]
 
   @@index([eventId, createdAt])
   @@map("seating_tables")
+}
+
+/// Un objeto de la sala (pista de baile, escenario...). Sin asientos, tamaño
+/// ni rotación. Posición y etiqueta en CHECK SQL; el tope por evento, en el caso de uso.
+model SeatingObject {
+  id        String            @id @default(uuid()) @db.Uuid
+  eventId   String            @db.Uuid
+  kind      SeatingObjectKind
+  label     String
+  x         Int               @default(0)
+  y         Int               @default(0)
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  event     Event             @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, createdAt])
+  @@map("seating_objects")
 }
 
 /// Quién ocupa un asiento: el invitado (companionIndex = 0) o uno de sus

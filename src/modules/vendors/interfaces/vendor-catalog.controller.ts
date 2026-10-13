@@ -5,16 +5,11 @@ import { decodeCursor } from '@/shared/domain'
 import { LIMITADOR_VENDOR_CATALOG, LimiteDeRuta } from '@/shared/http/limitadores'
 import { validarCon } from '@/shared/http/validar-con'
 
-import { SearchVendorCatalogUseCase } from '../application/search-vendor-catalog.use-case'
-import type { CategoriaVista } from '../domain/categoria'
+import {
+  type CatalogoVista,
+  SearchVendorCatalogUseCase,
+} from '../application/search-vendor-catalog.use-case'
 import { vendorCatalogQuerySchema } from './vendor-catalog.dto'
-
-interface PerfilRespuesta {
-  id: string
-  businessName: string
-  category: CategoriaVista
-  specialty: string | null
-}
 
 /** Cualquier usuario con sesión puede buscar proveedores para su evento. */
 @UseGuards(JwtAuthGuard)
@@ -26,7 +21,7 @@ export class VendorCatalogController {
   @Get()
   async buscarVendors(
     @Query() query: unknown,
-  ): Promise<{ items: PerfilRespuesta[]; nextCursor: string | null }> {
+  ): Promise<{ items: CatalogoVista[]; nextCursor: string | null }> {
     const datos = validarCon(vendorCatalogQuerySchema, query)
     const pagina = await this.buscar.ejecutar({
       q: datos.q,
@@ -36,12 +31,19 @@ export class VendorCatalogController {
       limit: datos.limit,
     })
     return {
-      items: pagina.items.map(({ id, businessName, category, specialty }) => ({
-        id,
-        businessName,
-        category,
-        specialty,
-      })),
+      // Lista blanca explícita: si la vista gana un campo, salir por la API
+      // es una decisión que se toma aquí, no un efecto de propagar el objeto.
+      items: pagina.items.map(
+        ({ id, businessName, category, specialty, currency, priceFrom, imageUrl }) => ({
+          id,
+          businessName,
+          category,
+          specialty,
+          currency,
+          priceFrom,
+          imageUrl,
+        }),
+      ),
       nextCursor: pagina.nextCursor,
     }
   }

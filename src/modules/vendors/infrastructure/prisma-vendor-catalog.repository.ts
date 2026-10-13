@@ -9,6 +9,7 @@ import type {
   PerfilDeCatalogo,
   VendorCatalogRepository,
 } from '../application/vendor-catalog.repository'
+import { precioDesde } from '../domain/vendor-profile'
 
 @Injectable()
 export class PrismaVendorCatalogRepository implements VendorCatalogRepository {
@@ -41,6 +42,14 @@ export class PrismaVendorCatalogRepository implements VendorCatalogRepository {
         : {}),
     }
     // Uno de más para saber si hay página siguiente sin un COUNT aparte.
+    // Sin N+1, pero ojo con lo que `take: 1` NO hace: Prisma 6 usa aquí la
+    // estrategia de carga por defecto (sin `relationJoins`), así que resuelve
+    // cada relación con UNA consulta `IN (ids de la página)`. El `take: 1` de las
+    // fotos se aplica EN MEMORIA, no en la base: Postgres devuelve todas las
+    // fotos y todos los paquetes de las fichas de la página. El coste está
+    // acotado por `MAX_FOTOS_PORTFOLIO`, `MAX_PAQUETES` y `limit` ≤ 50. Si el
+    // catálogo se vuelve caliente, la alternativa es un `$queryRaw` etiquetado
+    // con `MIN(price)` y `DISTINCT ON`.
     const filas = await this.prisma.vendorProfile.findMany({
       where,
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
@@ -50,10 +59,29 @@ export class PrismaVendorCatalogRepository implements VendorCatalogRepository {
         businessName: true,
         category: { select: { slug: true, name: true } },
         specialty: true,
+        currency: true,
         createdAt: true,
+        packages: { select: { price: true } },
+        // El mismo orden que `CON_HIJOS` en `prisma-vendor-profile.repository.ts`:
+        // "la primera foto" del catálogo es la primera de la ficha.
+        portfolioImages: {
+          select: { storageKey: true },
+          orderBy: [{ position: 'asc' }, { id: 'asc' }],
+          take: 1,
+        },
       },
     })
-    const items = filas.slice(0, limit)
+    const items: PerfilDeCatalogo[] = filas.slice(0, limit).map((f) => ({
+      id: f.id,
+      businessName: f.businessName,
+      category: f.category,
+      specialty: f.specialty,
+      currency: f.currency,
+      // Mismo formato que la ficha ("4500.00") y la misma regla de mínimo.
+      priceFrom: precioDesde(f.packages.map((p) => ({ price: p.price.toFixed(2) }))),
+      imageKey: f.portfolioImages[0]?.storageKey ?? null,
+      createdAt: f.createdAt,
+    }))
     const ultimo = items.at(-1)
     return {
       items,

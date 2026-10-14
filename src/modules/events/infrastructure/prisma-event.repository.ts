@@ -323,6 +323,17 @@ export class PrismaEventRepository implements EventRepository {
     cambios: CambiosMembresia,
     actorId: string,
   ): Promise<boolean> {
+    // Sin cambios no hay nada que escribir ni que auditar: una entrada
+    // `event.member.updated` con `metadata: {}` sería ruido, y tocar `updatedAt`
+    // reordenaría las pendientes del invitado. Sí se responde si sigue viva,
+    // para que el contrato (`false` = ya no se gestiona) no dependa de `cambios`.
+    if (cambios.role === undefined && cambios.budgetView === undefined) {
+      const viva = await this.prisma.eventMembership.findFirst({
+        where: { id: membershipId, eventId, status: { in: [...VIVAS] } },
+        select: { id: true },
+      })
+      return viva !== null
+    }
     return await this.prisma.$transaction(async (tx) => {
       // `updatedAt` explícito: con `data` vacío (sólo cambia el grant) Prisma
       // no emitiría UPDATE y no habría ni bloqueo ni comprobación de estado.

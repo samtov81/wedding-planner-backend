@@ -564,4 +564,80 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
     )
     expect(resultados[1]).toEqual(resultados[0])
   })
+
+  it('las pendientes van por updatedAt desc y, si empatan, por id asc', async () => {
+    const RECIENTE = new Date('2026-10-14T10:00:00.000Z')
+    const ANTIGUA = new Date('2026-10-14T09:00:00.000Z')
+    const resultados = []
+    for (const [nombre, repo] of sujetos()) {
+      const invitada = await prisma.user.create({
+        data: {
+          email: `pendientes-${randomUUID()}@paridad.test`,
+          passwordHash: 'x',
+          fullName: 'Pendientes',
+        },
+      })
+      const ids: string[] = []
+      for (const evento of ['A', 'B', 'C']) {
+        const { id } = await repo.crearConMembresia({ name: `${evento} ${nombre}`, ownerId })
+        ids.push(
+          (
+            await repo.invitarMiembro({
+              eventId: id,
+              userId: invitada.id,
+              role: 'PLANNER',
+              invitedById: ownerId,
+            })
+          ).id,
+        )
+      }
+      // A antigua; B y C empatan en la más reciente. Fijado a mano en los dos:
+      // dos escrituras seguidas en Postgres pueden compartir milisegundo, y en
+      // el doble el reloj nunca empata solo.
+      const [a, b, c] = ids as [string, string, string]
+      if (repo instanceof EventRepositoryEnMemoria) {
+        // Ids del doble invertidos respecto al orden de inserción: un `sort`
+        // estable que ignorase el `id` dejaría C delante de B.
+        const fila = (id: string) => repo.membresias.find((m) => m.id === id)
+        Object.assign(fila(a) ?? {}, { actualizadaEn: 1, id: 'm-3' })
+        Object.assign(fila(b) ?? {}, { actualizadaEn: 2, id: 'm-2' })
+        Object.assign(fila(c) ?? {}, { actualizadaEn: 2, id: 'm-1' })
+      } else {
+        await prisma.eventMembership.update({ where: { id: a }, data: { updatedAt: ANTIGUA } })
+        await prisma.eventMembership.updateMany({
+          where: { id: { in: [b, c] } },
+          data: { updatedAt: RECIENTE },
+        })
+      }
+      const pendientes = await repo.listarInvitacionesPendientes(invitada.id)
+      const empatadas = pendientes.slice(0, 2).map((p) => p.membershipId)
+      expect(empatadas, nombre).toEqual([...empatadas].sort((x, y) => (x < y ? -1 : 1)))
+      resultados.push(pendientes.map((p) => p.eventName.split(' ')[0]).at(-1))
+    }
+    expect(resultados).toEqual(['A', 'A'])
+  })
+
+  it('actualizarMembresia sin cambios comprueba que esté viva y no audita', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })
+      const viva = await invitar(repo, evento.id, 'SinCambios')
+      const revocada = await invitar(repo, evento.id, 'Revocada')
+      await repo.revocarMembresia(evento.id, revocada.membershipId, ownerId, 'revoked')
+      const auditadas = async () =>
+        repo instanceof EventRepositoryEnMemoria
+          ? repo.auditoria.filter((a) => a.eventId === evento.id).length
+          : await prisma.auditLog.count({ where: { eventId: evento.id } })
+      const antes = await auditadas()
+
+      expect(
+        await repo.actualizarMembresia(evento.id, viva.membershipId, {}, ownerId),
+        nombre,
+      ).toBe(true)
+      expect(
+        await repo.actualizarMembresia(evento.id, revocada.membershipId, {}, ownerId),
+        nombre,
+      ).toBe(false)
+      expect(await auditadas(), nombre).toBe(antes)
+    }
+  })
 })

@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common'
 
-import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
+import { QUEUE_PORT, type QueuePort, type QueueName } from '@/modules/queue/application/queue.port'
 import { USER_REPOSITORY, type UserRepository } from '@/modules/users/application/user.repository'
 
 import {
@@ -10,6 +10,23 @@ import {
 } from '../domain/event-errors'
 import type { EventRole } from '../domain/event-access'
 import { EVENT_REPOSITORY, type EventRepository } from './event.repository'
+
+/**
+ * Cola PROPIA de los avisos de invitación (ruling C17). Iban a `email`, cuyo
+ * worker (`auth/interfaces/email.processor.ts`) descarta con
+ * `UnrecoverableError` cualquier nombre que no conoce: el aviso se perdía.
+ */
+export const COLA_MIEMBROS = 'members' satisfies QueueName
+
+export interface PayloadInvitacionMiembro {
+  membershipId: string
+  eventId: string
+  eventName: string
+  email: string
+  fullName: string
+  role: EventRole
+  invitedByName: string
+}
 
 export interface DatosInvitarMiembro {
   eventId: string
@@ -46,6 +63,8 @@ export class InviteMemberUseCase {
       invitedById: datos.invitedById,
     })
 
+    const quienInvita = await this.usuarios.findById(datos.invitedById)
+
     // Encolado, nunca en línea: un proveedor de correo lento no puede hacer
     // fallar una invitación que ya está escrita en la base de datos.
     //
@@ -56,9 +75,9 @@ export class InviteMemberUseCase {
     // reenvía nada. Se acepta porque el doble clic es cotidiano y la
     // re-invitación en el mismo día es rarísima; lo resuelve del todo la tabla
     // de invitaciones con token propio, que todavía no existe.
-    await this.cola.enqueue(
-      'email',
-      'event-invitation',
+    await this.cola.enqueue<PayloadInvitacionMiembro>(
+      COLA_MIEMBROS,
+      'member-invitation',
       {
         membershipId: membresia.id,
         eventId: evento.id,
@@ -66,6 +85,8 @@ export class InviteMemberUseCase {
         email: invitado.email,
         fullName: invitado.fullName,
         role: datos.role,
+        // Sin cuenta (no debería pasar: lo autentica el guard) se firma con el evento.
+        invitedByName: quienInvita?.fullName ?? evento.name,
       },
       { jobId: `event-invite-${membresia.id}` },
     )

@@ -158,6 +158,15 @@ describe('casos de uso de miembros', () => {
     })
   })
 
+  it('aceptar responde NO_PENDING_INVITATION si la escritura condicional no escribe', async () => {
+    // La carrera: la invitación seguía INVITED al leerla, pero otra petición
+    // (un rechazo, una revocación) la cambió antes del UPDATE condicional.
+    repo.aceptarInvitacion = () => Promise.resolve(false)
+    await expect(new AcceptInvitationUseCase(repo).ejecutar(EVENTO, PIA)).rejects.toMatchObject({
+      code: 'NO_PENDING_INVITATION',
+    })
+  })
+
   it('rechazar responde NO_PENDING_INVITATION si la escritura condicional no escribe', async () => {
     repo.revocarMembresia = () => Promise.resolve(false)
     await expect(new DeclineInvitationUseCase(repo).ejecutar(EVENTO, PIA)).rejects.toMatchObject({

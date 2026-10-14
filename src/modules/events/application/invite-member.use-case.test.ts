@@ -72,6 +72,17 @@ describe('InviteMemberUseCase', () => {
     })
   })
 
+  it('si quien invita no tiene cuenta, el aviso se firma con el nombre del evento', async () => {
+    await caso.ejecutar({
+      eventId: EVENTO,
+      email: 'pedro@test.com',
+      role: 'PLANNER',
+      invitedById: 'sin-cuenta',
+    })
+
+    expect(cola.encolados[0]).toMatchObject({ datos: { invitedByName: 'Boda de Ana' } })
+  })
+
   it('deja rastro en la auditoría de quién invitó a quién', async () => {
     await caso.ejecutar({
       eventId: EVENTO,

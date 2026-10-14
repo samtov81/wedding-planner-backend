@@ -307,9 +307,28 @@ model EventMembership {
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  budgetGrant EventBudgetGrant?
+
   @@unique([eventId, userId])
   @@index([userId])
   @@map("event_memberships")
+}
+
+/// Permiso de VER el presupuesto que el creador concede a UN miembro. Existir =
+/// VIEW; no existir = NONE (el valor por defecto de todo miembro, nuevo o
+/// antiguo, sin rellenar nada). Editar es siempre del creador, así que no hay
+/// columna de nivel. Tabla aparte y no columna de `EventMembership` por decisión
+/// del usuario (spec 2026-10-13 §2). Lo que la base no puede impedir —concederlo
+/// al creador o a una membresía REVOKED— lo rechaza el caso de uso.
+model EventBudgetGrant {
+  id           String   @id @default(uuid()) @db.Uuid
+  membershipId String   @unique @db.Uuid
+  grantedById  String   @db.Uuid
+  createdAt    DateTime @default(now())
+
+  membership EventMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@map("event_budget_grants")
 }
 
 /// Quien TRABAJA en el evento: relación comercial, no membresía. O bien apunta

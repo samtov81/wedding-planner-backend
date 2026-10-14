@@ -32,6 +32,12 @@ CHECK constraints:
 - `events_total_budget_no_negativo` — `totalBudget`, when set, cannot be negative.
 - `events_activo_con_fecha` — an `ACTIVE` event must have a `weddingDate`; only `DRAFT` events can omit it.
 
+### `event_budget_grants`
+
+Belongs to an `EventMembership` (`membershipId` unique, `onDelete: Cascade`). A row means the event owner granted that member permission to **view** the budget (expenses, budget summary, the event's `totalBudget` and vendors' `assignedBudget`); no row means no access. Editing the budget is always reserved to the event owner, so there is no level column. `grantedById` records who granted it.
+
+Enforced by the use cases, not by the database: a grant cannot be given to the owner's own membership nor to a `REVOKED` membership. Revoking a membership deletes its grant in the same transaction, and re-inviting deletes any leftover grant, so a re-invited member always starts without budget access. Changing a member's role keeps the grant.
+
 ### `schedule_items`
 
 Belongs to an `Event` (`onDelete: Cascade`). Tracks timeline entries (`ScheduleItemStatus`: `PENDING` \| `IN_PROGRESS` \| `DONE`), each with an optional location (name, address, coordinates, Mapbox id).

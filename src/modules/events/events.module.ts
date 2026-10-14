@@ -9,11 +9,21 @@ import { EventAccessService } from './application/event-access.service'
 import { EVENT_REPOSITORY } from './application/event.repository'
 import { InviteMemberUseCase } from './application/invite-member.use-case'
 import { ListEventsUseCase } from './application/list-events.use-case'
+import {
+  AcceptInvitationUseCase,
+  DeclineInvitationUseCase,
+  ListMembersUseCase,
+  ListMyInvitationsUseCase,
+  RevokeMemberUseCase,
+  UpdateMemberUseCase,
+} from './application/members.use-cases'
 import { PublishEventUseCase } from './application/publish-event.use-case'
 import { UpdateEventUseCase } from './application/update-event.use-case'
 import { PrismaEventRepository } from './infrastructure/prisma-event.repository'
 import { EventAccessGuard } from './interfaces/event-access.guard'
 import { EventsController } from './interfaces/events.controller'
+import { MembersController } from './interfaces/members.controller'
+import { MyInvitationsController } from './interfaces/my-invitations.controller'
 
 /**
  * `AuthModule` se IMPORTA (no se re-provee `JwtAuthGuard`): desde la Tarea 8 el
@@ -31,7 +41,7 @@ import { EventsController } from './interfaces/events.controller'
  */
 @Module({
   imports: [AuthModule, UsersModule],
-  controllers: [EventsController],
+  controllers: [EventsController, MembersController, MyInvitationsController],
   providers: [
     {
       provide: EVENT_REPOSITORY,
@@ -45,6 +55,12 @@ import { EventsController } from './interfaces/events.controller'
     InviteMemberUseCase,
     UpdateEventUseCase,
     PublishEventUseCase,
+    ListMembersUseCase,
+    UpdateMemberUseCase,
+    RevokeMemberUseCase,
+    ListMyInvitationsUseCase,
+    AcceptInvitationUseCase,
+    DeclineInvitationUseCase,
   ],
   exports: [EventAccessService, EVENT_REPOSITORY, EventAccessGuard],
 })

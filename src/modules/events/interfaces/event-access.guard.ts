@@ -6,11 +6,10 @@ import { ForbiddenError, NotFoundError, UnauthorizedError } from '@/shared/domai
 import { EventAccessService } from '../application/event-access.service'
 import { permisosDe, type PermisoDeEvento } from '../domain/event-access'
 import { PERMITIDOS } from './require-event-access.decorator'
+import { esUuid } from './uuid'
 
 /** Mensaje ÚNICO para "aquí no hay nada para ti", exista el evento o no. */
 const NO_EXISTE = 'El evento no existe'
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 interface PeticionConAcceso {
   params: Record<string, string | undefined>
@@ -63,7 +62,7 @@ export class EventAccessGuard implements CanActivate {
     // que no es un UUID llegaría a Prisma y saldría como P2023 → 500, y un
     // 500 donde el resto del mundo ve 404 vuelve a ser un oráculo: distingue
     // "id con forma válida" de "id inventado". Mismo 404, mismo cuerpo.
-    if (eventId === undefined || !UUID.test(eventId)) throw new NotFoundError(NO_EXISTE)
+    if (!esUuid(eventId)) throw new NotFoundError(NO_EXISTE)
 
     const resultado = await this.acceso.resolve(usuario.id, usuario.systemRole, eventId)
 

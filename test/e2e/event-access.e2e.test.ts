@@ -77,7 +77,8 @@ describe('Acceso a eventos e2e', () => {
 
   /**
    * Invita a `plannerEmail`/`plannerId` a `eventoId` y ACTIVA la membresía a
-   * mano (no existe todavía el endpoint de aceptar invitación). Parametrizado
+   * mano. El endpoint de aceptar existe (`POST /events/:id/invitation/accept`);
+   * se activa por Prisma sólo para que esta suite no dependa de ese flujo. Parametrizado
    * por planner para que cada test que necesite un planner activo se cree el
    * suyo, en vez de compartir el `pedro` de `beforeAll`.
    */
@@ -146,7 +147,7 @@ describe('Acceso a eventos e2e', () => {
     expect(respuesta.body).toMatchObject({
       id: eventoDeAna,
       name: 'Boda de Ana',
-      access: { kind: 'member', role: 'COUPLE', owner: true },
+      access: { kind: 'member', role: 'COUPLE', owner: true, budgetView: false },
     })
   })
 
@@ -293,6 +294,7 @@ describe('Acceso a eventos e2e', () => {
       kind: 'member',
       role: 'PLANNER',
       owner: false,
+      budgetView: false,
     })
     // Leer los proveedores sigue abierto a quien planifica.
     await request(url).get(`/events/${eventoId}/vendors`).set('Authorization', auth).expect(200)

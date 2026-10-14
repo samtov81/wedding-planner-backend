@@ -83,9 +83,9 @@ export class EventsController {
     @CurrentUser() usuario: UsuarioAutenticado | undefined,
   ): Promise<EventoRespuesta[]> {
     const yo = this.exigirUsuario(usuario)
-    const eventos = await this.listar.ejecutar(yo.id)
-    return eventos.map((evento) =>
-      this.aRespuesta(evento, accesoAlPresupuestoEnListado(evento.ownerId, yo.id)),
+    const accesibles = await this.listar.ejecutar(yo.id)
+    return accesibles.map(({ evento, budgetView }) =>
+      this.aRespuesta(evento, accesoAlPresupuestoEnListado(evento.ownerId, yo.id, budgetView)),
     )
   }
 
@@ -138,9 +138,13 @@ export class EventsController {
     return this.aRespuesta(await this.publicar.ejecutar(eventId), 'edit')
   }
 
-  /** Invitar toca quién manda en el evento: sólo COUPLE. */
+  /**
+   * Invitar es del creador (spec 2026-10-13): quien gestiona la lista de
+   * miembros —rol, presupuesto, revocar— es él, y un segundo COUPLE que
+   * invitara metería a gente que luego no podría gestionar.
+   */
   @UseGuards(EventAccessGuard)
-  @RequireEventAccess('COUPLE')
+  @RequireEventAccess('OWNER')
   @Post(':eventId/members')
   async invitarMiembro(
     @CurrentUser() usuario: UsuarioAutenticado | undefined,

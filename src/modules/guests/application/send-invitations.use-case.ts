@@ -26,10 +26,10 @@ export interface ResultadoEnvio {
 /**
  * DESIGN-GAP: el brief dice cola `email`. Se usa una cola PROPIA por orden del
  * controlador (ruling C17): `email` ya tiene otros productores (`verify-email`
- * del registro, `event-invitation` de invitar miembros) sin worker todavía, y
- * este worker, al tomar sus jobs y retornar, los marcaría COMPLETADOS y BullMQ
- * los borraría sin enviarse. Sin nadie escuchando `email`, esperan en `waiting`
- * a su worker, que es lo correcto. El nombre del job y el payload no cambian.
+ * del registro; el aviso de invitar miembros, `member-invitation`, tiene ya su
+ * propia cola `members`) y este worker, al tomar sus jobs y retornar, los
+ * marcaría COMPLETADOS y BullMQ los borraría sin enviarse. El nombre del job y
+ * el payload no cambian.
  */
 export const COLA_INVITACIONES = 'invitations' as const
 export const JOB_INVITACION = 'guest-invitation'

@@ -4,10 +4,15 @@ import type { Ubicacion } from '@/shared/domain'
 
 import type {
   CambiosEvento,
+  CambiosMembresia,
   DatosInvitacion,
   DatosNuevoEvento,
+  EventoAccesible,
   EventRepository,
+  InvitacionPendiente,
+  MembresiaGestionable,
   MembresiaPersistida,
+  MiembroPersistido,
 } from '../application/event.repository'
 import {
   DIAS_DE_CIERRE_POR_DEFECTO,
@@ -50,6 +55,18 @@ export interface MembresiaEnMemoria {
   userId: string
   role: EventRole
   status: MembershipStatus
+  /** `true` = tiene fila en `event_budget_grants`. */
+  budgetView?: boolean
+  invitedById?: string
+  /** Tic del reloj del doble en la última escritura: el `updatedAt` de Prisma. */
+  actualizadaEn?: number
+}
+
+/** Lo que `listarMiembros` y las pendientes leen de `users` en Prisma. */
+export interface UsuarioEnMemoria {
+  id: string
+  fullName: string
+  email: string
 }
 
 export interface PerfilEnMemoria {
@@ -85,17 +102,24 @@ export class EventRepositoryEnMemoria implements EventRepository {
   readonly perfiles: PerfilEnMemoria[] = []
   readonly eventVendors: EventVendorEnMemoria[] = []
   readonly auditoria: AuditoriaEnMemoria[] = []
+  readonly usuarios: UsuarioEnMemoria[] = []
+  /** Monótono: dos escrituras seguidas en Prisma podrían compartir milisegundo. */
+  private reloj = 0
 
   buscarMembresiaActiva(
     eventId: string,
     userId: string,
-  ): Promise<{ role: EventRole; owner: boolean } | null> {
+  ): Promise<{ role: EventRole; owner: boolean; budgetView: boolean } | null> {
     const membresia = this.membresias.find(
       (m) => m.eventId === eventId && m.userId === userId && m.status === MEMBRESIA_CON_ACCESO,
     )
     if (membresia === undefined) return Promise.resolve(null)
     const evento = this.eventos.find((e) => e.id === eventId)
-    return Promise.resolve({ role: membresia.role, owner: evento?.ownerId === userId })
+    return Promise.resolve({
+      role: membresia.role,
+      owner: evento?.ownerId === userId,
+      budgetView: membresia.budgetView ?? false,
+    })
   }
 
   buscarContratacionReservada(eventId: string, userId: string): Promise<{ id: string } | null> {
@@ -166,10 +190,10 @@ export class EventRepositoryEnMemoria implements EventRepository {
     return Promise.resolve(this.materializar(evento))
   }
 
-  listarAccesiblesPor(userId: string): Promise<Event[]> {
-    const porMembresia = this.membresias
-      .filter((m) => m.userId === userId && m.status === MEMBRESIA_CON_ACCESO)
-      .map((m) => m.eventId)
+  listarAccesiblesPor(userId: string): Promise<EventoAccesible[]> {
+    const activas = this.membresias.filter(
+      (m) => m.userId === userId && m.status === MEMBRESIA_CON_ACCESO,
+    )
 
     const perfil = this.perfiles.find((p) => p.userId === userId)
     const porContratacion =
@@ -184,9 +208,14 @@ export class EventRepositoryEnMemoria implements EventRepository {
             )
             .map((v) => v.eventId)
 
-    const ids = new Set([...porMembresia, ...porContratacion])
+    const ids = new Set([...activas.map((m) => m.eventId), ...porContratacion])
     return Promise.resolve(
-      this.eventos.filter((e) => ids.has(e.id)).map((e) => this.materializar(e)),
+      this.eventos
+        .filter((e) => ids.has(e.id))
+        .map((e) => ({
+          evento: this.materializar(e),
+          budgetView: activas.find((m) => m.eventId === e.id)?.budgetView ?? false,
+        })),
     )
   }
 
@@ -222,6 +251,10 @@ export class EventRepositoryEnMemoria implements EventRepository {
     membresia.id ??= randomUUID()
     membresia.role = datos.role
     membresia.status = 'INVITED'
+    // Como Prisma: la reinvitación nace sin grant aunque quedara uno huérfano.
+    membresia.budgetView = false
+    membresia.invitedById = datos.invitedById
+    membresia.actualizadaEn = ++this.reloj
     if (existente === undefined) this.membresias.push(membresia)
 
     this.auditoria.push({
@@ -231,6 +264,135 @@ export class EventRepositoryEnMemoria implements EventRepository {
       target: `user:${datos.userId}`,
     })
     return Promise.resolve({ id: membresia.id, role: membresia.role, status: 'INVITED' })
+  }
+
+  listarMiembros(eventId: string): Promise<MiembroPersistido[]> {
+    const ownerId = this.eventos.find((e) => e.id === eventId)?.ownerId
+    const vivas = this.membresias.filter(
+      (m) => m.eventId === eventId && (m.status === 'INVITED' || m.status === 'ACTIVE'),
+    )
+    const miembros = vivas.map((m) => {
+      const u = this.usuarios.find((x) => x.id === m.userId)
+      return {
+        id: m.id ?? '',
+        userId: m.userId,
+        fullName: u?.fullName ?? '',
+        email: u?.email ?? '',
+        role: m.role,
+        status: m.status as 'INVITED' | 'ACTIVE',
+        owner: m.userId === ownerId,
+        budgetView: m.budgetView ?? false,
+      }
+    })
+    // Inserción = `createdAt` asc, como Prisma; creador primero.
+    return Promise.resolve(miembros.sort((a, b) => Number(b.owner) - Number(a.owner)))
+  }
+
+  buscarMembresiaPorId(
+    eventId: string,
+    membershipId: string,
+  ): Promise<MembresiaGestionable | null> {
+    const m = this.membresias.find((x) => x.id === membershipId && x.eventId === eventId)
+    if (m === undefined) return Promise.resolve(null)
+    const ownerId = this.eventos.find((e) => e.id === eventId)?.ownerId
+    return Promise.resolve({
+      id: membershipId,
+      userId: m.userId,
+      role: m.role,
+      status: m.status,
+      owner: m.userId === ownerId,
+      budgetView: m.budgetView ?? false,
+    })
+  }
+
+  actualizarMembresia(
+    eventId: string,
+    membershipId: string,
+    cambios: CambiosMembresia,
+    actorId: string,
+  ): Promise<boolean> {
+    const m = this.viva(eventId, membershipId)
+    if (m === undefined) return Promise.resolve(false)
+    if (cambios.role !== undefined) m.role = cambios.role
+    if (cambios.budgetView !== undefined) m.budgetView = cambios.budgetView
+    // Prisma fuerza `updatedAt` en esta escritura: también reordena las pendientes.
+    m.actualizadaEn = ++this.reloj
+    this.auditoria.push({
+      actorUserId: actorId,
+      eventId,
+      action: 'event.member.updated',
+      target: `membership:${membershipId}`,
+    })
+    return Promise.resolve(true)
+  }
+
+  revocarMembresia(
+    eventId: string,
+    membershipId: string,
+    actorId: string,
+    motivo: 'revoked' | 'declined',
+  ): Promise<boolean> {
+    const m = this.viva(eventId, membershipId)
+    if (m === undefined) return Promise.resolve(false)
+    // Igual que el `WHERE` de Prisma: rechazar sólo vale sobre INVITED.
+    if (motivo === 'declined' && m.status !== 'INVITED') return Promise.resolve(false)
+    m.status = 'REVOKED'
+    m.budgetView = false
+    m.actualizadaEn = ++this.reloj
+    this.auditoria.push({
+      actorUserId: actorId,
+      eventId,
+      action: `event.member.${motivo}`,
+      target: `membership:${membershipId}`,
+    })
+    return Promise.resolve(true)
+  }
+
+  aceptarInvitacion(eventId: string, userId: string): Promise<boolean> {
+    const m = this.membresias.find(
+      (x) => x.eventId === eventId && x.userId === userId && x.status === 'INVITED',
+    )
+    if (m === undefined) return Promise.resolve(false)
+    m.status = MEMBRESIA_CON_ACCESO
+    m.actualizadaEn = ++this.reloj
+    this.auditoria.push({
+      actorUserId: userId,
+      eventId,
+      action: 'event.member.accepted',
+      target: `user:${userId}`,
+    })
+    return Promise.resolve(true)
+  }
+
+  listarInvitacionesPendientes(userId: string): Promise<InvitacionPendiente[]> {
+    const pendientes = this.membresias
+      .filter((m) => m.userId === userId && m.status === 'INVITED')
+      .sort((a, b) => (b.actualizadaEn ?? 0) - (a.actualizadaEn ?? 0))
+    return Promise.resolve(
+      pendientes.map((m) => {
+        const evento = this.eventos.find((e) => e.id === m.eventId)
+        return {
+          membershipId: m.id ?? '',
+          eventId: m.eventId,
+          eventName: this.materializar(evento ?? { id: m.eventId, ownerId: '' }).name,
+          role: m.role,
+          invitedByName:
+            m.invitedById === undefined
+              ? null
+              : (this.usuarios.find((u) => u.id === m.invitedById)?.fullName ?? null),
+        }
+      }),
+    )
+  }
+
+  /** INVITED o ACTIVE de este evento: lo mismo que el `WHERE` condicional de Prisma. */
+  private viva(eventId: string, membershipId: string): MembresiaEnMemoria | undefined {
+    return this.membresias.find(
+      (x) =>
+        x.id === membershipId &&
+        x.eventId === eventId &&
+        (x.status === 'INVITED' || x.status === 'ACTIVE'),
+    )
   }
 
   private estaActivo(eventId: string): boolean {

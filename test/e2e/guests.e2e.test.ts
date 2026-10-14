@@ -97,9 +97,9 @@ describe('Invitados e2e', () => {
 
   /**
    * Invita a `plannerEmail`/`plannerId` a `eventoId` y ACTIVA la membresía a
-   * mano. Todavía no existe el endpoint de aceptar invitación (queda fuera de
-   * esta tarea) y una membresía `INVITED` no concede acceso — es justo lo que
-   * comprueba el e2e de eventos. Parametrizado por planner para que cada test
+   * mano. El endpoint de aceptar existe (`POST /events/:id/invitation/accept`);
+   * se activa por Prisma sólo para que esta suite no dependa de ese flujo (una
+   * membresía `INVITED` no concede acceso, y eso lo comprueba el e2e de eventos). Parametrizado por planner para que cada test
    * que necesite uno se cree el suyo propio.
    */
   async function meterPlannerEn(

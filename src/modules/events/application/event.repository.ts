@@ -37,6 +37,50 @@ export interface MembresiaPersistida {
   status: MembershipStatus
 }
 
+/** Una fila de Members: viva (INVITED o ACTIVE), con nombre y email del usuario. */
+export interface MiembroPersistido {
+  id: string
+  userId: string
+  fullName: string
+  email: string
+  role: EventRole
+  status: 'INVITED' | 'ACTIVE'
+  owner: boolean
+  budgetView: boolean
+}
+
+/** Una membresía por su id, en cualquier estado: lo que el caso de uso valida. */
+export interface MembresiaGestionable {
+  id: string
+  userId: string
+  role: EventRole
+  status: MembershipStatus
+  owner: boolean
+  budgetView: boolean
+}
+
+/** `undefined` = no tocar. */
+export interface CambiosMembresia {
+  role?: EventRole | undefined
+  budgetView?: boolean | undefined
+}
+
+/** Una invitación INVITED del usuario, con lo que la UI enseña para decidir. */
+export interface InvitacionPendiente {
+  membershipId: string
+  eventId: string
+  eventName: string
+  role: EventRole
+  invitedByName: string | null
+}
+
+/** Un evento del listado, con el grant de presupuesto de quien lista. */
+export interface EventoAccesible {
+  evento: Event
+  /** Grant de su membresía ACTIVE; `false` si llega sólo por contratación. */
+  budgetView: boolean
+}
+
 export interface EventRepository {
   /**
    * Membresía ACTIVA, y sólo ACTIVA. Que el filtro de estado viva dentro del
@@ -44,12 +88,13 @@ export interface EventRepository {
    * futuro puede devolver una `INVITED` y conceder acceso sin querer.
    *
    * `owner` sale de la MISMA lectura (`event.ownerId === userId`): resolver el
-   * acceso sigue costando una consulta por fuente.
+   * acceso sigue costando una consulta por fuente. `budgetView` (grant de
+   * presupuesto) también sale de esa lectura.
    */
   buscarMembresiaActiva(
     eventId: string,
     userId: string,
-  ): Promise<{ role: EventRole; owner: boolean } | null>
+  ): Promise<{ role: EventRole; owner: boolean; budgetView: boolean } | null>
 
   /**
    * Contratación BOOKED cuya `VendorProfile` pertenece a este usuario, en un
@@ -79,8 +124,11 @@ export interface EventRepository {
    */
   publicarSiCompleto(eventId: string): Promise<Event | null>
 
-  /** Eventos con membresía ACTIVA, más aquellos donde el usuario está BOOKED. */
-  listarAccesiblesPor(userId: string): Promise<Event[]>
+  /**
+   * Eventos con membresía ACTIVA, más aquellos donde el usuario está BOOKED,
+   * con el grant de cada uno para `accesoAlPresupuestoEnListado`.
+   */
+  listarAccesiblesPor(userId: string): Promise<EventoAccesible[]>
 
   buscarPorId(eventId: string): Promise<Event | null>
 
@@ -91,8 +139,54 @@ export interface EventRepository {
    * Crea la membresía en INVITED y escribe el `AuditLog` en la MISMA
    * transacción. Van juntos porque una invitación sin rastro de quién la
    * cursó es exactamente lo que el log de auditoría existe para impedir.
+   *
+   * Borra además cualquier grant de la membresía: una reinvitación nace sin
+   * acceso al presupuesto aunque una carrera hubiera dejado uno.
    */
   invitarMiembro(datos: DatosInvitacion): Promise<MembresiaPersistida>
+
+  /**
+   * INVITED y ACTIVE (las REVOKED no se gestionan), creador primero y luego
+   * por `createdAt` asc, `id` de desempate. Nombre y email salen del join con
+   * `users` en la misma consulta.
+   */
+  listarMiembros(eventId: string): Promise<MiembroPersistido[]>
+
+  /** En cualquier estado, pero sólo si es de ESTE evento. */
+  buscarMembresiaPorId(eventId: string, membershipId: string): Promise<MembresiaGestionable | null>
+
+  /**
+   * Cambia rol y/o grant + `AuditLog`, en una transacción. Escritura
+   * CONDICIONAL: sólo si la membresía sigue INVITED o ACTIVE en este evento;
+   * `false` si cambió por debajo (el caso de uso responde 404). El `UPDATE`
+   * bloquea la fila hasta el commit, así que un DELETE concurrente espera.
+   */
+  actualizarMembresia(
+    eventId: string,
+    membershipId: string,
+    cambios: CambiosMembresia,
+    actorId: string,
+  ): Promise<boolean>
+
+  /**
+   * → REVOKED, borra el grant y escribe `AuditLog` (`event.member.revoked` o
+   * `event.member.declined`), en una transacción y condicional como la de
+   * arriba. Sirve para revocar, cancelar una invitación y rechazarla. Con
+   * `declined` la condición es más estricta: sólo vale sobre INVITED, para que
+   * un rechazo que pierde la carrera contra un Accept no revoque al ya ACTIVE.
+   */
+  revocarMembresia(
+    eventId: string,
+    membershipId: string,
+    actorId: string,
+    motivo: 'revoked' | 'declined',
+  ): Promise<boolean>
+
+  /** INVITED → ACTIVE de la membresía de `userId` + `AuditLog`. `false` si no estaba INVITED. */
+  aceptarInvitacion(eventId: string, userId: string): Promise<boolean>
+
+  /** INVITED del usuario, más recientes primero, con nombre del evento y de quien invitó. */
+  listarInvitacionesPendientes(userId: string): Promise<InvitacionPendiente[]>
 }
 
 export const EVENT_REPOSITORY = Symbol('EVENT_REPOSITORY')

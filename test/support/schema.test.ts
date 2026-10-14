@@ -310,4 +310,26 @@ describe('restricciones del esquema', () => {
       expect(await prisma.seatAssignment.count({ where: { tableId: t.id } })).toBe(0)
     })
   })
+
+  describe('event_budget_grants', () => {
+    it('un grant por membresía, y se borra con ella', async () => {
+      const miembro = await prisma.user.create({
+        data: { email: 'grant@test.com', passwordHash: 'x', fullName: 'Grant' },
+      })
+      const membresia = await prisma.eventMembership.create({
+        data: { eventId, userId: miembro.id, role: 'PLANNER', status: 'ACTIVE' },
+      })
+      await prisma.eventBudgetGrant.create({
+        data: { membershipId: membresia.id, grantedById: miembro.id },
+      })
+      await expect(
+        prisma.eventBudgetGrant.create({
+          data: { membershipId: membresia.id, grantedById: miembro.id },
+        }),
+      ).rejects.toThrow()
+
+      await prisma.eventMembership.delete({ where: { id: membresia.id } })
+      expect(await prisma.eventBudgetGrant.count({ where: { membershipId: membresia.id } })).toBe(0)
+    })
+  })
 })

@@ -10,6 +10,7 @@ describe('CreateEventUseCase', () => {
     expect(await repo.buscarMembresiaActiva(evento.id, 'ana')).toEqual({
       role: 'COUPLE',
       owner: true,
+      budgetView: false,
     })
   })
 })

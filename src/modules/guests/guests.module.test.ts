@@ -15,7 +15,7 @@ describe('GuestsModule', () => {
 
   it('registra la cola `invitations` y NO la `email` compartida', () => {
     // Registrar `email` aquí le daría a este módulo un worker sobre la cola de
-    // otros productores (verify-email, event-invitation).
+    // otros productores (los avisos de auth, como verify-email).
     const tokens = colasRegistradas()
 
     expect(tokens).toContain(getQueueToken('invitations'))

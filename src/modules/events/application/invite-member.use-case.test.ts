@@ -59,7 +59,17 @@ describe('InviteMemberUseCase', () => {
     })
 
     expect(cola.encolados).toHaveLength(1)
-    expect(cola.encolados[0]).toMatchObject({ cola: 'email', nombre: 'event-invitation' })
+    expect(cola.encolados[0]).toMatchObject({
+      cola: 'members',
+      nombre: 'member-invitation',
+      datos: {
+        email: 'pedro@test.com',
+        fullName: 'Pedro',
+        invitedByName: 'Ana',
+        eventName: 'Boda de Ana',
+        role: 'PLANNER',
+      },
+    })
   })
 
   it('deja rastro en la auditoría de quién invitó a quién', async () => {

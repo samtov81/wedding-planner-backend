@@ -23,6 +23,10 @@ import {
   PASSWORD_CHANGED_RENDERER,
   type PasswordChangedRenderer,
 } from './application/password-changed-renderer.port'
+import {
+  MEMBER_INVITATION_RENDERER,
+  type MemberInvitationRenderer,
+} from './application/member-invitation-renderer.port'
 import { MAIL_PORT, type MailPort } from './application/mail.port'
 import { FakeMailAdapter } from './infrastructure/mail.adapter.fake'
 import { ResendMailAdapter } from './infrastructure/resend-mail.adapter'
@@ -31,6 +35,7 @@ import { renderEmailVerification } from './infrastructure/templates/email-verifi
 import { renderRegistrationAttemptNotice } from './infrastructure/templates/registration-attempt-notice'
 import { renderPasswordReset } from './infrastructure/templates/password-reset'
 import { renderPasswordChanged } from './infrastructure/templates/password-changed'
+import { renderMemberInvitation } from './infrastructure/templates/member-invitation'
 
 @Module({
   providers: [
@@ -62,6 +67,10 @@ import { renderPasswordChanged } from './infrastructure/templates/password-chang
       provide: PASSWORD_CHANGED_RENDERER,
       useValue: { render: renderPasswordChanged } satisfies PasswordChangedRenderer,
     },
+    {
+      provide: MEMBER_INVITATION_RENDERER,
+      useValue: { render: renderMemberInvitation } satisfies MemberInvitationRenderer,
+    },
   ],
   exports: [
     MAIL_PORT,
@@ -70,6 +79,7 @@ import { renderPasswordChanged } from './infrastructure/templates/password-chang
     REGISTRATION_NOTICE_RENDERER,
     PASSWORD_RESET_RENDERER,
     PASSWORD_CHANGED_RENDERER,
+    MEMBER_INVITATION_RENDERER,
   ],
 })
 export class MailModule {}

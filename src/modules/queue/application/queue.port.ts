@@ -1,8 +1,8 @@
 /**
- * `invitations` tiene cola PROPIA (ruling C17), igual que `members` (avisos de invitación a un
- * evento): en BullMQ un worker que toma un
- * job y retorna lo marca completado, así que un worker sobre una cola compartida
- * se come los jobs de los demás productores. Cada tipo con worker propio, su cola.
+ * `invitations` tiene cola PROPIA (ruling C17), igual que `members` (avisos de
+ * invitación a un evento): en BullMQ un worker que toma un job y retorna lo
+ * marca completado, así que un worker sobre una cola compartida se come los
+ * jobs de los demás productores. Cada tipo con worker propio, su cola.
  */
 export type QueueName = 'email' | 'invitations' | 'notifications' | 'maintenance' | 'members'
 

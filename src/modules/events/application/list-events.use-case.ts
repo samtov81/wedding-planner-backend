@@ -1,7 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common'
 
-import type { Event } from '../domain/event'
-import { EVENT_REPOSITORY, type EventRepository } from './event.repository'
+import { EVENT_REPOSITORY, type EventoAccesible, type EventRepository } from './event.repository'
 
 @Injectable()
 export class ListEventsUseCase {
@@ -13,7 +12,7 @@ export class ListEventsUseCase {
    * suelto; si divergieran, un vendor vería un evento en su lista y recibiría
    * un 404 al abrirlo.
    */
-  async ejecutar(userId: string): Promise<Event[]> {
+  async ejecutar(userId: string): Promise<EventoAccesible[]> {
     return await this.eventos.listarAccesiblesPor(userId)
   }
 }

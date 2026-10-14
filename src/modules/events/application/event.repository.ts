@@ -37,6 +37,13 @@ export interface MembresiaPersistida {
   status: MembershipStatus
 }
 
+/** Un evento del listado, con el grant de presupuesto de quien lista. */
+export interface EventoAccesible {
+  evento: Event
+  /** Grant de su membresía ACTIVE; `false` si llega sólo por contratación. */
+  budgetView: boolean
+}
+
 export interface EventRepository {
   /**
    * Membresía ACTIVA, y sólo ACTIVA. Que el filtro de estado viva dentro del
@@ -80,8 +87,11 @@ export interface EventRepository {
    */
   publicarSiCompleto(eventId: string): Promise<Event | null>
 
-  /** Eventos con membresía ACTIVA, más aquellos donde el usuario está BOOKED. */
-  listarAccesiblesPor(userId: string): Promise<Event[]>
+  /**
+   * Eventos con membresía ACTIVA, más aquellos donde el usuario está BOOKED,
+   * con el grant de cada uno para `accesoAlPresupuestoEnListado`.
+   */
+  listarAccesiblesPor(userId: string): Promise<EventoAccesible[]>
 
   buscarPorId(eventId: string): Promise<Event | null>
 

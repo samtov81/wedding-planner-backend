@@ -9,6 +9,7 @@ import type {
   CambiosEvento,
   DatosInvitacion,
   DatosNuevoEvento,
+  EventoAccesible,
   EventRepository,
   MembresiaPersistida,
 } from '../application/event.repository'
@@ -168,7 +169,7 @@ export class PrismaEventRepository implements EventRepository {
     return fila === null ? null : this.aDominio(fila)
   }
 
-  async listarAccesiblesPor(userId: string): Promise<Event[]> {
+  async listarAccesiblesPor(userId: string): Promise<EventoAccesible[]> {
     const filas = await this.prisma.event.findMany({
       where: {
         OR: [
@@ -179,7 +180,14 @@ export class PrismaEventRepository implements EventRepository {
           },
         ],
       },
-      include: CON_CONTEOS,
+      include: {
+        ...CON_CONTEOS,
+        // `(eventId, userId)` es único: 0 o 1 filas.
+        memberships: {
+          where: { userId, status: MEMBRESIA_CON_ACCESO },
+          select: { budgetGrant: { select: { id: true } } },
+        },
+      },
       // Borradores sin fecha al final; `createdAt` desempata de forma estable.
       orderBy: [
         { weddingDate: { sort: 'asc', nulls: 'last' } },
@@ -187,7 +195,10 @@ export class PrismaEventRepository implements EventRepository {
         { id: 'asc' },
       ],
     })
-    return filas.map((fila) => this.aDominio(fila))
+    return filas.map(({ memberships, ...fila }) => ({
+      evento: this.aDominio(fila),
+      budgetView: memberships[0]?.budgetGrant != null,
+    }))
   }
 
   async buscarPorId(eventId: string): Promise<Event | null> {

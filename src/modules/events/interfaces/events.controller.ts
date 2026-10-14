@@ -83,16 +83,9 @@ export class EventsController {
     @CurrentUser() usuario: UsuarioAutenticado | undefined,
   ): Promise<EventoRespuesta[]> {
     const yo = this.exigirUsuario(usuario)
-    const eventos = await this.listar.ejecutar(yo.id)
-    return eventos.map((evento) =>
-      this.aRespuesta(
-        evento,
-        accesoAlPresupuestoEnListado(
-          evento.ownerId,
-          yo.id,
-          false, // Task 3 lo sustituye por el grant real del listado.
-        ),
-      ),
+    const accesibles = await this.listar.ejecutar(yo.id)
+    return accesibles.map(({ evento, budgetView }) =>
+      this.aRespuesta(evento, accesoAlPresupuestoEnListado(evento.ownerId, yo.id, budgetView)),
     )
   }
 

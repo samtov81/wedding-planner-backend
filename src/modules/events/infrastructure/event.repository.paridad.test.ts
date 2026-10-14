@@ -210,4 +210,41 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
       })
     }
   })
+
+  it('listarAccesiblesPor devuelve el grant de quien pregunta en cada evento', async () => {
+    const miembro = await prisma.user.create({
+      data: { email: `lista-${Date.now()}@paridad.test`, passwordHash: 'x', fullName: 'Lista' },
+    })
+    for (const [nombre, repo] of sujetos()) {
+      const conGrant = await repo.crearConMembresia({ name: 'Con grant', ownerId })
+      const sinGrant = await repo.crearConMembresia({ name: 'Sin grant', ownerId })
+      for (const [evento, budgetView] of [
+        [conGrant, true],
+        [sinGrant, false],
+      ] as const) {
+        if (repo instanceof EventRepositoryEnMemoria) {
+          repo.membresias.push({
+            id: `${nombre}-${evento.id}`,
+            eventId: evento.id,
+            userId: miembro.id,
+            role: 'COUPLE',
+            status: 'ACTIVE',
+            budgetView,
+          })
+        } else {
+          const m = await prisma.eventMembership.create({
+            data: { eventId: evento.id, userId: miembro.id, role: 'COUPLE', status: 'ACTIVE' },
+          })
+          if (budgetView) {
+            await prisma.eventBudgetGrant.create({
+              data: { membershipId: m.id, grantedById: ownerId },
+            })
+          }
+        }
+      }
+      const lista = await repo.listarAccesiblesPor(miembro.id)
+      const porNombre = Object.fromEntries(lista.map((a) => [a.evento.name, a.budgetView]))
+      expect(porNombre, nombre).toMatchObject({ 'Con grant': true, 'Sin grant': false })
+    }
+  })
 })

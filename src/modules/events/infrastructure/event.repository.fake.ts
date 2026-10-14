@@ -6,6 +6,7 @@ import type {
   CambiosEvento,
   DatosInvitacion,
   DatosNuevoEvento,
+  EventoAccesible,
   EventRepository,
   MembresiaPersistida,
 } from '../application/event.repository'
@@ -172,10 +173,10 @@ export class EventRepositoryEnMemoria implements EventRepository {
     return Promise.resolve(this.materializar(evento))
   }
 
-  listarAccesiblesPor(userId: string): Promise<Event[]> {
-    const porMembresia = this.membresias
-      .filter((m) => m.userId === userId && m.status === MEMBRESIA_CON_ACCESO)
-      .map((m) => m.eventId)
+  listarAccesiblesPor(userId: string): Promise<EventoAccesible[]> {
+    const activas = this.membresias.filter(
+      (m) => m.userId === userId && m.status === MEMBRESIA_CON_ACCESO,
+    )
 
     const perfil = this.perfiles.find((p) => p.userId === userId)
     const porContratacion =
@@ -190,9 +191,14 @@ export class EventRepositoryEnMemoria implements EventRepository {
             )
             .map((v) => v.eventId)
 
-    const ids = new Set([...porMembresia, ...porContratacion])
+    const ids = new Set([...activas.map((m) => m.eventId), ...porContratacion])
     return Promise.resolve(
-      this.eventos.filter((e) => ids.has(e.id)).map((e) => this.materializar(e)),
+      this.eventos
+        .filter((e) => ids.has(e.id))
+        .map((e) => ({
+          evento: this.materializar(e),
+          budgetView: activas.find((m) => m.eventId === e.id)?.budgetView ?? false,
+        })),
     )
   }
 

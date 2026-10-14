@@ -421,9 +421,10 @@ export class EventRepositoryEnMemoria implements EventRepository {
   /**
    * El usuario sembrado en `usuarios`, o un error que dice cuál falta. Antes
    * devolvía `''` (o `null` para quien invitó) en silencio, y un test que
-   * olvidaba sembrar pasaba comparando nombres vacíos. En Prisma no hay
-   * equivalente: la FK garantiza el join de `listarMiembros`, e `invitedById`
-   * apunta siempre a una cuenta porque la app no borra usuarios.
+   * olvidaba sembrar pasaba comparando nombres vacíos. En Prisma la FK
+   * garantiza el join de `listarMiembros`; `invitedById` no tiene FK, pero hoy
+   * la app no borra usuarios; si lo hiciera, Prisma devolvería `null` y este
+   * doble tendría que dejar de lanzar.
    */
   private usuarioSembrado(userId: string, metodo: string): UsuarioEnMemoria {
     const usuario = this.usuarios.find((u) => u.id === userId)

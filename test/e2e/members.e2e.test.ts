@@ -268,9 +268,18 @@ describe('Miembros e invitaciones e2e', () => {
   })
 
   it('invitar tiene límite propio: 20 por hora desde la misma IP; la 21 es 429', async () => {
+    // Los invitados nunca entran: basta con que la cuenta exista.
     const invitados = []
     for (let i = 0; i < 21; i += 1) {
-      invitados.push(await registrarYEntrar(`lim-${i}-${randomUUID()}@test.com`, `Lim ${i}`))
+      invitados.push(
+        await prisma.user.create({
+          data: {
+            email: `lim-${i}-${randomUUID()}@test.com`,
+            passwordHash: 'x',
+            fullName: `Lim ${i}`,
+          },
+        }),
+      )
     }
     for (const u of invitados.slice(0, 20)) await invitar(u.email, 'PLANNER')
 

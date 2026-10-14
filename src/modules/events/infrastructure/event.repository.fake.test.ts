@@ -3,9 +3,11 @@ import { EventRepositoryEnMemoria } from './event.repository.fake'
 const EVENTO = '11111111-1111-4111-8111-111111111111'
 
 /**
- * Lo que el doble hace por su cuenta, sin contraparte en Prisma: allí el join
- * con `users` nunca falla porque la FK lo garantiza. En el doble, un usuario
- * sin sembrar es un error del TEST, y se dice en vez de devolver `''`.
+ * Lo que el doble hace por su cuenta, sin contraparte en Prisma. Allí la FK
+ * sólo cubre el join de `listarMiembros`; para quien invitó (`invitedById`, sin
+ * FK) Prisma devolvería `null`, un caso que el doble trata a propósito como un
+ * error de siembra. En el doble, un usuario sin sembrar es un error del TEST, y
+ * se dice en vez de devolver `''` o `null`.
  */
 describe('EventRepositoryEnMemoria', () => {
   let repo: EventRepositoryEnMemoria

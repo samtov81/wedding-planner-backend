@@ -617,7 +617,7 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
     expect(resultados).toEqual(['A', 'A'])
   })
 
-  it('actualizarMembresia sin cambios comprueba que esté viva y no audita', async () => {
+  it('actualizarMembresia sin cambios comprueba que esté viva, no audita ni toca updatedAt', async () => {
     for (const [nombre, repo] of sujetos()) {
       const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })
       const viva = await invitar(repo, evento.id, 'SinCambios')
@@ -627,7 +627,17 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
         repo instanceof EventRepositoryEnMemoria
           ? repo.auditoria.filter((a) => a.eventId === evento.id).length
           : await prisma.auditLog.count({ where: { eventId: evento.id } })
+      const actualizadaEn = async () =>
+        repo instanceof EventRepositoryEnMemoria
+          ? repo.membresias.find((m) => m.id === viva.membershipId)?.actualizadaEn
+          : (
+              await prisma.eventMembership.findUniqueOrThrow({
+                where: { id: viva.membershipId },
+              })
+            ).updatedAt.getTime()
       const antes = await auditadas()
+      const tocadaAntes = await actualizadaEn()
+      expect(tocadaAntes, nombre).toBeDefined()
 
       expect(
         await repo.actualizarMembresia(evento.id, viva.membershipId, {}, ownerId),
@@ -638,6 +648,7 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
         nombre,
       ).toBe(false)
       expect(await auditadas(), nombre).toBe(antes)
+      expect(await actualizadaEn(), nombre).toBe(tocadaAntes)
     }
   })
 

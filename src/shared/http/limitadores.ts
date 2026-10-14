@@ -37,6 +37,7 @@ export const LIMITADOR_FORGOT_PASSWORD = 'forgot-password'
 export const LIMITADOR_RESET_PASSWORD = 'reset-password'
 export const LIMITADOR_VENDOR_CATALOG = 'vendor-catalog'
 export const LIMITADOR_VENDOR_PROFILE = 'vendor-profile'
+export const LIMITADOR_INVITE = 'invite'
 
 type LimitadorDeRuta =
   | typeof LIMITADOR_RSVP
@@ -49,6 +50,7 @@ type LimitadorDeRuta =
   | typeof LIMITADOR_RESET_PASSWORD
   | typeof LIMITADOR_VENDOR_CATALOG
   | typeof LIMITADOR_VENDOR_PROFILE
+  | typeof LIMITADOR_INVITE
 
 const reflector = new Reflector()
 const marca = (nombre: LimitadorDeRuta): string => `limitador-de-ruta:${nombre}`
@@ -152,6 +154,16 @@ export function crearLimitadores(limiteGlobalPorMinuto: number): ThrottlerOption
       ttl: 60_000,
       limit: 60,
       skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_VENDOR_PROFILE),
+    },
+    // Invitar a un miembro manda un correo por invitación: el límite propio
+    // corta el envío masivo desde una cuenta de creador (decisión del usuario,
+    // 2026-10-14). Por IP, como el resto: el mismo DESIGN-GAP que
+    // `vendor-catalog` (el guard cuenta antes de que exista `req.user`).
+    {
+      name: LIMITADOR_INVITE,
+      ttl: 3_600_000,
+      limit: 20,
+      skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_INVITE),
     },
   ]
 }

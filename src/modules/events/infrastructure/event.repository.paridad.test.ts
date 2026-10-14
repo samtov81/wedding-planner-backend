@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client'
 
 import type { PrismaService } from '@/modules/database/prisma.service'
 
+import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 import type { EventRepository } from '../application/event.repository'
 import { EventRepositoryEnMemoria } from './event.repository.fake'
@@ -393,5 +394,174 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
     expect(resultados[1]).toEqual([
       { eventName: 'Boda prisma', role: 'PLANNER', invitedByName: 'Owner' },
     ])
+  })
+
+  it('un grant en la fila del creador se lee como owner con budgetView', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })
+      if (repo instanceof EventRepositoryEnMemoria) {
+        const fila = repo.membresias.find((m) => m.eventId === evento.id && m.userId === ownerId)
+        if (fila !== undefined) fila.budgetView = true
+      } else {
+        const m = await prisma.eventMembership.findUniqueOrThrow({
+          where: { eventId_userId: { eventId: evento.id, userId: ownerId } },
+        })
+        await prisma.eventBudgetGrant.create({ data: { membershipId: m.id, grantedById: ownerId } })
+      }
+      // El dominio ya lo trata como `edit`: aquí sólo importa que ambos lo lean igual.
+      expect(await repo.buscarMembresiaActiva(evento.id, ownerId), nombre).toEqual({
+        role: 'COUPLE',
+        owner: true,
+        budgetView: true,
+      })
+    }
+  })
+
+  it('un grant sobre una membresía INVITED o REVOKED no abre el evento', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      for (const status of ['INVITED', 'REVOKED'] as const) {
+        const evento = await repo.crearConMembresia({ name: `Boda ${status}`, ownerId })
+        const m = await invitar(repo, evento.id, `Grant-${status}`)
+        if (repo instanceof EventRepositoryEnMemoria) {
+          const fila = repo.membresias.find((x) => x.id === m.membershipId)
+          if (fila !== undefined) Object.assign(fila, { status, budgetView: true })
+        } else {
+          await prisma.eventMembership.update({ where: { id: m.membershipId }, data: { status } })
+          await prisma.eventBudgetGrant.create({
+            data: { membershipId: m.membershipId, grantedById: ownerId },
+          })
+        }
+        expect(await repo.buscarMembresiaActiva(evento.id, m.userId), nombre).toBeNull()
+        expect(await repo.listarAccesiblesPor(m.userId), nombre).toEqual([])
+      }
+    }
+  })
+
+  it('el acceso sólo por contratación BOOKED entra en el listado sin budgetView', async () => {
+    const categoria = await categoriaId(prisma)
+    for (const [nombre, repo] of sujetos()) {
+      const vendor = await prisma.user.create({
+        data: {
+          email: `vendor-${randomUUID()}@paridad.test`,
+          passwordHash: 'x',
+          fullName: 'Vendor',
+        },
+      })
+      const borrador = await repo.crearConMembresia({ name: `Borrador ${nombre}`, ownerId })
+      const creado = await repo.crearConMembresia({
+        name: `Contratado ${nombre}`,
+        ownerId,
+        weddingDate: new Date('2027-06-12T00:00:00Z'),
+        totalBudget: '100.00',
+        venue: VENUE,
+      })
+      const activo = await repo.publicarSiCompleto(creado.id)
+      expect(activo?.status, nombre).toBe('ACTIVE')
+      if (repo instanceof EventRepositoryEnMemoria) {
+        repo.perfiles.push({ id: `perfil-${nombre}`, userId: vendor.id })
+        for (const eventId of [creado.id, borrador.id]) {
+          repo.eventVendors.push({
+            id: `ev-${eventId}`,
+            eventId,
+            vendorProfileId: `perfil-${nombre}`,
+            status: 'BOOKED',
+          })
+        }
+      } else {
+        const perfil = await prisma.vendorProfile.create({
+          data: { userId: vendor.id, businessName: 'Vendor', categoryId: categoria },
+        })
+        for (const eventId of [creado.id, borrador.id]) {
+          await prisma.eventVendor.create({
+            data: { eventId, vendorProfileId: perfil.id, categoryId: categoria, status: 'BOOKED' },
+          })
+        }
+      }
+      // Sin membresía: el borrador no se enseña a proveedores.
+      expect(await repo.buscarMembresiaActiva(creado.id, vendor.id), nombre).toBeNull()
+      const lista = await repo.listarAccesiblesPor(vendor.id)
+      expect(
+        lista.map((a) => ({ evento: a.evento.id, budgetView: a.budgetView })),
+        nombre,
+      ).toEqual([{ evento: creado.id, budgetView: false }])
+    }
+  })
+
+  it('actualizarMembresia y revocarMembresia sobre una membresía ACTIVE', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })
+      const m = await invitar(repo, evento.id, 'Activa')
+      expect(await repo.aceptarInvitacion(evento.id, m.userId)).toBe(true)
+      expect(
+        await repo.actualizarMembresia(
+          evento.id,
+          m.membershipId,
+          { role: 'COUPLE', budgetView: true },
+          ownerId,
+        ),
+        nombre,
+      ).toBe(true)
+      expect(await repo.buscarMembresiaActiva(evento.id, m.userId), nombre).toEqual({
+        role: 'COUPLE',
+        owner: false,
+        budgetView: true,
+      })
+      expect(
+        await repo.revocarMembresia(evento.id, m.membershipId, ownerId, 'revoked'),
+        nombre,
+      ).toBe(true)
+      expect(await repo.buscarMembresiaActiva(evento.id, m.userId), nombre).toBeNull()
+      expect(await repo.buscarMembresiaPorId(evento.id, m.membershipId), nombre).toMatchObject({
+        status: 'REVOKED',
+        budgetView: false,
+      })
+    }
+  })
+
+  it('el AuditLog de invitar, aceptar, actualizar, revocar y rechazar coincide', async () => {
+    const resultados = []
+    for (const [, repo] of sujetos()) {
+      const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })
+      const ana = await invitar(repo, evento.id, 'Ana')
+      const pia = await invitar(repo, evento.id, 'Pia')
+      await repo.aceptarInvitacion(evento.id, ana.userId)
+      await repo.actualizarMembresia(evento.id, ana.membershipId, { budgetView: true }, ownerId)
+      await repo.revocarMembresia(evento.id, ana.membershipId, ownerId, 'revoked')
+      await repo.revocarMembresia(evento.id, pia.membershipId, pia.userId, 'declined')
+
+      // Los ids cambian entre sujetos: se comparan por quién son.
+      const etiquetas = new Map<string, string>([
+        [ownerId, 'owner'],
+        [ana.userId, 'ana'],
+        [pia.userId, 'pia'],
+        [ana.membershipId, 'm-ana'],
+        [pia.membershipId, 'm-pia'],
+      ])
+      const etiqueta = (id: string | null) => (id === null ? null : (etiquetas.get(id) ?? id))
+      const filas =
+        repo instanceof EventRepositoryEnMemoria
+          ? repo.auditoria.filter((a) => a.eventId === evento.id)
+          : await prisma.auditLog.findMany({ where: { eventId: evento.id } })
+      resultados.push(
+        filas
+          .map((a) => {
+            const [tipo, id] = a.target.split(':') as [string, string]
+            return `${a.action} ${etiqueta(a.actorUserId)} ${tipo}:${etiqueta(id)}`
+          })
+          // `createdAt` puede empatar en el mismo milisegundo: se compara el conjunto.
+          .sort(),
+      )
+    }
+    expect(resultados[0]).toEqual(
+      [
+        'event.member.invited owner user:ana',
+        'event.member.invited owner user:pia',
+        'event.member.accepted ana user:ana',
+        'event.member.updated owner membership:m-ana',
+        'event.member.revoked owner membership:m-ana',
+        'event.member.declined pia membership:m-pia',
+      ].sort(),
+    )
+    expect(resultados[1]).toEqual(resultados[0])
   })
 })

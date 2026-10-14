@@ -50,6 +50,8 @@ export interface MembresiaEnMemoria {
   userId: string
   role: EventRole
   status: MembershipStatus
+  /** `true` = tiene fila en `event_budget_grants`. */
+  budgetView?: boolean
 }
 
 export interface PerfilEnMemoria {
@@ -89,13 +91,17 @@ export class EventRepositoryEnMemoria implements EventRepository {
   buscarMembresiaActiva(
     eventId: string,
     userId: string,
-  ): Promise<{ role: EventRole; owner: boolean } | null> {
+  ): Promise<{ role: EventRole; owner: boolean; budgetView: boolean } | null> {
     const membresia = this.membresias.find(
       (m) => m.eventId === eventId && m.userId === userId && m.status === MEMBRESIA_CON_ACCESO,
     )
     if (membresia === undefined) return Promise.resolve(null)
     const evento = this.eventos.find((e) => e.id === eventId)
-    return Promise.resolve({ role: membresia.role, owner: evento?.ownerId === userId })
+    return Promise.resolve({
+      role: membresia.role,
+      owner: evento?.ownerId === userId,
+      budgetView: membresia.budgetView ?? false,
+    })
   }
 
   buscarContratacionReservada(eventId: string, userId: string): Promise<{ id: string } | null> {

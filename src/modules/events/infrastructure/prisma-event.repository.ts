@@ -55,14 +55,24 @@ export class PrismaEventRepository implements EventRepository {
   async buscarMembresiaActiva(
     eventId: string,
     userId: string,
-  ): Promise<{ role: EventRole; owner: boolean } | null> {
+  ): Promise<{ role: EventRole; owner: boolean; budgetView: boolean } | null> {
     // El estado se filtra en el WHERE, no después: así no existe la ventana en
     // la que alguien lea la fila y se olvide de mirar el `status`.
     const fila = await this.prisma.eventMembership.findFirst({
       where: { eventId, userId, status: MEMBRESIA_CON_ACCESO },
-      select: { role: true, event: { select: { ownerId: true } } },
+      select: {
+        role: true,
+        event: { select: { ownerId: true } },
+        budgetGrant: { select: { id: true } },
+      },
     })
-    return fila === null ? null : { role: fila.role, owner: fila.event.ownerId === userId }
+    return fila === null
+      ? null
+      : {
+          role: fila.role,
+          owner: fila.event.ownerId === userId,
+          budgetView: fila.budgetGrant !== null,
+        }
   }
 
   async buscarContratacionReservada(

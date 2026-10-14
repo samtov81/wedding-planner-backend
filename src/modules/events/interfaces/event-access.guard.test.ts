@@ -90,7 +90,12 @@ describe('EventAccessGuard', () => {
     }
 
     await expect(guard.canActivate(contextoCon(req, abierta))).resolves.toBe(true)
-    expect(req.eventAccess).toEqual({ kind: 'member', role: 'COUPLE', owner: true })
+    expect(req.eventAccess).toEqual({
+      kind: 'member',
+      role: 'COUPLE',
+      owner: true,
+      budgetView: false,
+    })
   })
 
   it('responde 404 y NO 403 a quien no tiene ningún acceso al evento', async () => {

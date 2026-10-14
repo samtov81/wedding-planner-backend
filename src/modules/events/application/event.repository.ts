@@ -44,12 +44,13 @@ export interface EventRepository {
    * futuro puede devolver una `INVITED` y conceder acceso sin querer.
    *
    * `owner` sale de la MISMA lectura (`event.ownerId === userId`): resolver el
-   * acceso sigue costando una consulta por fuente.
+   * acceso sigue costando una consulta por fuente. `budgetView` (grant de
+   * presupuesto) también sale de esa lectura.
    */
   buscarMembresiaActiva(
     eventId: string,
     userId: string,
-  ): Promise<{ role: EventRole; owner: boolean } | null>
+  ): Promise<{ role: EventRole; owner: boolean; budgetView: boolean } | null>
 
   /**
    * Contratación BOOKED cuya `VendorProfile` pertenece a este usuario, en un

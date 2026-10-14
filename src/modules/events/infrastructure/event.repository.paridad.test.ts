@@ -172,10 +172,41 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
       expect(await repo.buscarMembresiaActiva(evento.id, ownerId), nombre).toEqual({
         role: 'COUPLE',
         owner: true,
+        budgetView: false,
       })
       expect(await repo.buscarMembresiaActiva(evento.id, otro.id), nombre).toEqual({
         role: 'COUPLE',
         owner: false,
+        budgetView: false,
+      })
+    }
+  })
+
+  it('buscarMembresiaActiva lee el grant de presupuesto en la misma consulta', async () => {
+    const otro = await prisma.user.create({
+      data: { email: `grant-${Date.now()}@paridad.test`, passwordHash: 'x', fullName: 'Con grant' },
+    })
+    for (const [nombre, repo] of sujetos()) {
+      const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })
+      if (repo instanceof EventRepositoryEnMemoria) {
+        repo.membresias.push({
+          id: `m-${nombre}`,
+          eventId: evento.id,
+          userId: otro.id,
+          role: 'PLANNER',
+          status: 'ACTIVE',
+          budgetView: true,
+        })
+      } else {
+        const m = await prisma.eventMembership.create({
+          data: { eventId: evento.id, userId: otro.id, role: 'PLANNER', status: 'ACTIVE' },
+        })
+        await prisma.eventBudgetGrant.create({ data: { membershipId: m.id, grantedById: ownerId } })
+      }
+      expect(await repo.buscarMembresiaActiva(evento.id, otro.id), nombre).toEqual({
+        role: 'PLANNER',
+        owner: false,
+        budgetView: true,
       })
     }
   })

@@ -29,8 +29,11 @@ export type EventAccess =
    * fuente de acceso aparte: sólo lo lleva quien ya tiene membresía ACTIVE,
    * y lo que añade es el permiso `OWNER`. Un segundo COUPLE invitado tiene
    * el mismo rol, pero no es owner.
+   *
+   * `budgetView`: el creador le concedió ver el presupuesto
+   * (`event_budget_grants`). Sale de la MISMA lectura que la membresía.
    */
-  | { kind: 'member'; role: EventRole; owner: boolean }
+  | { kind: 'member'; role: EventRole; owner: boolean; budgetView: boolean }
   | { kind: 'vendor'; eventVendorId: string }
   | { kind: 'none' }
 
@@ -65,24 +68,43 @@ export function permisosDe(acceso: EventAccess): PermisoDeEvento[] {
 
 /**
  * Qué puede hacer alguien con el presupuesto del evento (gastos, resumen,
- * total y lo asignado a proveedores). Es privado del creador: sólo él lo
- * edita, y la entrega 2 añadirá `view` para los miembros a los que se lo
- * conceda uno a uno. Hasta entonces `view` existe en el tipo pero nadie lo
- * obtiene. ADMIN, como en el resto de permisos, lo puede todo.
+ * total y lo asignado a proveedores). Lo edita sólo el creador; él puede
+ * conceder `view` a cada miembro por separado (`event_budget_grants`). ADMIN,
+ * como en el resto de permisos, lo puede todo.
  */
 export type BudgetAccess = 'none' | 'view' | 'edit'
 
+/**
+ * LA regla, una sola vez. Las dos funciones públicas la consultan con lo que
+ * cada una sabe: el evento suelto tiene un `EventAccess`; el listado sólo el
+ * creador de cada evento, quién pregunta y si tiene grant. Que ambas pasen por
+ * aquí es lo que impide que el listado y el detalle enseñen cosas distintas.
+ */
+function reglaPresupuesto(quien: {
+  admin: boolean
+  owner: boolean
+  budgetView: boolean
+}): BudgetAccess {
+  if (quien.admin || quien.owner) return 'edit'
+  return quien.budgetView ? 'view' : 'none'
+}
+
 export function accesoAlPresupuesto(acceso: EventAccess): BudgetAccess {
-  if (acceso.kind === 'admin') return 'edit'
-  if (acceso.kind === 'member' && acceso.owner) return 'edit'
-  return 'none'
+  if (acceso.kind === 'admin') {
+    return reglaPresupuesto({ admin: true, owner: false, budgetView: false })
+  }
+  if (acceso.kind !== 'member') return 'none'
+  return reglaPresupuesto({ admin: false, owner: acceso.owner, budgetView: acceso.budgetView })
 }
 
 /**
- * La misma regla para `GET /events`, que no resuelve un `EventAccess` por
- * evento: sólo conoce el creador de cada uno y quién pregunta. Si la regla
- * de arriba cambia (entrega 2), esta cambia con ella.
+ * La misma regla para `GET /events`. `budgetView` es el grant de la membresía
+ * ACTIVE de quien pregunta en ese evento (false si llega por contratación).
  */
-export function accesoAlPresupuestoEnListado(ownerId: string, userId: string): BudgetAccess {
-  return ownerId === userId ? 'edit' : 'none'
+export function accesoAlPresupuestoEnListado(
+  ownerId: string,
+  userId: string,
+  budgetView: boolean,
+): BudgetAccess {
+  return reglaPresupuesto({ admin: false, owner: ownerId === userId, budgetView })
 }

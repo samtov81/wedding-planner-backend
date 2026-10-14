@@ -23,6 +23,7 @@ describe('EventAccessService', () => {
       kind: 'member',
       role: 'COUPLE',
       owner: true,
+      budgetView: false,
     })
   })
 
@@ -45,11 +46,13 @@ describe('EventAccessService', () => {
       kind: 'member',
       role: 'PLANNER',
       owner: false,
+      budgetView: false,
     })
     expect(await servicio.resolve('user-planner', 'USER', 'ev-2')).toEqual({
       kind: 'member',
       role: 'COUPLE',
       owner: true,
+      budgetView: false,
     })
   })
 
@@ -65,6 +68,7 @@ describe('EventAccessService', () => {
       kind: 'member',
       role: 'COUPLE',
       owner: false,
+      budgetView: false,
     })
   })
 

@@ -85,7 +85,14 @@ export class EventsController {
     const yo = this.exigirUsuario(usuario)
     const eventos = await this.listar.ejecutar(yo.id)
     return eventos.map((evento) =>
-      this.aRespuesta(evento, accesoAlPresupuestoEnListado(evento.ownerId, yo.id)),
+      this.aRespuesta(
+        evento,
+        accesoAlPresupuestoEnListado(
+          evento.ownerId,
+          yo.id,
+          false, // Task 3 lo sustituye por el grant real del listado.
+        ),
+      ),
     )
   }
 

@@ -274,22 +274,36 @@ export class EventRepositoryEnMemoria implements EventRepository {
     // El ejecutor de la promesa convierte el `throw` de `usuarioSembrado` en un
     // rechazo, como fallaría una consulta real.
     return new Promise((resolve) => {
-      const miembros = vivas.map((m) => {
-        const u = this.usuarioSembrado(m.userId, 'listarMiembros')
-        return {
-          id: m.id ?? '',
-          userId: m.userId,
-          fullName: u.fullName,
-          email: u.email,
-          role: m.role,
-          status: m.status as 'INVITED' | 'ACTIVE',
-          owner: m.userId === ownerId,
-          budgetView: m.budgetView ?? false,
-        }
-      })
+      const miembros = vivas.map((m) => this.aMiembro(m, ownerId, 'listarMiembros'))
       // Inserción = `createdAt` asc, como Prisma; creador primero.
       resolve(miembros.sort((a, b) => Number(b.owner) - Number(a.owner)))
     })
+  }
+
+  buscarMiembro(eventId: string, membershipId: string): Promise<MiembroPersistido | null> {
+    const m = this.viva(eventId, membershipId)
+    if (m === undefined) return Promise.resolve(null)
+    const ownerId = this.eventos.find((e) => e.id === eventId)?.ownerId
+    return new Promise((resolve) => resolve(this.aMiembro(m, ownerId, 'buscarMiembro')))
+  }
+
+  /** Una fila viva como la leen `listarMiembros` y `buscarMiembro`. */
+  private aMiembro(
+    m: MembresiaEnMemoria,
+    ownerId: string | undefined,
+    metodo: string,
+  ): MiembroPersistido {
+    const u = this.usuarioSembrado(m.userId, metodo)
+    return {
+      id: m.id ?? '',
+      userId: m.userId,
+      fullName: u.fullName,
+      email: u.email,
+      role: m.role,
+      status: m.status as 'INVITED' | 'ACTIVE',
+      owner: m.userId === ownerId,
+      budgetView: m.budgetView ?? false,
+    }
   }
 
   buscarMembresiaPorId(

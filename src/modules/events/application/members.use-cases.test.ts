@@ -59,6 +59,18 @@ describe('casos de uso de miembros', () => {
     ).toMatchObject({ budgetAccess: 'view', role: 'COUPLE' })
   })
 
+  it('actualizar relee sólo su fila, no la lista entera del evento', async () => {
+    repo.listarMiembros = () => Promise.reject(new Error('no debería listar el evento'))
+    expect(
+      await new UpdateMemberUseCase(repo).ejecutar({
+        eventId: EVENTO,
+        membershipId: piaId,
+        actorId: ANA,
+        budgetAccess: 'view',
+      }),
+    ).toMatchObject({ id: piaId, fullName: 'Pia', budgetAccess: 'view' })
+  })
+
   it('actualizar o revocar al creador es 422 y no deja auditoría', async () => {
     const antes = repo.auditoria.length
     await expect(

@@ -640,4 +640,41 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
       expect(await auditadas(), nombre).toBe(antes)
     }
   })
+
+  it('buscarMiembro lee una fila viva de este evento con los campos de listarMiembros', async () => {
+    const resultados = []
+    for (const [nombre, repo] of sujetos()) {
+      const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })
+      const activa = await invitar(repo, evento.id, 'Activa', 'COUPLE')
+      const invitada = await invitar(repo, evento.id, 'Invitada')
+      const revocada = await invitar(repo, evento.id, 'Revocada')
+      await repo.aceptarInvitacion(evento.id, activa.userId)
+      await repo.actualizarMembresia(evento.id, activa.membershipId, { budgetView: true }, ownerId)
+      await repo.revocarMembresia(evento.id, revocada.membershipId, ownerId, 'revoked')
+
+      const lista = await repo.listarMiembros(evento.id)
+      for (const miembro of lista) {
+        expect(await repo.buscarMiembro(evento.id, miembro.id), nombre).toEqual(miembro)
+      }
+      expect(await repo.buscarMiembro(evento.id, revocada.membershipId), nombre).toBeNull()
+      const otro = await repo.crearConMembresia({ name: 'Otra', ownerId })
+      expect(await repo.buscarMiembro(otro.id, invitada.membershipId), nombre).toBeNull()
+      expect(await repo.buscarMiembro(evento.id, randomUUID()), nombre).toBeNull()
+
+      const leidas = []
+      for (const m of [activa, invitada]) {
+        const leida = await repo.buscarMiembro(evento.id, m.membershipId)
+        if (leida !== null) {
+          const { id: _i, userId: _u, email: _e, ...resto } = leida
+          leidas.push(resto)
+        }
+      }
+      resultados.push(leidas)
+    }
+    expect(resultados[0]).toEqual([
+      { fullName: 'Activa', role: 'COUPLE', status: 'ACTIVE', owner: false, budgetView: true },
+      { fullName: 'Invitada', role: 'PLANNER', status: 'INVITED', owner: false, budgetView: false },
+    ])
+    expect(resultados[1]).toEqual(resultados[0])
+  })
 })

@@ -152,6 +152,13 @@ export interface EventRepository {
    */
   listarMiembros(eventId: string): Promise<MiembroPersistido[]>
 
+  /**
+   * UNA fila de las que lista `listarMiembros`, con los mismos campos: sólo
+   * INVITED o ACTIVE y sólo de ESTE evento; `null` en otro caso. Es lo que
+   * relee `UpdateMemberUseCase` tras escribir, sin traerse todo el evento.
+   */
+  buscarMiembro(eventId: string, membershipId: string): Promise<MiembroPersistido | null>
+
   /** En cualquier estado, pero sólo si es de ESTE evento. */
   buscarMembresiaPorId(eventId: string, membershipId: string): Promise<MembresiaGestionable | null>
 

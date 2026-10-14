@@ -36,6 +36,33 @@ const CON_CONTEOS = {
 
 type FilaConConteos = EventFila & { _count: { scheduleItems: number; vendors: number } }
 
+/** Lo que `listarMiembros` y `buscarMiembro` leen: una sola definición para las dos. */
+const CAMPOS_DE_MIEMBRO = {
+  id: true,
+  userId: true,
+  role: true,
+  status: true,
+  user: { select: { fullName: true, email: true } },
+  event: { select: { ownerId: true } },
+  budgetGrant: { select: { id: true } },
+} satisfies Prisma.EventMembershipSelect
+
+function aMiembro(
+  f: Prisma.EventMembershipGetPayload<{ select: typeof CAMPOS_DE_MIEMBRO }>,
+): MiembroPersistido {
+  return {
+    id: f.id,
+    userId: f.userId,
+    fullName: f.user.fullName,
+    email: f.user.email,
+    role: f.role,
+    // Los dos `where` que llegan aquí sólo dejan pasar estos dos.
+    status: f.status as 'INVITED' | 'ACTIVE',
+    owner: f.event.ownerId === f.userId,
+    budgetView: f.budgetGrant !== null,
+  }
+}
+
 /** `undefined` no toca las columnas; `null` las vacía las cinco a la vez. */
 function columnasVenue(venue: Ubicacion | null | undefined): Prisma.EventUncheckedUpdateInput {
   if (venue === undefined) return {}
@@ -264,30 +291,19 @@ export class PrismaEventRepository implements EventRepository {
   async listarMiembros(eventId: string): Promise<MiembroPersistido[]> {
     const filas = await this.prisma.eventMembership.findMany({
       where: { eventId, status: { in: [...VIVAS] } },
-      select: {
-        id: true,
-        userId: true,
-        role: true,
-        status: true,
-        user: { select: { fullName: true, email: true } },
-        event: { select: { ownerId: true } },
-        budgetGrant: { select: { id: true } },
-      },
+      select: CAMPOS_DE_MIEMBRO,
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     })
-    const miembros = filas.map((f) => ({
-      id: f.id,
-      userId: f.userId,
-      fullName: f.user.fullName,
-      email: f.user.email,
-      role: f.role,
-      // El `where` sólo deja pasar estos dos.
-      status: f.status as 'INVITED' | 'ACTIVE',
-      owner: f.event.ownerId === f.userId,
-      budgetView: f.budgetGrant !== null,
-    }))
     // Creador primero; el resto conserva el orden de la consulta (sort estable).
-    return miembros.sort((a, b) => Number(b.owner) - Number(a.owner))
+    return filas.map(aMiembro).sort((a, b) => Number(b.owner) - Number(a.owner))
+  }
+
+  async buscarMiembro(eventId: string, membershipId: string): Promise<MiembroPersistido | null> {
+    const fila = await this.prisma.eventMembership.findFirst({
+      where: { id: membershipId, eventId, status: { in: [...VIVAS] } },
+      select: CAMPOS_DE_MIEMBRO,
+    })
+    return fila === null ? null : aMiembro(fila)
   }
 
   async buscarMembresiaPorId(

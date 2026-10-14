@@ -63,10 +63,10 @@ export class UpdateMemberUseCase {
     )
     // Revocada entre la lectura y la escritura: para quien gestiona ya no existe.
     if (!escrito) throw new MiembroNoEncontradoError()
-    const actualizado = (await this.eventos.listarMiembros(datos.eventId)).find(
-      (m) => m.id === datos.membershipId,
-    )
-    if (actualizado === undefined) throw new MiembroNoEncontradoError()
+    // Sólo su fila: releer la lista entera del evento para quedarse con una era
+    // trabajo de más en cada PATCH.
+    const actualizado = await this.eventos.buscarMiembro(datos.eventId, datos.membershipId)
+    if (actualizado === null) throw new MiembroNoEncontradoError()
     return aMiembro(actualizado)
   }
 }

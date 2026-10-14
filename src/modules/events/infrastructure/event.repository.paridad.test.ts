@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { PrismaClient } from '@prisma/client'
 
 import type { PrismaService } from '@/modules/database/prisma.service'
@@ -40,10 +42,33 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
   })
 
   function sujetos(): Array<[string, EventRepository]> {
+    const doble = new EventRepositoryEnMemoria()
+    doble.usuarios.push({ id: ownerId, fullName: 'Owner', email: 'owner@paridad.test' })
     return [
-      ['doble', new EventRepositoryEnMemoria()],
+      ['doble', doble],
       ['prisma', new PrismaEventRepository(prisma as unknown as PrismaService)],
     ]
+  }
+
+  /** Usuario nuevo invitado al evento por el puerto; devuelve su membresía. */
+  async function invitar(
+    repo: EventRepository,
+    eventId: string,
+    etiqueta: string,
+    role: 'COUPLE' | 'PLANNER' = 'PLANNER',
+  ) {
+    const u = await prisma.user.create({
+      data: {
+        email: `${etiqueta}-${randomUUID()}@paridad.test`,
+        passwordHash: 'x',
+        fullName: etiqueta,
+      },
+    })
+    if (repo instanceof EventRepositoryEnMemoria) {
+      repo.usuarios.push({ id: u.id, fullName: etiqueta, email: u.email })
+    }
+    const m = await repo.invitarMiembro({ eventId, userId: u.id, role, invitedById: ownerId })
+    return { userId: u.id, membershipId: m.id }
   }
 
   const sinVolatiles = ({
@@ -246,5 +271,113 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
       const porNombre = Object.fromEntries(lista.map((a) => [a.evento.name, a.budgetView]))
       expect(porNombre, nombre).toMatchObject({ 'Con grant': true, 'Sin grant': false })
     }
+  })
+
+  it('listarMiembros: creador primero, INVITED y ACTIVE, sin REVOKED, con grant', async () => {
+    const resultados = []
+    for (const [, repo] of sujetos()) {
+      const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })
+      const ana = await invitar(repo, evento.id, 'Ana', 'COUPLE')
+      await invitar(repo, evento.id, 'Pia')
+      const fuera = await invitar(repo, evento.id, 'Fuera')
+      await repo.aceptarInvitacion(evento.id, ana.userId)
+      await repo.actualizarMembresia(evento.id, ana.membershipId, { budgetView: true }, ownerId)
+      await repo.revocarMembresia(evento.id, fuera.membershipId, ownerId, 'revoked')
+      resultados.push(
+        (await repo.listarMiembros(evento.id)).map(
+          ({ id: _i, userId: _u, email: _e, ...resto }) => resto,
+        ),
+      )
+    }
+    expect(resultados[0]).toEqual([
+      { fullName: 'Owner', role: 'COUPLE', status: 'ACTIVE', owner: true, budgetView: false },
+      { fullName: 'Ana', role: 'COUPLE', status: 'ACTIVE', owner: false, budgetView: true },
+      { fullName: 'Pia', role: 'PLANNER', status: 'INVITED', owner: false, budgetView: false },
+    ])
+    expect(resultados[1]).toEqual(resultados[0])
+  })
+
+  it('actualizarMembresia cambia rol y grant; cambiar el rol conserva el grant', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })
+      const m = await invitar(repo, evento.id, 'Rol')
+      expect(
+        await repo.actualizarMembresia(evento.id, m.membershipId, { budgetView: true }, ownerId),
+      ).toBe(true)
+      expect(
+        await repo.actualizarMembresia(evento.id, m.membershipId, { role: 'COUPLE' }, ownerId),
+      ).toBe(true)
+      expect(await repo.buscarMembresiaPorId(evento.id, m.membershipId), nombre).toMatchObject({
+        role: 'COUPLE',
+        status: 'INVITED',
+        owner: false,
+        budgetView: true,
+      })
+      expect(
+        await repo.actualizarMembresia(evento.id, m.membershipId, { budgetView: false }, ownerId),
+      ).toBe(true)
+      expect((await repo.buscarMembresiaPorId(evento.id, m.membershipId))?.budgetView, nombre).toBe(
+        false,
+      )
+      // De otro evento: no existe.
+      const otro = await repo.crearConMembresia({ name: 'Otra', ownerId })
+      expect(await repo.buscarMembresiaPorId(otro.id, m.membershipId), nombre).toBeNull()
+      expect(
+        await repo.actualizarMembresia(otro.id, m.membershipId, { role: 'PLANNER' }, ownerId),
+      ).toBe(false)
+    }
+  })
+
+  it('revocar borra el grant; reinvitar nace sin grant aunque quedara uno huérfano', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })
+      const m = await invitar(repo, evento.id, 'Revocado')
+      await repo.actualizarMembresia(evento.id, m.membershipId, { budgetView: true }, ownerId)
+      expect(await repo.revocarMembresia(evento.id, m.membershipId, ownerId, 'revoked')).toBe(true)
+      expect(await repo.buscarMembresiaPorId(evento.id, m.membershipId), nombre).toMatchObject({
+        status: 'REVOKED',
+        budgetView: false,
+      })
+      // Revocar dos veces: la segunda no escribe.
+      expect(await repo.revocarMembresia(evento.id, m.membershipId, ownerId, 'revoked')).toBe(false)
+      // Grant huérfano sobre la REVOKED (la carrera grant/revocar): reinvitar lo limpia.
+      if (repo instanceof EventRepositoryEnMemoria) {
+        const fila = repo.membresias.find((x) => x.id === m.membershipId)
+        if (fila !== undefined) fila.budgetView = true
+      } else {
+        await prisma.eventBudgetGrant.create({
+          data: { membershipId: m.membershipId, grantedById: ownerId },
+        })
+      }
+      await repo.invitarMiembro({
+        eventId: evento.id,
+        userId: m.userId,
+        role: 'PLANNER',
+        invitedById: ownerId,
+      })
+      expect((await repo.buscarMembresiaPorId(evento.id, m.membershipId))?.budgetView, nombre).toBe(
+        false,
+      )
+    }
+  })
+
+  it('aceptar sólo desde INVITED; las pendientes de un usuario con quién invitó', async () => {
+    const resultados = []
+    for (const [nombre, repo] of sujetos()) {
+      const evento = await repo.crearConMembresia({ name: `Boda ${nombre}`, ownerId })
+      const m = await invitar(repo, evento.id, 'Invitada')
+      const pendientes = await repo.listarInvitacionesPendientes(m.userId)
+      resultados.push(pendientes.map(({ membershipId: _m, eventId: _e, ...resto }) => resto))
+      expect(await repo.aceptarInvitacion(evento.id, m.userId)).toBe(true)
+      expect(await repo.aceptarInvitacion(evento.id, m.userId)).toBe(false)
+      expect(await repo.listarInvitacionesPendientes(m.userId), nombre).toEqual([])
+      expect(await repo.buscarMembresiaActiva(evento.id, m.userId), nombre).not.toBeNull()
+    }
+    expect(resultados[0]).toEqual([
+      { eventName: 'Boda doble', role: 'PLANNER', invitedByName: 'Owner' },
+    ])
+    expect(resultados[1]).toEqual([
+      { eventName: 'Boda prisma', role: 'PLANNER', invitedByName: 'Owner' },
+    ])
   })
 })

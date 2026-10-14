@@ -7,19 +7,27 @@ import type { Ubicacion } from '@/shared/domain'
 
 import type {
   CambiosEvento,
+  CambiosMembresia,
   DatosInvitacion,
   DatosNuevoEvento,
   EventoAccesible,
   EventRepository,
+  InvitacionPendiente,
+  MembresiaGestionable,
   MembresiaPersistida,
+  MiembroPersistido,
 } from '../application/event.repository'
 import type { Event } from '../domain/event'
 import {
   CONTRATACION_CON_ACCESO,
   MEMBRESIA_CON_ACCESO,
   type EventRole,
+  type MembershipStatus,
 } from '../domain/event-access'
 import { EventoNoEncontradoError } from '../domain/event-errors'
+
+/** Estados que se gestionan: una REVOKED no se lista ni se toca. */
+const VIVAS = ['INVITED', 'ACTIVE'] as const satisfies readonly MembershipStatus[]
 
 /** Conteos que alimentan `completitud` sin una consulta por evento. */
 const CON_CONTEOS = {
@@ -235,6 +243,10 @@ export class PrismaEventRepository implements EventRepository {
         select: { id: true, role: true, status: true },
       })
 
+      // Una reinvitación nace sin presupuesto, aunque una carrera grant/revocar
+      // hubiera dejado un grant colgado de la fila REVOKED que reutilizamos.
+      await tx.eventBudgetGrant.deleteMany({ where: { membershipId: membresia.id } })
+
       await tx.auditLog.create({
         data: {
           actorUserId: datos.invitedById,
@@ -247,6 +259,178 @@ export class PrismaEventRepository implements EventRepository {
 
       return { id: membresia.id, role: membresia.role, status: membresia.status }
     })
+  }
+
+  async listarMiembros(eventId: string): Promise<MiembroPersistido[]> {
+    const filas = await this.prisma.eventMembership.findMany({
+      where: { eventId, status: { in: [...VIVAS] } },
+      select: {
+        id: true,
+        userId: true,
+        role: true,
+        status: true,
+        user: { select: { fullName: true, email: true } },
+        event: { select: { ownerId: true } },
+        budgetGrant: { select: { id: true } },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    })
+    const miembros = filas.map((f) => ({
+      id: f.id,
+      userId: f.userId,
+      fullName: f.user.fullName,
+      email: f.user.email,
+      role: f.role,
+      // El `where` sólo deja pasar estos dos.
+      status: f.status as 'INVITED' | 'ACTIVE',
+      owner: f.event.ownerId === f.userId,
+      budgetView: f.budgetGrant !== null,
+    }))
+    // Creador primero; el resto conserva el orden de la consulta (sort estable).
+    return miembros.sort((a, b) => Number(b.owner) - Number(a.owner))
+  }
+
+  async buscarMembresiaPorId(
+    eventId: string,
+    membershipId: string,
+  ): Promise<MembresiaGestionable | null> {
+    const f = await this.prisma.eventMembership.findFirst({
+      where: { id: membershipId, eventId },
+      select: {
+        id: true,
+        userId: true,
+        role: true,
+        status: true,
+        event: { select: { ownerId: true } },
+        budgetGrant: { select: { id: true } },
+      },
+    })
+    return f === null
+      ? null
+      : {
+          id: f.id,
+          userId: f.userId,
+          role: f.role,
+          status: f.status,
+          owner: f.event.ownerId === f.userId,
+          budgetView: f.budgetGrant !== null,
+        }
+  }
+
+  async actualizarMembresia(
+    eventId: string,
+    membershipId: string,
+    cambios: CambiosMembresia,
+    actorId: string,
+  ): Promise<boolean> {
+    return await this.prisma.$transaction(async (tx) => {
+      // `updatedAt` explícito: con `data` vacío (sólo cambia el grant) Prisma
+      // no emitiría UPDATE y no habría ni bloqueo ni comprobación de estado.
+      const { count } = await tx.eventMembership.updateMany({
+        where: { id: membershipId, eventId, status: { in: [...VIVAS] } },
+        data: {
+          updatedAt: new Date(),
+          ...(cambios.role !== undefined ? { role: cambios.role } : {}),
+        },
+      })
+      if (count === 0) return false
+
+      if (cambios.budgetView === true) {
+        await tx.eventBudgetGrant.upsert({
+          where: { membershipId },
+          create: { membershipId, grantedById: actorId },
+          update: {},
+        })
+      } else if (cambios.budgetView === false) {
+        await tx.eventBudgetGrant.deleteMany({ where: { membershipId } })
+      }
+
+      await tx.auditLog.create({
+        data: {
+          actorUserId: actorId,
+          eventId,
+          action: 'event.member.updated',
+          target: `membership:${membershipId}`,
+          metadata: {
+            ...(cambios.role !== undefined ? { role: cambios.role } : {}),
+            ...(cambios.budgetView !== undefined ? { budgetView: cambios.budgetView } : {}),
+          },
+        },
+      })
+      return true
+    })
+  }
+
+  async revocarMembresia(
+    eventId: string,
+    membershipId: string,
+    actorId: string,
+    motivo: 'revoked' | 'declined',
+  ): Promise<boolean> {
+    return await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.eventMembership.updateMany({
+        where: { id: membershipId, eventId, status: { in: [...VIVAS] } },
+        data: { status: 'REVOKED' },
+      })
+      if (count === 0) return false
+      await tx.eventBudgetGrant.deleteMany({ where: { membershipId } })
+      await tx.auditLog.create({
+        data: {
+          actorUserId: actorId,
+          eventId,
+          action: `event.member.${motivo}`,
+          target: `membership:${membershipId}`,
+        },
+      })
+      return true
+    })
+  }
+
+  async aceptarInvitacion(eventId: string, userId: string): Promise<boolean> {
+    return await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.eventMembership.updateMany({
+        where: { eventId, userId, status: 'INVITED' },
+        data: { status: MEMBRESIA_CON_ACCESO },
+      })
+      if (count === 0) return false
+      await tx.auditLog.create({
+        data: {
+          actorUserId: userId,
+          eventId,
+          action: 'event.member.accepted',
+          target: `user:${userId}`,
+        },
+      })
+      return true
+    })
+  }
+
+  async listarInvitacionesPendientes(userId: string): Promise<InvitacionPendiente[]> {
+    const filas = await this.prisma.eventMembership.findMany({
+      where: { userId, status: 'INVITED' },
+      select: {
+        id: true,
+        eventId: true,
+        role: true,
+        invitedById: true,
+        event: { select: { name: true } },
+      },
+      orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }],
+    })
+    // `invitedById` no tiene relación en el esquema: una consulta para todos.
+    const ids = [...new Set(filas.flatMap((f) => (f.invitedById === null ? [] : [f.invitedById])))]
+    const quienes = await this.prisma.user.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, fullName: true },
+    })
+    const nombre = new Map(quienes.map((u) => [u.id, u.fullName]))
+    return filas.map((f) => ({
+      membershipId: f.id,
+      eventId: f.eventId,
+      eventName: f.event.name,
+      role: f.role,
+      invitedByName: f.invitedById === null ? null : (nombre.get(f.invitedById) ?? null),
+    }))
   }
 
   /** La fila de Prisma no sale de infrastructure/: el dominio ve su `Event`. */

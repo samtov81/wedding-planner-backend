@@ -49,3 +49,36 @@ export class EventoIncompletoError extends UnprocessableError {
     super('Faltan datos obligatorios para publicar el evento', 'EVENT_INCOMPLETE', { faltantes })
   }
 }
+
+/**
+ * 404 tanto si la membresía no existe como si es de otro evento o está
+ * REVOKED: Members no enseña las revocadas, así que para quien gestiona no
+ * existen. El código es propio (no `NOT_FOUND`) porque la UI sí distingue
+ * "este miembro ya no está" de "este evento no existe".
+ */
+export class MiembroNoEncontradoError extends NotFoundError {
+  constructor() {
+    super('Ese miembro no existe en este evento', 'MEMBER_NOT_FOUND')
+  }
+}
+
+/**
+ * Aceptar o rechazar sin una INVITED propia. 404 y sin distinguir "el evento
+ * no existe" de "no te invitaron": el mismo criterio que el guard.
+ */
+export class SinInvitacionPendienteError extends NotFoundError {
+  constructor() {
+    super('No tienes una invitación pendiente para este evento', 'NO_PENDING_INVITATION')
+  }
+}
+
+/**
+ * La membresía del creador no se revoca, no cambia de rol y no recibe grant:
+ * ya edita el presupuesto, y un evento sin creador dentro no tendría quién lo
+ * gestionara.
+ */
+export class CreadorIntocableError extends UnprocessableError {
+  constructor() {
+    super('La membresía de quien creó el evento no se puede cambiar', 'OWNER_MEMBERSHIP_IMMUTABLE')
+  }
+}

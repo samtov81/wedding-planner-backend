@@ -369,7 +369,13 @@ export class PrismaEventRepository implements EventRepository {
   ): Promise<boolean> {
     return await this.prisma.$transaction(async (tx) => {
       const { count } = await tx.eventMembership.updateMany({
-        where: { id: membershipId, eventId, status: { in: [...VIVAS] } },
+        // Rechazar sólo vale sobre INVITED: si un Accept se coló entre la lectura
+        // y esta escritura, la membresía ya es ACTIVE y no se revoca.
+        where: {
+          id: membershipId,
+          eventId,
+          status: motivo === 'declined' ? 'INVITED' : { in: [...VIVAS] },
+        },
         data: { status: 'REVOKED' },
       })
       if (count === 0) return false

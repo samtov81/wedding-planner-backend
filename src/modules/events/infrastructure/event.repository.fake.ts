@@ -334,6 +334,8 @@ export class EventRepositoryEnMemoria implements EventRepository {
   ): Promise<boolean> {
     const m = this.viva(eventId, membershipId)
     if (m === undefined) return Promise.resolve(false)
+    // Igual que el `WHERE` de Prisma: rechazar sólo vale sobre INVITED.
+    if (motivo === 'declined' && m.status !== 'INVITED') return Promise.resolve(false)
     m.status = 'REVOKED'
     m.budgetView = false
     m.actualizadaEn = ++this.reloj

@@ -145,4 +145,11 @@ describe('casos de uso de miembros', () => {
       code: 'NO_PENDING_INVITATION',
     })
   })
+
+  it('rechazar responde NO_PENDING_INVITATION si la escritura condicional no escribe', async () => {
+    repo.revocarMembresia = () => Promise.resolve(false)
+    await expect(new DeclineInvitationUseCase(repo).ejecutar(EVENTO, PIA)).rejects.toMatchObject({
+      code: 'NO_PENDING_INVITATION',
+    })
+  })
 })

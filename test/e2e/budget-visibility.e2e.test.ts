@@ -311,7 +311,7 @@ describe('Visibilidad del presupuesto e2e', () => {
       .expect(403)
   })
 
-  it('el extraño no ve el evento ni con un grant ajeno en la base', async () => {
+  it('el extraño recibe 404 y no ve el evento en su lista', async () => {
     await request(url)
       .get(`/events/${evento}`)
       .set({ Authorization: `Bearer ${extrano.accessToken}` })

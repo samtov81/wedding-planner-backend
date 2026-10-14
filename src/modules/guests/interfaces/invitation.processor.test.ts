@@ -261,7 +261,7 @@ describe('InvitationProcessor', () => {
 
   it('escucha SU cola, no la `email` compartida con otros productores', () => {
     // Un worker que toma un job ajeno y retorna lo marca COMPLETADO y BullMQ lo
-    // borra: los `verify-email` y `event-invitation` desaparecerían sin enviarse.
+    // borra: los `verify-email` y demás avisos de auth desaparecerían sin enviarse.
     // La única forma de que esperen en `waiting` a su worker es no escuchar su cola.
     const metadatos = Reflect.getMetadata(PROCESSOR_METADATA, InvitationProcessor) as {
       name: string

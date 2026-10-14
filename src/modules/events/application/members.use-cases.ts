@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common'
 
-import type { EventRole } from '../domain/event-access'
+import { accesoAlPresupuesto, type EventRole } from '../domain/event-access'
 import { MiembroNoEncontradoError, SinInvitacionPendienteError } from '../domain/event-errors'
 import { exigirGestionable, exigirInvitacionPendiente } from '../domain/membresia'
 import {
@@ -23,9 +23,12 @@ export interface Miembro {
 }
 
 function aMiembro({ budgetView, ...m }: MiembroPersistido): Miembro {
-  // La fila del creador es `edit` aunque no tenga grant: es la misma regla que
-  // `accesoAlPresupuesto` aplica a su `EventAccess`.
-  return { ...m, budgetAccess: m.owner ? 'edit' : budgetView ? 'view' : 'none' }
+  // Una sola regla del presupuesto: la de `accesoAlPresupuesto` (el creador es
+  // `edit` aunque no tenga grant).
+  return {
+    ...m,
+    budgetAccess: accesoAlPresupuesto({ kind: 'member', role: m.role, owner: m.owner, budgetView }),
+  }
 }
 
 @Injectable()

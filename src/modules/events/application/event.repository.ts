@@ -171,7 +171,9 @@ export interface EventRepository {
   /**
    * → REVOKED, borra el grant y escribe `AuditLog` (`event.member.revoked` o
    * `event.member.declined`), en una transacción y condicional como la de
-   * arriba. Sirve para revocar, cancelar una invitación y rechazarla.
+   * arriba. Sirve para revocar, cancelar una invitación y rechazarla. Con
+   * `declined` la condición es más estricta: sólo vale sobre INVITED, para que
+   * un rechazo que pierde la carrera contra un Accept no revoque al ya ACTIVE.
    */
   revocarMembresia(
     eventId: string,

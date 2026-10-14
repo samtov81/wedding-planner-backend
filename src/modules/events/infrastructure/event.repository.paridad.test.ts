@@ -328,6 +328,20 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
     }
   })
 
+  it('rechazar una invitación ya aceptada no la revoca: sigue ACTIVE', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })
+      const m = await invitar(repo, evento.id, 'Aceptada')
+      expect(await repo.aceptarInvitacion(evento.id, m.userId)).toBe(true)
+      expect(await repo.revocarMembresia(evento.id, m.membershipId, m.userId, 'declined')).toBe(
+        false,
+      )
+      expect(await repo.buscarMembresiaPorId(evento.id, m.membershipId), nombre).toMatchObject({
+        status: 'ACTIVE',
+      })
+    }
+  })
+
   it('revocar borra el grant; reinvitar nace sin grant aunque quedara uno huérfano', async () => {
     for (const [nombre, repo] of sujetos()) {
       const evento = await repo.crearConMembresia({ name: 'Boda', ownerId })

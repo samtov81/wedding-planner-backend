@@ -1,3 +1,5 @@
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
+
 import { EventRepositoryEnMemoria } from '../infrastructure/event.repository.fake'
 import {
   AcceptInvitationUseCase,
@@ -14,10 +16,12 @@ const PIA = 'pia'
 
 describe('casos de uso de miembros', () => {
   let repo: EventRepositoryEnMemoria
+  let cola: InMemoryQueueAdapter
   let piaId: string
 
   beforeEach(async () => {
     repo = new EventRepositoryEnMemoria()
+    cola = new InMemoryQueueAdapter()
     repo.eventos.push({ id: EVENTO, ownerId: ANA, name: 'Boda de Ana' })
     repo.membresias.push({
       id: 'm-ana',
@@ -82,7 +86,7 @@ describe('casos de uso de miembros', () => {
       }),
     ).rejects.toMatchObject({ code: 'OWNER_MEMBERSHIP_IMMUTABLE' })
     await expect(
-      new RevokeMemberUseCase(repo).ejecutar({
+      new RevokeMemberUseCase(repo, cola).ejecutar({
         eventId: EVENTO,
         membershipId: 'm-ana',
         actorId: ANA,
@@ -93,7 +97,7 @@ describe('casos de uso de miembros', () => {
 
   it('revocar deja REVOKED, quita el grant y luego es 404', async () => {
     await repo.actualizarMembresia(EVENTO, piaId, { budgetView: true }, ANA)
-    const caso = new RevokeMemberUseCase(repo)
+    const caso = new RevokeMemberUseCase(repo, cola)
     await caso.ejecutar({ eventId: EVENTO, membershipId: piaId, actorId: ANA })
     expect(await repo.buscarMembresiaPorId(EVENTO, piaId)).toMatchObject({
       status: 'REVOKED',
@@ -104,6 +108,53 @@ describe('casos de uso de miembros', () => {
     ).rejects.toMatchObject({
       code: 'MEMBER_NOT_FOUND',
     })
+  })
+
+  it('cancelar una invitación pendiente encola el aviso de cancelada', async () => {
+    await new RevokeMemberUseCase(repo, cola).ejecutar({
+      eventId: EVENTO,
+      membershipId: piaId,
+      actorId: ANA,
+    })
+    expect(cola.encolados).toEqual([
+      expect.objectContaining({
+        cola: 'notifications',
+        nombre: 'invitacion-de-miembro',
+        datos: { userId: PIA, eventId: EVENTO, cambio: 'cancelada' },
+      }),
+    ])
+  })
+
+  it('revocar a un miembro ACTIVE no encola aviso de invitación', async () => {
+    await repo.aceptarInvitacion(EVENTO, PIA)
+    await new RevokeMemberUseCase(repo, cola).ejecutar({
+      eventId: EVENTO,
+      membershipId: piaId,
+      actorId: ANA,
+    })
+    expect(cola.encolados).toEqual([])
+  })
+
+  it('si la escritura no se hace (carrera), no encola nada', async () => {
+    repo.revocarMembresia = () => Promise.resolve(false)
+    await expect(
+      new RevokeMemberUseCase(repo, cola).ejecutar({
+        eventId: EVENTO,
+        membershipId: piaId,
+        actorId: ANA,
+      }),
+    ).rejects.toMatchObject({ code: 'MEMBER_NOT_FOUND' })
+    expect(cola.encolados).toEqual([])
+  })
+
+  it('si no se puede encolar, la cancelación queda hecha igualmente', async () => {
+    cola.enqueue = () => Promise.reject(new Error('redis caído'))
+    await new RevokeMemberUseCase(repo, cola).ejecutar({
+      eventId: EVENTO,
+      membershipId: piaId,
+      actorId: ANA,
+    })
+    expect(await repo.buscarMembresiaPorId(EVENTO, piaId)).toMatchObject({ status: 'REVOKED' })
   })
 
   it('una membresía de otro evento es 404', async () => {

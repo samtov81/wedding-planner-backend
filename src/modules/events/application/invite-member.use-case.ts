@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, Logger } from '@nestjs/common'
 
 import { QUEUE_PORT, type QueuePort, type QueueName } from '@/modules/queue/application/queue.port'
 import { USER_REPOSITORY, type UserRepository } from '@/modules/users/application/user.repository'
@@ -9,6 +9,11 @@ import {
   YaEsMiembroError,
 } from '../domain/event-errors'
 import type { EventRole } from '../domain/event-access'
+import {
+  jobIdDeAvisoInvitacion,
+  TIPO_INVITACION_DE_MIEMBRO,
+  type JobInvitacionDeMiembro,
+} from './aviso-invitacion'
 import { EVENT_REPOSITORY, type EventRepository } from './event.repository'
 
 /**
@@ -37,6 +42,8 @@ export interface DatosInvitarMiembro {
 
 @Injectable()
 export class InviteMemberUseCase {
+  private readonly registro = new Logger(InviteMemberUseCase.name)
+
   constructor(
     @Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository,
     @Inject(USER_REPOSITORY) private readonly usuarios: UserRepository,
@@ -90,6 +97,26 @@ export class InviteMemberUseCase {
       },
       { jobId: `event-invite-${membresia.id}` },
     )
+
+    // El aviso en tiempo real es una optimización de latencia (ver
+    // `RealtimePort`): si Redis falla, la invitación ya está escrita y el
+    // invitado la verá al recargar. Se registra y no se propaga, como el aviso
+    // de RSVP.
+    const aviso: JobInvitacionDeMiembro = {
+      userId: invitado.id,
+      eventId: evento.id,
+      cambio: 'nueva',
+    }
+    try {
+      await this.cola.enqueue('notifications', TIPO_INVITACION_DE_MIEMBRO, aviso, {
+        jobId: jobIdDeAvisoInvitacion(membresia.id, new Date()),
+      })
+    } catch (error) {
+      this.registro.warn(
+        `Invitación hecha pero su aviso no se pudo encolar eventId=${evento.id} membershipId=${membresia.id}: ` +
+          (error instanceof Error ? error.message : String(error)),
+      )
+    }
 
     return { id: membresia.id, status: 'INVITED' }
   }

@@ -50,6 +50,37 @@ describe('InviteMemberUseCase', () => {
     expect(await eventos.buscarMembresiaActiva(EVENTO, pedroId)).toBeNull()
   })
 
+  it('encola el aviso en tiempo real para el invitado', async () => {
+    await caso.ejecutar({
+      eventId: EVENTO,
+      email: 'pedro@test.com',
+      role: 'PLANNER',
+      invitedById: anaId,
+    })
+    const aviso = cola.encolados.find((e) => e.cola === 'notifications')
+    expect(aviso).toMatchObject({
+      nombre: 'invitacion-de-miembro',
+      datos: { userId: pedroId, eventId: EVENTO, cambio: 'nueva' },
+    })
+    expect(aviso?.jobId).toMatch(/^member-invitation-[0-9a-f-]+-\d+$/)
+  })
+
+  it('si no se puede encolar el aviso, la invitación queda hecha igualmente', async () => {
+    const original = cola.enqueue.bind(cola)
+    cola.enqueue = (nombreCola, ...resto) =>
+      nombreCola === 'notifications'
+        ? Promise.reject(new Error('redis caído'))
+        : original(nombreCola, ...resto)
+    await expect(
+      caso.ejecutar({
+        eventId: EVENTO,
+        email: 'pedro@test.com',
+        role: 'PLANNER',
+        invitedById: anaId,
+      }),
+    ).resolves.toMatchObject({ status: 'INVITED' })
+  })
+
   it('encola el correo en vez de enviarlo en línea', async () => {
     await caso.ejecutar({
       eventId: EVENTO,
@@ -58,8 +89,10 @@ describe('InviteMemberUseCase', () => {
       invitedById: anaId,
     })
 
-    expect(cola.encolados).toHaveLength(1)
-    expect(cola.encolados[0]).toMatchObject({
+    // El aviso en tiempo real va a otra cola; aquí sólo cuenta el correo.
+    const correos = cola.encolados.filter((e) => e.cola === 'members')
+    expect(correos).toHaveLength(1)
+    expect(correos[0]).toMatchObject({
       cola: 'members',
       nombre: 'member-invitation',
       datos: {

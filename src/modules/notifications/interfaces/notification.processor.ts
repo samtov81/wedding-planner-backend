@@ -3,6 +3,11 @@ import { UnrecoverableError, type Job } from 'bullmq'
 import { z } from 'zod'
 
 import {
+  EVENTO_INVITACION_CAMBIADA,
+  type JobInvitacionDeMiembro,
+  TIPO_INVITACION_DE_MIEMBRO,
+} from '@/modules/events/application/aviso-invitacion'
+import {
   type JobEstadoInvitacion,
   TIPO_ESTADO_INVITACION,
 } from '@/modules/guests/application/handle-delivery-event.use-case'
@@ -45,6 +50,12 @@ const estadoInvitacionSchema = z.object({
   }),
 }) satisfies z.ZodType<JobEstadoInvitacion>
 
+const invitacionDeMiembroSchema = z.object({
+  userId: z.guid(),
+  eventId: z.guid(),
+  cambio: z.enum(['nueva', 'cancelada']),
+}) satisfies z.ZodType<JobInvitacionDeMiembro>
+
 function leer<T>(esquema: z.ZodType<T>, job: Job): T {
   const leido = esquema.safeParse(job.data)
   // Un payload roto no lo arregla ningún reintento: a fallidos, sin cinco
@@ -65,6 +76,10 @@ function leer<T>(esquema: z.ZodType<T>, job: Job): T {
  * "ignorar lo que no es mío" borraría en silencio los avisos de un productor
  * nuevo que nadie ha enseñado a este worker.
  *
+ * Tipos de job: el RSVP y el estado de entrega de una invitación de boda (al
+ * evento), y `invitacion-de-miembro` (a la sala personal del invitado a un
+ * evento, que aún no tiene acceso a la sala del evento).
+ *
  * Los errores de emisión SALEN (ver `BroadcastNoticeUseCase`): así BullMQ
  * reintenta con la política común (5 intentos, backoff exponencial).
  */
@@ -84,6 +99,13 @@ export class NotificationProcessor extends WorkerHost {
       case TIPO_ESTADO_INVITACION: {
         const { eventId, payload } = leer(estadoInvitacionSchema, job)
         await this.avisos.avisarDeCambio(eventId, TIPO_ESTADO_INVITACION, payload)
+        return
+      }
+      case TIPO_INVITACION_DE_MIEMBRO: {
+        const { userId, eventId, cambio } = leer(invitacionDeMiembroSchema, job)
+        // Al usuario, no al evento: el invitado aún no tiene acceso y no está en
+        // `event:<id>`. No se crea `Notification` (spec 2026-10-14 §3.1).
+        await this.avisos.avisarAUsuario(userId, EVENTO_INVITACION_CAMBIADA, { eventId, cambio })
         return
       }
       default:

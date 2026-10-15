@@ -121,6 +121,19 @@ describe('BroadcastNoticeUseCase', () => {
     ])
   })
 
+  it('avisarAUsuario: sólo la sala personal del usuario; nada a eventos ni notificaciones', async () => {
+    const repo = new NotificationRepositoryEnMemoria()
+    repo.registrarMiembros('ev-1', ['pareja'])
+    const realtime = new RealtimePortEnMemoria()
+
+    await new BroadcastNoticeUseCase(realtime, repo).avisarAUsuario('u-1', 'x', { a: 1 })
+
+    expect(realtime.emitidas).toEqual([
+      { destino: { userId: 'u-1' }, tipo: 'x', payload: { a: 1 } },
+    ])
+    expect(repo.filas).toEqual([])
+  })
+
   it('si la emisión falla, el error SALE: es lo que hace que el job se reintente', async () => {
     const repo = new NotificationRepositoryEnMemoria()
     const realtime = new RealtimePortEnMemoria()

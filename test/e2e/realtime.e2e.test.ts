@@ -445,4 +445,41 @@ describe('Tiempo real e2e', () => {
 
     expect(await recibido).toEqual({ guestId, invitationId, status: 'BOUNCED' })
   })
+
+  it('el invitado conectado recibe member-invitation.changed al invitarle y al cancelar, y otro no', async () => {
+    // pareja es la creadora del evento; el invitado aún no tiene acceso y por
+    // eso el aviso va a su sala personal, no a `event:<id>`.
+    const email = `invitado-${randomUUID()}@test.com`
+    const invitado = await participante(email)
+    const socketInvitado = await conectarComo(invitado)
+    const socketExtraño = await conectarComo(extraño)
+    const recibidosInvitado: unknown[] = []
+    const recibidosExtraño: unknown[] = []
+    socketInvitado.on('member-invitation.changed', (p: unknown) => recibidosInvitado.push(p))
+    socketExtraño.on('member-invitation.changed', (p: unknown) => recibidosExtraño.push(p))
+    const delOwner = { Authorization: `Bearer ${pareja.accessToken}` }
+
+    const r = await request(http())
+      .post(`/events/${eventId}/members`)
+      .set(delOwner)
+      .send({ email, role: 'PLANNER' })
+      .expect(201)
+    await vi.waitFor(() => expect(recibidosInvitado).toEqual([{ eventId, cambio: 'nueva' }]), {
+      timeout: 10_000,
+    })
+
+    await request(http())
+      .delete(`/events/${eventId}/members/${(r.body as { id: string }).id}`)
+      .set(delOwner)
+      .expect(204)
+    await vi.waitFor(
+      () =>
+        expect(recibidosInvitado).toEqual([
+          { eventId, cambio: 'nueva' },
+          { eventId, cambio: 'cancelada' },
+        ]),
+      { timeout: 10_000 },
+    )
+    expect(recibidosExtraño).toEqual([])
+  })
 })

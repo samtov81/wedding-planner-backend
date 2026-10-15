@@ -51,4 +51,9 @@ export class BroadcastNoticeUseCase {
   async avisarDeCambio(eventId: string, tipo: string, payload: unknown): Promise<void> {
     await this.realtime.emitirAEvento(eventId, tipo, payload)
   }
+
+  /** Aviso directo a un usuario, sin persistir: lo que pasa le atañe sólo a él. */
+  async avisarAUsuario(userId: string, tipo: string, payload: unknown): Promise<void> {
+    await this.realtime.emitirAUsuario(userId, tipo, payload)
+  }
 }

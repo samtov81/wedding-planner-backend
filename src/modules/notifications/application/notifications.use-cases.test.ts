@@ -123,6 +123,7 @@ describe('BroadcastNoticeUseCase', () => {
 
   it('avisarAUsuario: sólo la sala personal del usuario; nada a eventos ni notificaciones', async () => {
     const repo = new NotificationRepositoryEnMemoria()
+    // Un evento con miembros, para probar que el aviso no les llega a ellos.
     repo.registrarMiembros('ev-1', ['pareja'])
     const realtime = new RealtimePortEnMemoria()
 

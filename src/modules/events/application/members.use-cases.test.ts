@@ -163,11 +163,7 @@ describe('casos de uso de miembros', () => {
     // El fallo no se propaga, pero tampoco se pierde en silencio.
     expect(aviso).toHaveBeenCalledOnce()
     expect(aviso).toHaveBeenCalledWith(
-      expect.stringMatching(
-        new RegExp(
-          `^Invitación cancelada pero su aviso no se pudo encolar eventId=${EVENTO} membershipId=${piaId}: redis caído$`,
-        ),
-      ),
+      `Invitación cancelada pero su aviso no se pudo encolar eventId=${EVENTO} membershipId=${piaId}: redis caído`,
     )
   })
 

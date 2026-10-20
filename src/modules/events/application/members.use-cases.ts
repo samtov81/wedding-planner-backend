@@ -5,11 +5,7 @@ import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.po
 import { accesoAlPresupuesto, type EventRole } from '../domain/event-access'
 import { MiembroNoEncontradoError, SinInvitacionPendienteError } from '../domain/event-errors'
 import { exigirGestionable, exigirInvitacionPendiente } from '../domain/membresia'
-import {
-  jobIdDeAvisoInvitacion,
-  TIPO_INVITACION_DE_MIEMBRO,
-  type JobInvitacionDeMiembro,
-} from './aviso-invitacion'
+import { encolarAvisoInvitacion } from './aviso-invitacion'
 import {
   EVENT_REPOSITORY,
   type EventRepository,
@@ -104,22 +100,14 @@ export class RevokeMemberUseCase {
     if (!escrito) throw new MiembroNoEncontradoError()
     if (membresia.status !== 'INVITED') return
 
-    // Optimización de latencia: si Redis falla, la cancelación ya está hecha.
-    const aviso: JobInvitacionDeMiembro = {
-      userId: membresia.userId,
-      eventId: datos.eventId,
-      cambio: 'cancelada',
-    }
-    try {
-      await this.cola.enqueue('notifications', TIPO_INVITACION_DE_MIEMBRO, aviso, {
-        jobId: jobIdDeAvisoInvitacion(datos.membershipId, new Date()),
-      })
-    } catch (error) {
-      this.registro.warn(
-        `Invitación cancelada pero su aviso no se pudo encolar eventId=${datos.eventId} membershipId=${datos.membershipId}: ` +
-          (error instanceof Error ? error.message : String(error)),
-      )
-    }
+    // Optimización de latencia: si Redis falla, la cancelación ya está hecha
+    // (ver `encolarAvisoInvitacion`).
+    await encolarAvisoInvitacion(
+      this.cola,
+      this.registro,
+      { userId: membresia.userId, eventId: datos.eventId, cambio: 'cancelada' },
+      datos.membershipId,
+    )
   }
 }
 

@@ -9,11 +9,7 @@ import {
   YaEsMiembroError,
 } from '../domain/event-errors'
 import type { EventRole } from '../domain/event-access'
-import {
-  jobIdDeAvisoInvitacion,
-  TIPO_INVITACION_DE_MIEMBRO,
-  type JobInvitacionDeMiembro,
-} from './aviso-invitacion'
+import { encolarAvisoInvitacion } from './aviso-invitacion'
 import { EVENT_REPOSITORY, type EventRepository } from './event.repository'
 
 /**
@@ -98,25 +94,14 @@ export class InviteMemberUseCase {
       { jobId: `event-invite-${membresia.id}` },
     )
 
-    // El aviso en tiempo real es una optimización de latencia (ver
-    // `RealtimePort`): si Redis falla, la invitación ya está escrita y el
-    // invitado la verá al recargar. Se registra y no se propaga, como el aviso
-    // de RSVP.
-    const aviso: JobInvitacionDeMiembro = {
-      userId: invitado.id,
-      eventId: evento.id,
-      cambio: 'nueva',
-    }
-    try {
-      await this.cola.enqueue('notifications', TIPO_INVITACION_DE_MIEMBRO, aviso, {
-        jobId: jobIdDeAvisoInvitacion(membresia.id, new Date()),
-      })
-    } catch (error) {
-      this.registro.warn(
-        `Invitación hecha pero su aviso no se pudo encolar eventId=${evento.id} membershipId=${membresia.id}: ` +
-          (error instanceof Error ? error.message : String(error)),
-      )
-    }
+    // Optimización de latencia: un fallo se registra y no se propaga (ver
+    // `encolarAvisoInvitacion`).
+    await encolarAvisoInvitacion(
+      this.cola,
+      this.registro,
+      { userId: invitado.id, eventId: evento.id, cambio: 'nueva' },
+      membresia.id,
+    )
 
     return { id: membresia.id, status: 'INVITED' }
   }

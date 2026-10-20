@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common'
+
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
 import { UserRepositoryEnMemoria } from '@/modules/users/infrastructure/user.repository.fake'
 import { ConflictError, UnprocessableError } from '@/shared/domain'
@@ -8,6 +10,8 @@ import { InviteMemberUseCase } from './invite-member.use-case'
 const EVENTO = '11111111-1111-4111-8111-111111111111'
 
 describe('InviteMemberUseCase', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   let eventos: EventRepositoryEnMemoria
   let usuarios: UserRepositoryEnMemoria
   let cola: InMemoryQueueAdapter
@@ -66,6 +70,7 @@ describe('InviteMemberUseCase', () => {
   })
 
   it('si no se puede encolar el aviso, la invitación queda hecha igualmente', async () => {
+    const aviso = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
     const original = cola.enqueue.bind(cola)
     cola.enqueue = (nombreCola, ...resto) =>
       nombreCola === 'notifications'
@@ -79,6 +84,11 @@ describe('InviteMemberUseCase', () => {
         invitedById: anaId,
       }),
     ).resolves.toMatchObject({ status: 'INVITED' })
+    // El fallo no se propaga, pero tampoco se pierde en silencio.
+    expect(aviso).toHaveBeenCalledOnce()
+    expect(aviso).toHaveBeenCalledWith(
+      expect.stringMatching(/^Invitación hecha pero su aviso no se pudo encolar .*redis caído$/),
+    )
   })
 
   it('encola el correo en vez de enviarlo en línea', async () => {

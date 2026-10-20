@@ -1,3 +1,5 @@
+import { Logger } from '@nestjs/common'
+
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
 
 import { EventRepositoryEnMemoria } from '../infrastructure/event.repository.fake'
@@ -15,6 +17,8 @@ const ANA = 'ana'
 const PIA = 'pia'
 
 describe('casos de uso de miembros', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   let repo: EventRepositoryEnMemoria
   let cola: InMemoryQueueAdapter
   let piaId: string
@@ -148,6 +152,7 @@ describe('casos de uso de miembros', () => {
   })
 
   it('si no se puede encolar, la cancelación queda hecha igualmente', async () => {
+    const aviso = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
     cola.enqueue = () => Promise.reject(new Error('redis caído'))
     await new RevokeMemberUseCase(repo, cola).ejecutar({
       eventId: EVENTO,
@@ -155,6 +160,15 @@ describe('casos de uso de miembros', () => {
       actorId: ANA,
     })
     expect(await repo.buscarMembresiaPorId(EVENTO, piaId)).toMatchObject({ status: 'REVOKED' })
+    // El fallo no se propaga, pero tampoco se pierde en silencio.
+    expect(aviso).toHaveBeenCalledOnce()
+    expect(aviso).toHaveBeenCalledWith(
+      expect.stringMatching(
+        new RegExp(
+          `^Invitación cancelada pero su aviso no se pudo encolar eventId=${EVENTO} membershipId=${piaId}: redis caído$`,
+        ),
+      ),
+    )
   })
 
   it('una membresía de otro evento es 404', async () => {

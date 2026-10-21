@@ -7,3 +7,6 @@ coverage/
 
 /generated/prisma
 .claude/worktrees/
+.claude/settings.json
+
+CLAUDE.md

@@ -1,5 +1,7 @@
 import { Logger } from '@nestjs/common'
 
+import { UnidadDeTrabajoEnMemoria } from '@/modules/database/infrastructure/unidad-de-trabajo.fake'
+import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
 
 import { InvitationRepositoryEnMemoria } from '../infrastructure/invitation.repository.fake'
@@ -22,12 +24,80 @@ afterEach(() => {
 describe('HandleDeliveryEventUseCase', () => {
   let invitaciones: InvitationRepositoryEnMemoria
   let cola: InMemoryQueueAdapter
+  let notificaciones: NotificationPortEnMemoria
   let caso: HandleDeliveryEventUseCase
 
   beforeEach(() => {
     invitaciones = new InvitationRepositoryEnMemoria()
     cola = new InMemoryQueueAdapter()
-    caso = new HandleDeliveryEventUseCase(invitaciones, cola)
+    notificaciones = new NotificationPortEnMemoria()
+    caso = new HandleDeliveryEventUseCase(
+      invitaciones,
+      notificaciones,
+      cola,
+      new UnidadDeTrabajoEnMemoria(),
+    )
+  })
+
+  describe('notificaciones de rebote y spam', () => {
+    const eventId = 'evento-1'
+
+    beforeEach(() => {
+      notificaciones.registrarMiembros(eventId, ['pareja', 'planner'])
+      invitaciones.añadir({
+        id: 'inv-1',
+        resendMessageId: 'msg-1',
+        status: 'SENT',
+        guest: { id: 'g1', eventId, name: 'Lucía Pérez' },
+      })
+    })
+
+    it('un rebote crea una notificación por miembro con el nombre del invitado', async () => {
+      await caso.ejecutar({ type: 'email.bounced', messageId: 'msg-1' })
+
+      expect(notificaciones.creadas).toHaveLength(2)
+      expect(notificaciones.creadas.map((n) => n.userId)).toEqual(['pareja', 'planner'])
+      for (const n of notificaciones.creadas) {
+        expect(n.tipo).toBe('guest.invitation.status')
+        expect(n.payload).toEqual({
+          guestId: 'g1',
+          guestName: 'Lucía Pérez',
+          invitationId: 'inv-1',
+          status: 'BOUNCED',
+        })
+      }
+    })
+
+    it('una queja de spam también crea notificación', async () => {
+      await caso.ejecutar({ type: 'email.complained', messageId: 'msg-1' })
+
+      expect(notificaciones.creadas).toHaveLength(2)
+      expect(notificaciones.creadas[0]?.payload).toMatchObject({ status: 'COMPLAINED' })
+    })
+
+    it('una entrega correcta no crea notificación', async () => {
+      await caso.ejecutar({ type: 'email.delivered', messageId: 'msg-1' })
+
+      expect(notificaciones.creadas).toEqual([])
+    })
+
+    it('un rebote repetido no crea una segunda notificación', async () => {
+      await caso.ejecutar({ type: 'email.bounced', messageId: 'msg-1' })
+      const antes = notificaciones.creadas.length
+
+      await caso.ejecutar({ type: 'email.bounced', messageId: 'msg-1' })
+
+      expect(notificaciones.creadas).toHaveLength(antes)
+    })
+
+    it('si crear la notificación falla, el webhook falla y no se encola nada', async () => {
+      notificaciones.fallarProximaCreacion(new Error('base de datos caída'))
+
+      await expect(caso.ejecutar({ type: 'email.bounced', messageId: 'msg-1' })).rejects.toThrow(
+        'base de datos caída',
+      )
+      expect(cola.encolados).toEqual([])
+    })
   })
 
   it('marca DELIVERED cuando el correo se entrega', async () => {
@@ -136,7 +206,12 @@ describe('HandleDeliveryEventUseCase — aviso en tiempo real (guest.invitation.
   beforeEach(() => {
     invitaciones = new InvitationRepositoryEnMemoria()
     cola = new InMemoryQueueAdapter()
-    caso = new HandleDeliveryEventUseCase(invitaciones, cola)
+    caso = new HandleDeliveryEventUseCase(
+      invitaciones,
+      new NotificationPortEnMemoria(),
+      cola,
+      new UnidadDeTrabajoEnMemoria(),
+    )
     invitaciones.añadir({
       id: 'inv-1',
       resendMessageId: 'msg-1',

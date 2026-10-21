@@ -254,6 +254,7 @@ export class InvitationRepositoryEnMemoria implements InvitationRepository {
           invitationId: fila.id,
           guestId: fila.guest.id,
           eventId: fila.guest.eventId,
+          guestName: fila.guest.name,
         })
       }
     }

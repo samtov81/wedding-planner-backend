@@ -1,5 +1,13 @@
 import { Inject, Injectable, Logger } from '@nestjs/common'
 
+import {
+  UNIDAD_DE_TRABAJO,
+  type UnidadDeTrabajo,
+} from '@/modules/database/application/unidad-de-trabajo'
+import {
+  NOTIFICATION_PORT,
+  type NotificationPort,
+} from '@/modules/notifications/application/notification.port'
 import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
 
 import type { InvitationStatus } from '../domain/invitation'
@@ -60,7 +68,9 @@ export class HandleDeliveryEventUseCase {
 
   constructor(
     @Inject(INVITATION_REPOSITORY) private readonly invitaciones: InvitationRepository,
+    @Inject(NOTIFICATION_PORT) private readonly notificaciones: NotificationPort,
     @Inject(QUEUE_PORT) private readonly cola: QueuePort,
+    @Inject(UNIDAD_DE_TRABAJO) private readonly unidadDeTrabajo: UnidadDeTrabajo,
   ) {}
 
   /**
@@ -76,19 +86,46 @@ export class HandleDeliveryEventUseCase {
    * Tarea 15: por cada invitación que AVANZÓ de verdad se encola
    * `guest.invitation.status` en `notifications`, y el worker lo emite a quien
    * planifica el evento. Sólo las que avanzaron: un webhook repetido o tardío
-   * no cambia nada y no avisa de nada. Sin `Notification` persistida detrás:
-   * el estado persistido es la propia invitación, que el REST ya sirve.
+   * no cambia nada y no avisa de nada.
    *
-   * Encolar va DESPUÉS de escribir y un fallo se registra y se traga (mismo
-   * criterio que el RSVP, ruling C23): fallar el webhook haría que Resend lo
-   * reintentara, pero el reintento ya no avanza nada —el estado está escrito—,
-   * así que tampoco encolaría. Lo único que se pierde es la latencia.
+   * Rebote y queja de spam SÍ llevan `Notification` detrás: son lo único que
+   * requiere acción de la pareja (corregir el correo del invitado). Una
+   * entrega correcta no: su estado persistido es la propia invitación, que el
+   * REST ya sirve, y el aviso en tiempo real basta. Mapeo tipo → permiso →
+   * vista: `guest.invitation.status` (BOUNCED|COMPLAINED) → `COUPLE|PLANNER`
+   * → `/events/:id/guests`. Esa vista exige COUPLE|PLANNER y todo miembro
+   * ACTIVO tiene uno de los dos, así que se notifica a todos los miembros
+   * ACTIVOS (`crearParaMiembros`), como el RSVP.
+   *
+   * La escritura del estado y las notificaciones van en UNA transacción: un
+   * rebote sin notificación sería un aviso que la pareja no ve nunca si no
+   * estaba conectada. Si crearla falla, el webhook falla y Resend reintenta; el
+   * reintento sí vuelve a avanzar la fila, porque la transacción deshizo el
+   * UPDATE. Sólo notifican las filas que AVANZARON (el `WHERE` monótono del
+   * repositorio), así que un webhook repetido no duplica nada.
+   *
+   * Encolar va FUERA y DESPUÉS del commit y un fallo se registra y se traga
+   * (mismo criterio que el RSVP, ruling C23): la notificación ya está
+   * persistida y se recupera por REST. Lo único que se pierde es la latencia.
    */
   async ejecutar(evento: EventoEntrega): Promise<void> {
     const estado = mapearEstadoResend(evento.type)
     if (estado === null) return
 
-    const avanzadas = await this.invitaciones.actualizarEstadoPorMessageId(evento.messageId, estado)
+    const avanzadas = await this.unidadDeTrabajo.ejecutar(async () => {
+      const filas = await this.invitaciones.actualizarEstadoPorMessageId(evento.messageId, estado)
+      if (estado === 'BOUNCED' || estado === 'COMPLAINED') {
+        for (const { invitationId, guestId, eventId, guestName } of filas) {
+          await this.notificaciones.crearParaMiembros(eventId, TIPO_ESTADO_INVITACION, {
+            guestId,
+            guestName,
+            invitationId,
+            status: estado,
+          })
+        }
+      }
+      return filas
+    })
 
     // Ninguna invitación que avanzar: un correo que no es una invitación, uno
     // borrado, o un webhook repetido. En silencio no se distingue de un evento

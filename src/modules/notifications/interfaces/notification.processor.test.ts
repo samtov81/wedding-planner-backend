@@ -109,11 +109,25 @@ describe('NotificationProcessor', () => {
   describe('guest.invitation.status', () => {
     const payload = { guestId, invitationId: randomUUID(), status: 'BOUNCED' }
 
-    it('emite el cambio sólo a la sala del evento', async () => {
+    it('un rebote avisa con notification.created a cada miembro', async () => {
       await procesador.process(job('guest.invitation.status', { eventId, payload }))
 
       expect(realtime.emitidas).toEqual([
         { destino: { eventId }, tipo: 'guest.invitation.status', payload },
+        {
+          destino: { userId: 'pareja' },
+          tipo: 'notification.created',
+          payload: { eventId, type: 'guest.invitation.status' },
+        },
+      ])
+    })
+
+    it('una entrega sólo avisa a la sala del evento', async () => {
+      const entrega = { ...payload, status: 'DELIVERED' }
+      await procesador.process(job('guest.invitation.status', { eventId, payload: entrega }))
+
+      expect(realtime.emitidas).toEqual([
+        { destino: { eventId }, tipo: 'guest.invitation.status', payload: entrega },
       ])
     })
 

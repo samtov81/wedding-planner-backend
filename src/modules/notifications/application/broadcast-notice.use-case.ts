@@ -22,7 +22,8 @@ export class BroadcastNoticeUseCase {
   ) {}
 
   /**
-   * Un cambio CON `Notification` persistida detrás (hoy, el RSVP): el cambio a
+   * Un cambio CON `Notification` persistida detrás (hoy, el RSVP y el rebote o spam de una
+   * invitación): el cambio a
    * quien planifica el evento y `notification.created` a la sala personal de
    * cada destinatario, que le llega aunque no esté mirando ese evento.
    *
@@ -44,7 +45,7 @@ export class BroadcastNoticeUseCase {
   }
 
   /**
-   * Un cambio SIN `Notification` (hoy, el estado de entrega de una
+   * Un cambio SIN `Notification` (hoy, la entrega correcta de una
    * invitación): su estado persistido es la propia fila, que el REST ya sirve.
    * Sólo se avisa a la sala del evento.
    */

@@ -271,7 +271,7 @@ describe('Guardas de escritura de la invitación', () => {
 
         const avanzadas = await impl.repo.actualizarEstadoPorMessageId(messageId, 'BOUNCED')
 
-        expect(avanzadas).toEqual([{ invitationId: id, guestId, eventId }])
+        expect(avanzadas).toEqual([{ invitationId: id, guestId, eventId, guestName: 'Invitada' }])
         expect((await impl.estado(id))?.status).toBe('BOUNCED')
       })
 

@@ -77,7 +77,7 @@ function leer<T>(esquema: z.ZodType<T>, job: Job): T {
  * nuevo que nadie ha enseñado a este worker.
  *
  * Tipos de job: el RSVP y el estado de entrega de una invitación de boda (al
- * evento), y `invitacion-de-miembro` (a la sala personal del invitado a un
+ * evento; el rebote y el spam además notifican a los miembros), y `invitacion-de-miembro` (a la sala personal del invitado a un
  * evento, que aún no tiene acceso a la sala del evento).
  *
  * Los errores de emisión SALEN (ver `BroadcastNoticeUseCase`): así BullMQ
@@ -98,7 +98,13 @@ export class NotificationProcessor extends WorkerHost {
       }
       case TIPO_ESTADO_INVITACION: {
         const { eventId, payload } = leer(estadoInvitacionSchema, job)
-        await this.avisos.avisarDeCambio(eventId, TIPO_ESTADO_INVITACION, payload)
+        // Rebote y spam tienen `Notification` detrás (a todos los miembros);
+        // la entrega correcta sólo avisa a la sala del evento.
+        if (payload.status === 'DELIVERED') {
+          await this.avisos.avisarDeCambio(eventId, TIPO_ESTADO_INVITACION, payload)
+        } else {
+          await this.avisos.avisarDeNotificacion(eventId, TIPO_ESTADO_INVITACION, payload)
+        }
         return
       }
       case TIPO_INVITACION_DE_MIEMBRO: {

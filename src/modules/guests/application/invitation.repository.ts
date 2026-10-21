@@ -124,6 +124,8 @@ export interface InvitacionAvanzada {
   invitationId: string
   guestId: string
   eventId: string
+  /** Para el texto de la notificación de rebote o spam (Tarea 3). */
+  guestName: string
 }
 
 export const INVITATION_REPOSITORY = Symbol('INVITATION_REPOSITORY')

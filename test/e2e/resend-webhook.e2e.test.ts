@@ -5,6 +5,8 @@ import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redi
 import request from 'supertest'
 import { Webhook } from 'svix'
 
+import { TokenService } from '@/modules/auth/application/token.service'
+
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 import { limpiarContadoresDeRitmo } from '../support/throttler'
@@ -20,6 +22,7 @@ describe('Webhook de Resend e2e', () => {
   let cerrar: () => Promise<void>
   let prisma: PrismaClient
   let guestId: string
+  let tokenPareja: string
 
   /** Una invitación ya enviada (SENT) con su id del proveedor, como la deja el worker. */
   async function invitacionEnviada(
@@ -83,7 +86,9 @@ describe('Webhook de Resend e2e', () => {
     // El arranque de `main.ts` (`configurarApp`): el parser de cuerpo con su
     // límite es el que se despliega, y la firma tiene que seguir verificándose
     // sobre los bytes crudos que ese parser guarda.
-    ;({ url, cerrar } = await arrancarAppDeTest())
+    const arrancada = await arrancarAppDeTest()
+    ;({ url, cerrar } = arrancada)
+    const app = arrancada.app
     prisma = new PrismaClient({ datasources: { db: { url: pg.url } } })
 
     const usuario = await prisma.user.create({
@@ -100,6 +105,12 @@ describe('Webhook de Resend e2e', () => {
       data: { eventId: evento.id, name: 'Invitada', email: 'invitada@test.com', group: 'Family' },
     })
     guestId = invitado.id
+    await prisma.eventMembership.create({
+      data: { eventId: evento.id, userId: usuario.id, role: 'COUPLE' },
+    })
+    tokenPareja = app
+      .get(TokenService)
+      .firmarAccess({ id: usuario.id, systemRole: usuario.systemRole })
   }, 240_000)
 
   beforeEach(async () => {
@@ -154,6 +165,44 @@ describe('Webhook de Resend e2e', () => {
     await enviar(cuerpoDe('email.bounced', mensaje), cabeceras).expect(401)
 
     expect(await estadoDe(id)).toBe('SENT')
+  })
+
+  describe('notificaciones de rebote y spam', () => {
+    async function misNotificaciones(): Promise<
+      Array<{ type: string; payload?: { guestName?: string; status?: string } }>
+    > {
+      const respuesta = await request(url)
+        .get('/me/notifications')
+        .set('Authorization', `Bearer ${tokenPareja}`)
+        .expect(200)
+      return (respuesta.body as { items: Array<{ type: string }> }).items
+    }
+
+    beforeEach(async () => {
+      await prisma.notification.deleteMany()
+    })
+
+    it('un bounced firmado crea notificaciones visibles en /me/notifications', async () => {
+      const { mensaje } = await invitacionEnviada()
+      const cuerpo = cuerpoDe('email.bounced', mensaje)
+
+      await enviar(cuerpo, firmar(cuerpo)).expect(204)
+
+      const items = await misNotificaciones()
+      expect(items).toHaveLength(1)
+      expect(items[0]?.type).toBe('guest.invitation.status')
+      const guardadas = await prisma.notification.findMany()
+      expect(guardadas[0]?.payload).toMatchObject({ guestName: 'Invitada', status: 'BOUNCED' })
+    })
+
+    it('un delivered no crea ninguna', async () => {
+      const { mensaje } = await invitacionEnviada()
+      const cuerpo = cuerpoDe('email.delivered', mensaje)
+
+      await enviar(cuerpo, firmar(cuerpo)).expect(204)
+
+      expect(await misNotificaciones()).toEqual([])
+    })
   })
 
   it('un evento bien firmado actualiza el estado, sin JWT de por medio', async () => {

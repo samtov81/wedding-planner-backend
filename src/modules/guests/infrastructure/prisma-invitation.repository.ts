@@ -127,7 +127,9 @@ export class PrismaInvitationRepository implements InvitationRepository {
     // `$queryRaw` con template tag: todo valor va como parámetro, nada se
     // concatena.
     const desde = estadosQuePuedenAvanzarA(estado)
-    return await this.prisma.$queryRaw<InvitacionAvanzada[]>`
+    // `clienteDe`: el caso de uso lo llama dentro de la unidad de trabajo que
+    // también crea las notificaciones de rebote y spam (Tarea 3).
+    return await clienteDe(this.prisma).$queryRaw<InvitacionAvanzada[]>`
       UPDATE guest_invitations AS gi
       SET status = ${estado}::"InvitationStatus"
       FROM guests AS g
@@ -135,7 +137,7 @@ export class PrismaInvitationRepository implements InvitationRepository {
         AND gi."resendMessageId" = ${messageId}
         AND gi.status = ANY(${desde}::"InvitationStatus"[])
       RETURNING gi.id::text AS "invitationId", gi."guestId"::text AS "guestId",
-        g."eventId"::text AS "eventId"
+        g."eventId"::text AS "eventId", g.name AS "guestName"
     `
   }
 }

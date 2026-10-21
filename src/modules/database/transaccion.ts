@@ -26,6 +26,26 @@ export function clienteDe(prisma: PrismaClient): Prisma.TransactionClient {
   return transaccionEnCurso.getStore() ?? prisma
 }
 
+/**
+ * Para un repositorio cuya escritura es multi-tabla y necesita su propia
+ * transacción (`aceptarInvitacion`, `revocarMembresia`): si ya hay una unidad de
+ * trabajo en curso se UNE a ella, y si no abre una (y la ata al contexto, de modo
+ * que un `clienteDe` anidado la vea).
+ *
+ * Alternativa descartada: `this.prisma.$transaction(...)` a secas. Dentro de una
+ * unidad de trabajo abriría una SEGUNDA transacción por otra conexión: lo que
+ * escribe se confirmaría aunque la exterior se deshiciera, y no vería las
+ * escrituras aún sin confirmar de ésta.
+ */
+export async function enTransaccion<T>(
+  prisma: PrismaClient,
+  trabajo: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  const enCurso = transaccionEnCurso.getStore()
+  if (enCurso !== undefined) return await trabajo(enCurso)
+  return await prisma.$transaction((tx) => transaccionEnCurso.run(tx, () => trabajo(tx)))
+}
+
 @Injectable()
 export class PrismaUnidadDeTrabajo implements UnidadDeTrabajo {
   constructor(private readonly prisma: PrismaService) {}

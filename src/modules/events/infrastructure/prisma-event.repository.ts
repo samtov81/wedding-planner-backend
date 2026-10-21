@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common'
 import type { Event as EventFila, Prisma } from '@prisma/client'
 
-import { clienteDe } from '@/modules/database/transaccion'
+import { clienteDe, enTransaccion } from '@/modules/database/transaccion'
 import { PrismaService } from '@/modules/database/prisma.service'
 import type { Ubicacion } from '@/shared/domain'
 
@@ -394,7 +394,7 @@ export class PrismaEventRepository implements EventRepository {
     actorId: string,
     motivo: 'revoked' | 'declined',
   ): Promise<boolean> {
-    return await this.prisma.$transaction(async (tx) => {
+    return await enTransaccion(this.prisma, async (tx) => {
       const { count } = await tx.eventMembership.updateMany({
         // Rechazar sólo vale sobre INVITED: si un Accept se coló entre la lectura
         // y esta escritura, la membresía ya es ACTIVE y no se revoca.
@@ -420,7 +420,7 @@ export class PrismaEventRepository implements EventRepository {
   }
 
   async aceptarInvitacion(eventId: string, userId: string): Promise<boolean> {
-    return await this.prisma.$transaction(async (tx) => {
+    return await enTransaccion(this.prisma, async (tx) => {
       const { count } = await tx.eventMembership.updateMany({
         where: { eventId, userId, status: 'INVITED' },
         data: { status: MEMBRESIA_CON_ACCESO },

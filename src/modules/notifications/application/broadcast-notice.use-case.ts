@@ -22,10 +22,10 @@ export class BroadcastNoticeUseCase {
   ) {}
 
   /**
-   * Un cambio CON `Notification` persistida detrás (hoy, el RSVP y el rebote o spam de una
-   * invitación): el cambio a
-   * quien planifica el evento y `notification.created` a la sala personal de
-   * cada destinatario, que le llega aunque no esté mirando ese evento.
+   * Un cambio CON `Notification` persistida detrás (hoy, el RSVP y el rebote o
+   * spam de una invitación): el cambio a quien planifica el evento y
+   * `notification.created` a la sala personal de cada destinatario, que le llega
+   * aunque no esté mirando ese evento.
    *
    * DESIGN-GAP: `notification.created` lleva `{ eventId, type }`, sin el `id`
    * de la notificación. El job que encola el RSVP (Tarea 14) no lo trae —se

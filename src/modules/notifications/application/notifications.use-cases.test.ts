@@ -4,7 +4,9 @@ import { NotificacionNoEncontradaError } from '../domain/notification-errors'
 import { NotificationRepositoryEnMemoria } from '../infrastructure/notification.repository.fake'
 import { RealtimePortEnMemoria } from '../infrastructure/realtime.port.fake'
 import { BroadcastNoticeUseCase } from './broadcast-notice.use-case'
+import { ListMyNotificationsUseCase } from './list-my-notifications.use-case'
 import { ListNotificationsUseCase } from './list-notifications.use-case'
+import { MarkAllReadUseCase } from './mark-all-read.use-case'
 import { MarkReadUseCase } from './mark-read.use-case'
 
 const BASE = new Date('2026-03-01T00:00:00.000Z')
@@ -143,5 +145,44 @@ describe('BroadcastNoticeUseCase', () => {
     await expect(
       new BroadcastNoticeUseCase(realtime, repo).avisarDeNotificacion('ev-1', 't', {}),
     ).rejects.toThrow('redis caído')
+  })
+})
+
+describe('Notificaciones a nivel de usuario', () => {
+  function repoConDosEventos() {
+    const repo = new NotificationRepositoryEnMemoria()
+    repo.registrarEvento('ev-1', 'Boda de Ana')
+    repo.registrarEvento('ev-2', 'Aniversario')
+    repo.registrarMiembros('ev-1', ['pareja'])
+    repo.registrarMiembros('ev-2', ['pareja'])
+    repo.filas.push(
+      fila({ id: 'aaaaaaaa-0000-4000-8000-000000000000', minuto: 1 }),
+      fila({ id: 'bbbbbbbb-0000-4000-8000-000000000000', minuto: 2, eventId: 'ev-2' }),
+      fila({ id: 'cccccccc-0000-4000-8000-000000000000', minuto: 3, leida: true }),
+    )
+    return repo
+  }
+
+  it('ListMyNotifications devuelve la página y el total global de no leídas', async () => {
+    const repo = repoConDosEventos()
+
+    const resultado = await new ListMyNotificationsUseCase(repo).ejecutar('pareja', {
+      desde: null,
+      limite: 1,
+      soloNoLeidas: false,
+    })
+
+    expect(resultado.items.map((n) => n.event.name)).toEqual(['Boda de Ana'])
+    expect(resultado.nextCursor).not.toBeNull()
+    // El total es de TODOS los eventos, no de la página.
+    expect(resultado.unreadCount).toBe(2)
+  })
+
+  it('MarkAllRead deja el contador global a 0', async () => {
+    const repo = repoConDosEventos()
+
+    await new MarkAllReadUseCase(repo).ejecutar('pareja')
+
+    expect(await repo.contarNoLeidasDeUsuario('pareja')).toBe(0)
   })
 })

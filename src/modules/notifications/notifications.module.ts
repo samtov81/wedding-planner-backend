@@ -9,7 +9,9 @@ import { EventsModule } from '@/modules/events/events.module'
 import { UsersModule } from '@/modules/users/users.module'
 
 import { BroadcastNoticeUseCase } from './application/broadcast-notice.use-case'
+import { ListMyNotificationsUseCase } from './application/list-my-notifications.use-case'
 import { ListNotificationsUseCase } from './application/list-notifications.use-case'
+import { MarkAllReadUseCase } from './application/mark-all-read.use-case'
 import { MarkReadUseCase } from './application/mark-read.use-case'
 import { NOTIFICATION_PORT } from './application/notification.port'
 import { NOTIFICATION_REPOSITORY } from './application/notification.repository'
@@ -17,6 +19,7 @@ import { REALTIME_PORT } from './application/realtime.port'
 import { PrismaNotificationRepository } from './infrastructure/prisma-notification.repository'
 import { SocketIoRealtimeAdapter } from './infrastructure/socketio-realtime.adapter'
 import { COLA_NOTIFICACIONES, NotificationProcessor } from './interfaces/notification.processor'
+import { MyNotificationsController } from './interfaces/my-notifications.controller'
 import { NotificationsController } from './interfaces/notifications.controller'
 import { NotificationsGateway } from './interfaces/notifications.gateway'
 
@@ -45,7 +48,7 @@ import { NotificationsGateway } from './interfaces/notifications.gateway'
     EventsModule,
     BullModule.registerQueue({ name: COLA_NOTIFICACIONES }),
   ],
-  controllers: [NotificationsController],
+  controllers: [NotificationsController, MyNotificationsController],
   providers: [
     {
       provide: NOTIFICATION_REPOSITORY,
@@ -60,6 +63,8 @@ import { NotificationsGateway } from './interfaces/notifications.gateway'
     },
     ListNotificationsUseCase,
     MarkReadUseCase,
+    ListMyNotificationsUseCase,
+    MarkAllReadUseCase,
     BroadcastNoticeUseCase,
     NotificationProcessor,
     NotificationsGateway,

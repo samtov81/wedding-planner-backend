@@ -2,8 +2,8 @@ import { BullModule } from '@nestjs/bullmq'
 import { Module } from '@nestjs/common'
 
 import { AuthModule } from '@/modules/auth/auth.module'
-import { MailModule } from '@/modules/mail/mail.module'
 import { PrismaService } from '@/modules/database/prisma.service'
+import { MailModule } from '@/modules/mail/mail.module'
 import { UsersModule } from '@/modules/users/users.module'
 
 import { CreateEventUseCase } from './application/create-event.use-case'

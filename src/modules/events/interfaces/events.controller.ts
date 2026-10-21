@@ -16,6 +16,7 @@ import {
 } from '@/modules/auth/interfaces/current-user.decorator'
 import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
 import { UnauthorizedError } from '@/shared/domain'
+import { LIMITADOR_INVITE, LimiteDeRuta } from '@/shared/http/limitadores'
 import { validarCon } from '@/shared/http/validar-con'
 
 import { CreateEventUseCase } from '../application/create-event.use-case'
@@ -142,9 +143,16 @@ export class EventsController {
    * Invitar es del creador (spec 2026-10-13): quien gestiona la lista de
    * miembros —rol, presupuesto, revocar— es él, y un segundo COUPLE que
    * invitara metería a gente que luego no podría gestionar.
+   *
+   * Límite propio de 20 por hora y por IP (decisión del usuario, 2026-10-14):
+   * cada invitación encola un correo, y sin él una cuenta de creador podría
+   * usar la ruta para enviar correo masivo a cualquier cuenta registrada. El
+   * guard de ritmo cuenta antes que los de sesión y acceso, así que también
+   * suman las peticiones que acaban en 403/404/422.
    */
   @UseGuards(EventAccessGuard)
   @RequireEventAccess('OWNER')
+  @LimiteDeRuta(LIMITADOR_INVITE, { limit: 20, ttl: 3_600_000 })
   @Post(':eventId/members')
   async invitarMiembro(
     @CurrentUser() usuario: UsuarioAutenticado | undefined,

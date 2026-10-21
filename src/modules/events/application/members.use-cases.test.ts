@@ -1,3 +1,7 @@
+import { Logger } from '@nestjs/common'
+
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
+
 import { EventRepositoryEnMemoria } from '../infrastructure/event.repository.fake'
 import {
   AcceptInvitationUseCase,
@@ -13,11 +17,15 @@ const ANA = 'ana'
 const PIA = 'pia'
 
 describe('casos de uso de miembros', () => {
+  afterEach(() => vi.restoreAllMocks())
+
   let repo: EventRepositoryEnMemoria
+  let cola: InMemoryQueueAdapter
   let piaId: string
 
   beforeEach(async () => {
     repo = new EventRepositoryEnMemoria()
+    cola = new InMemoryQueueAdapter()
     repo.eventos.push({ id: EVENTO, ownerId: ANA, name: 'Boda de Ana' })
     repo.membresias.push({
       id: 'm-ana',
@@ -59,6 +67,18 @@ describe('casos de uso de miembros', () => {
     ).toMatchObject({ budgetAccess: 'view', role: 'COUPLE' })
   })
 
+  it('actualizar relee sólo su fila, no la lista entera del evento', async () => {
+    repo.listarMiembros = () => Promise.reject(new Error('no debería listar el evento'))
+    expect(
+      await new UpdateMemberUseCase(repo).ejecutar({
+        eventId: EVENTO,
+        membershipId: piaId,
+        actorId: ANA,
+        budgetAccess: 'view',
+      }),
+    ).toMatchObject({ id: piaId, fullName: 'Pia', budgetAccess: 'view' })
+  })
+
   it('actualizar o revocar al creador es 422 y no deja auditoría', async () => {
     const antes = repo.auditoria.length
     await expect(
@@ -70,7 +90,7 @@ describe('casos de uso de miembros', () => {
       }),
     ).rejects.toMatchObject({ code: 'OWNER_MEMBERSHIP_IMMUTABLE' })
     await expect(
-      new RevokeMemberUseCase(repo).ejecutar({
+      new RevokeMemberUseCase(repo, cola).ejecutar({
         eventId: EVENTO,
         membershipId: 'm-ana',
         actorId: ANA,
@@ -81,7 +101,7 @@ describe('casos de uso de miembros', () => {
 
   it('revocar deja REVOKED, quita el grant y luego es 404', async () => {
     await repo.actualizarMembresia(EVENTO, piaId, { budgetView: true }, ANA)
-    const caso = new RevokeMemberUseCase(repo)
+    const caso = new RevokeMemberUseCase(repo, cola)
     await caso.ejecutar({ eventId: EVENTO, membershipId: piaId, actorId: ANA })
     expect(await repo.buscarMembresiaPorId(EVENTO, piaId)).toMatchObject({
       status: 'REVOKED',
@@ -92,6 +112,59 @@ describe('casos de uso de miembros', () => {
     ).rejects.toMatchObject({
       code: 'MEMBER_NOT_FOUND',
     })
+  })
+
+  it('cancelar una invitación pendiente encola el aviso de cancelada', async () => {
+    await new RevokeMemberUseCase(repo, cola).ejecutar({
+      eventId: EVENTO,
+      membershipId: piaId,
+      actorId: ANA,
+    })
+    expect(cola.encolados).toEqual([
+      expect.objectContaining({
+        cola: 'notifications',
+        nombre: 'invitacion-de-miembro',
+        datos: { userId: PIA, eventId: EVENTO, cambio: 'cancelada' },
+      }),
+    ])
+  })
+
+  it('revocar a un miembro ACTIVE no encola aviso de invitación', async () => {
+    await repo.aceptarInvitacion(EVENTO, PIA)
+    await new RevokeMemberUseCase(repo, cola).ejecutar({
+      eventId: EVENTO,
+      membershipId: piaId,
+      actorId: ANA,
+    })
+    expect(cola.encolados).toEqual([])
+  })
+
+  it('si la escritura no se hace (carrera), no encola nada', async () => {
+    repo.revocarMembresia = () => Promise.resolve(false)
+    await expect(
+      new RevokeMemberUseCase(repo, cola).ejecutar({
+        eventId: EVENTO,
+        membershipId: piaId,
+        actorId: ANA,
+      }),
+    ).rejects.toMatchObject({ code: 'MEMBER_NOT_FOUND' })
+    expect(cola.encolados).toEqual([])
+  })
+
+  it('si no se puede encolar, la cancelación queda hecha igualmente', async () => {
+    const aviso = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+    cola.enqueue = () => Promise.reject(new Error('redis caído'))
+    await new RevokeMemberUseCase(repo, cola).ejecutar({
+      eventId: EVENTO,
+      membershipId: piaId,
+      actorId: ANA,
+    })
+    expect(await repo.buscarMembresiaPorId(EVENTO, piaId)).toMatchObject({ status: 'REVOKED' })
+    // El fallo no se propaga, pero tampoco se pierde en silencio.
+    expect(aviso).toHaveBeenCalledOnce()
+    expect(aviso).toHaveBeenCalledWith(
+      `Invitación cancelada pero su aviso no se pudo encolar eventId=${EVENTO} membershipId=${piaId}: redis caído`,
+    )
   })
 
   it('una membresía de otro evento es 404', async () => {
@@ -142,6 +215,15 @@ describe('casos de uso de miembros', () => {
       code: 'NO_PENDING_INVITATION',
     })
     await expect(rechazar.ejecutar(EVENTO, 'extraño')).rejects.toMatchObject({
+      code: 'NO_PENDING_INVITATION',
+    })
+  })
+
+  it('aceptar responde NO_PENDING_INVITATION si la escritura condicional no escribe', async () => {
+    // La carrera: la invitación seguía INVITED al leerla, pero otra petición
+    // (un rechazo, una revocación) la cambió antes del UPDATE condicional.
+    repo.aceptarInvitacion = () => Promise.resolve(false)
+    await expect(new AcceptInvitationUseCase(repo).ejecutar(EVENTO, PIA)).rejects.toMatchObject({
       code: 'NO_PENDING_INVITATION',
     })
   })

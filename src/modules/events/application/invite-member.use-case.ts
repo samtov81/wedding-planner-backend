@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, Logger } from '@nestjs/common'
 
 import { QUEUE_PORT, type QueuePort, type QueueName } from '@/modules/queue/application/queue.port'
 import { USER_REPOSITORY, type UserRepository } from '@/modules/users/application/user.repository'
@@ -9,6 +9,7 @@ import {
   YaEsMiembroError,
 } from '../domain/event-errors'
 import type { EventRole } from '../domain/event-access'
+import { encolarAvisoInvitacion } from './aviso-invitacion'
 import { EVENT_REPOSITORY, type EventRepository } from './event.repository'
 
 /**
@@ -37,6 +38,8 @@ export interface DatosInvitarMiembro {
 
 @Injectable()
 export class InviteMemberUseCase {
+  private readonly registro = new Logger(InviteMemberUseCase.name)
+
   constructor(
     @Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository,
     @Inject(USER_REPOSITORY) private readonly usuarios: UserRepository,
@@ -89,6 +92,15 @@ export class InviteMemberUseCase {
         invitedByName: quienInvita?.fullName ?? evento.name,
       },
       { jobId: `event-invite-${membresia.id}` },
+    )
+
+    // Optimización de latencia: un fallo se registra y no se propaga (ver
+    // `encolarAvisoInvitacion`).
+    await encolarAvisoInvitacion(
+      this.cola,
+      this.registro,
+      { userId: invitado.id, eventId: evento.id, cambio: 'nueva' },
+      membresia.id,
     )
 
     return { id: membresia.id, status: 'INVITED' }

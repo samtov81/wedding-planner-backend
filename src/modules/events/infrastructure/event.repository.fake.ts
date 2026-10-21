@@ -271,21 +271,39 @@ export class EventRepositoryEnMemoria implements EventRepository {
     const vivas = this.membresias.filter(
       (m) => m.eventId === eventId && (m.status === 'INVITED' || m.status === 'ACTIVE'),
     )
-    const miembros = vivas.map((m) => {
-      const u = this.usuarios.find((x) => x.id === m.userId)
-      return {
-        id: m.id ?? '',
-        userId: m.userId,
-        fullName: u?.fullName ?? '',
-        email: u?.email ?? '',
-        role: m.role,
-        status: m.status as 'INVITED' | 'ACTIVE',
-        owner: m.userId === ownerId,
-        budgetView: m.budgetView ?? false,
-      }
+    // El ejecutor de la promesa convierte el `throw` de `usuarioSembrado` en un
+    // rechazo, como fallaría una consulta real.
+    return new Promise((resolve) => {
+      const miembros = vivas.map((m) => this.aMiembro(m, ownerId, 'listarMiembros'))
+      // Inserción = `createdAt` asc, como Prisma; creador primero.
+      resolve(miembros.sort((a, b) => Number(b.owner) - Number(a.owner)))
     })
-    // Inserción = `createdAt` asc, como Prisma; creador primero.
-    return Promise.resolve(miembros.sort((a, b) => Number(b.owner) - Number(a.owner)))
+  }
+
+  buscarMiembro(eventId: string, membershipId: string): Promise<MiembroPersistido | null> {
+    const m = this.viva(eventId, membershipId)
+    if (m === undefined) return Promise.resolve(null)
+    const ownerId = this.eventos.find((e) => e.id === eventId)?.ownerId
+    return new Promise((resolve) => resolve(this.aMiembro(m, ownerId, 'buscarMiembro')))
+  }
+
+  /** Una fila viva como la leen `listarMiembros` y `buscarMiembro`. */
+  private aMiembro(
+    m: MembresiaEnMemoria,
+    ownerId: string | undefined,
+    metodo: string,
+  ): MiembroPersistido {
+    const u = this.usuarioSembrado(m.userId, metodo)
+    return {
+      id: m.id ?? '',
+      userId: m.userId,
+      fullName: u.fullName,
+      email: u.email,
+      role: m.role,
+      status: m.status as 'INVITED' | 'ACTIVE',
+      owner: m.userId === ownerId,
+      budgetView: m.budgetView ?? false,
+    }
   }
 
   buscarMembresiaPorId(
@@ -313,6 +331,11 @@ export class EventRepositoryEnMemoria implements EventRepository {
   ): Promise<boolean> {
     const m = this.viva(eventId, membershipId)
     if (m === undefined) return Promise.resolve(false)
+    // Como Prisma: sin cambios se comprueba que siga viva, pero no se escribe
+    // ni se audita (ni se toca `actualizadaEn`, que reordenaría las pendientes).
+    if (cambios.role === undefined && cambios.budgetView === undefined) {
+      return Promise.resolve(true)
+    }
     if (cambios.role !== undefined) m.role = cambios.role
     if (cambios.budgetView !== undefined) m.budgetView = cambios.budgetView
     // Prisma fuerza `updatedAt` en esta escritura: también reordena las pendientes.
@@ -367,22 +390,50 @@ export class EventRepositoryEnMemoria implements EventRepository {
   listarInvitacionesPendientes(userId: string): Promise<InvitacionPendiente[]> {
     const pendientes = this.membresias
       .filter((m) => m.userId === userId && m.status === 'INVITED')
-      .sort((a, b) => (b.actualizadaEn ?? 0) - (a.actualizadaEn ?? 0))
-    return Promise.resolve(
-      pendientes.map((m) => {
-        const evento = this.eventos.find((e) => e.id === m.eventId)
-        return {
-          membershipId: m.id ?? '',
-          eventId: m.eventId,
-          eventName: this.materializar(evento ?? { id: m.eventId, ownerId: '' }).name,
-          role: m.role,
-          invitedByName:
-            m.invitedById === undefined
-              ? null
-              : (this.usuarios.find((u) => u.id === m.invitedById)?.fullName ?? null),
-        }
-      }),
+      // `updatedAt desc, id asc`, como el `orderBy` de Prisma: el desempate por
+      // id no se omite aunque el reloj del doble no empate solo, porque un test
+      // puede sembrar `actualizadaEn` a mano.
+      .sort(
+        (a, b) =>
+          (b.actualizadaEn ?? 0) - (a.actualizadaEn ?? 0) ||
+          ((a.id ?? '') < (b.id ?? '') ? -1 : (a.id ?? '') > (b.id ?? '') ? 1 : 0),
+      )
+    // Como en `listarMiembros`: un usuario sin sembrar es un rechazo, no un `throw` síncrono.
+    return new Promise((resolve) =>
+      resolve(
+        pendientes.map((m) => {
+          const evento = this.eventos.find((e) => e.id === m.eventId)
+          return {
+            membershipId: m.id ?? '',
+            eventId: m.eventId,
+            eventName: this.materializar(evento ?? { id: m.eventId, ownerId: '' }).name,
+            role: m.role,
+            invitedByName:
+              m.invitedById === undefined
+                ? null
+                : this.usuarioSembrado(m.invitedById, 'listarInvitacionesPendientes').fullName,
+          }
+        }),
+      ),
     )
+  }
+
+  /**
+   * El usuario sembrado en `usuarios`, o un error que dice cuál falta. Antes
+   * devolvía `''` (o `null` para quien invitó) en silencio, y un test que
+   * olvidaba sembrar pasaba comparando nombres vacíos. En Prisma la FK
+   * garantiza el join de `listarMiembros`; `invitedById` no tiene FK, pero hoy
+   * la app no borra usuarios; si lo hiciera, Prisma devolvería `null` y este
+   * doble tendría que dejar de lanzar.
+   */
+  private usuarioSembrado(userId: string, metodo: string): UsuarioEnMemoria {
+    const usuario = this.usuarios.find((u) => u.id === userId)
+    if (usuario === undefined) {
+      throw new Error(
+        `EventRepositoryEnMemoria.${metodo}: el usuario ${userId} no está sembrado en \`usuarios\``,
+      )
+    }
+    return usuario
   }
 
   /** INVITED o ACTIVE de este evento: lo mismo que el `WHERE` condicional de Prisma. */

@@ -50,6 +50,29 @@ describe('MemberInvitationProcessor', () => {
     ])
   })
 
+  it('si la plantilla falla, el error se propaga tal cual para que BullMQ reintente', async () => {
+    const rota = new MemberInvitationProcessor(mail, { APP_URL: 'https://app.test' } as Env, {
+      render: () => Promise.reject(new Error('plantilla rota')),
+    })
+    const error = await rota
+      .process({ name: 'member-invitation', data: PAYLOAD } as Job)
+      .catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(Error)
+    expect(error).not.toBeInstanceOf(UnrecoverableError)
+    expect((error as Error).message).toBe('plantilla rota')
+    expect(mail.enviados).toEqual([])
+  })
+
+  it('si el envío falla, el error se propaga tal cual para que BullMQ reintente', async () => {
+    mail.fallarProximoEnvio(new Error('Resend caído'))
+    const error = await procesador
+      .process({ name: 'member-invitation', data: PAYLOAD } as Job)
+      .catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(Error)
+    expect(error).not.toBeInstanceOf(UnrecoverableError)
+    expect((error as Error).message).toBe('Resend caído')
+  })
+
   it('un payload roto no se reintenta', async () => {
     await expect(
       procesador.process({ name: 'member-invitation', data: { email: 'x' } } as Job),

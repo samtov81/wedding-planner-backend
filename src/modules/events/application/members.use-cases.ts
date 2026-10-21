@@ -1,8 +1,11 @@
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, Logger } from '@nestjs/common'
+
+import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
 
 import { accesoAlPresupuesto, type EventRole } from '../domain/event-access'
 import { MiembroNoEncontradoError, SinInvitacionPendienteError } from '../domain/event-errors'
 import { exigirGestionable, exigirInvitacionPendiente } from '../domain/membresia'
+import { encolarAvisoInvitacion } from './aviso-invitacion'
 import {
   EVENT_REPOSITORY,
   type EventRepository,
@@ -63,21 +66,31 @@ export class UpdateMemberUseCase {
     )
     // Revocada entre la lectura y la escritura: para quien gestiona ya no existe.
     if (!escrito) throw new MiembroNoEncontradoError()
-    const actualizado = (await this.eventos.listarMiembros(datos.eventId)).find(
-      (m) => m.id === datos.membershipId,
-    )
-    if (actualizado === undefined) throw new MiembroNoEncontradoError()
+    // Sólo su fila: releer la lista entera del evento para quedarse con una era
+    // trabajo de más en cada PATCH.
+    const actualizado = await this.eventos.buscarMiembro(datos.eventId, datos.membershipId)
+    if (actualizado === null) throw new MiembroNoEncontradoError()
     return aMiembro(actualizado)
   }
 }
 
 @Injectable()
 export class RevokeMemberUseCase {
-  constructor(@Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository) {}
+  private readonly registro = new Logger(RevokeMemberUseCase.name)
 
-  /** Revocar a un ACTIVE y cancelar una INVITED son la misma escritura. */
+  constructor(
+    @Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository,
+    @Inject(QUEUE_PORT) private readonly cola: QueuePort,
+  ) {}
+
+  /**
+   * Revocar a un ACTIVE y cancelar una INVITED son la misma escritura. Sólo la
+   * cancelación avisa en tiempo real (spec 2026-10-14 §3.1): es lo que cambia
+   * las invitaciones pendientes del invitado.
+   */
   async ejecutar(datos: { eventId: string; membershipId: string; actorId: string }): Promise<void> {
-    exigirGestionable(await this.eventos.buscarMembresiaPorId(datos.eventId, datos.membershipId))
+    const membresia = await this.eventos.buscarMembresiaPorId(datos.eventId, datos.membershipId)
+    exigirGestionable(membresia)
     const escrito = await this.eventos.revocarMembresia(
       datos.eventId,
       datos.membershipId,
@@ -85,6 +98,16 @@ export class RevokeMemberUseCase {
       'revoked',
     )
     if (!escrito) throw new MiembroNoEncontradoError()
+    if (membresia.status !== 'INVITED') return
+
+    // Optimización de latencia: si Redis falla, la cancelación ya está hecha
+    // (ver `encolarAvisoInvitacion`).
+    await encolarAvisoInvitacion(
+      this.cola,
+      this.registro,
+      { userId: membresia.userId, eventId: datos.eventId, cambio: 'cancelada' },
+      datos.membershipId,
+    )
   }
 }
 

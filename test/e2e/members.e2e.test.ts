@@ -7,6 +7,7 @@ import request from 'supertest'
 import { arrancarAppDeTest, fijarEntorno } from '../support/app'
 import { startPostgres, type PostgresDeTest } from '../support/containers'
 import { crearEventoPublicado } from '../support/eventos'
+import { limpiarContadoresDeRitmo } from '../support/throttler'
 
 interface Usuario {
   id: string
@@ -86,6 +87,12 @@ describe('Miembros e invitaciones e2e', () => {
     evento = await crearEventoPublicado(url, ana.accessToken, 'Boda de Ana')
   }, 180_000)
 
+  // El limitador `invite` (20/h por IP) es de toda la ruta: sin limpiar, las
+  // invitaciones de los tests anteriores se sumarían a las del siguiente.
+  beforeEach(async () => {
+    await limpiarContadoresDeRitmo(redis.getConnectionUrl())
+  })
+
   afterAll(async () => {
     await prisma.$disconnect()
     await cerrar()
@@ -139,11 +146,22 @@ describe('Miembros e invitaciones e2e', () => {
       .set(auth(ana))
       .expect(404)
     expect((borrado.body as { code: string }).code).toBe('MEMBER_NOT_FOUND')
+    const editado = await request(url)
+      .patch(`/events/${evento}/members/no-es-uuid`)
+      .set(auth(ana))
+      .send({ budgetAccess: 'view' })
+      .expect(404)
+    expect((editado.body as { code: string }).code).toBe('MEMBER_NOT_FOUND')
     const aceptado = await request(url)
       .post('/events/no-es-uuid/invitation/accept')
       .set(auth(extrano))
       .expect(404)
     expect((aceptado.body as { code: string }).code).toBe('NO_PENDING_INVITATION')
+    const rechazado = await request(url)
+      .post('/events/no-es-uuid/invitation/decline')
+      .set(auth(extrano))
+      .expect(404)
+    expect((rechazado.body as { code: string }).code).toBe('NO_PENDING_INVITATION')
   })
 
   it('la creadora lista, concede ver, cambia el rol y revoca', async () => {
@@ -247,5 +265,29 @@ describe('Miembros e invitaciones e2e', () => {
     const u = await registrarYEntrar(`o-${randomUUID()}@test.com`, 'Otro')
     const id = await invitar(u.email, 'PLANNER')
     await request(url).delete(`/events/${otro}/members/${id}`).set(auth(ana)).expect(404)
+  })
+
+  it('invitar tiene límite propio: 20 por hora desde la misma IP; la 21 es 429', async () => {
+    // Los invitados nunca entran: basta con que la cuenta exista.
+    const invitados = []
+    for (let i = 0; i < 21; i += 1) {
+      invitados.push(
+        await prisma.user.create({
+          data: {
+            email: `lim-${i}-${randomUUID()}@test.com`,
+            passwordHash: 'x',
+            fullName: `Lim ${i}`,
+          },
+        }),
+      )
+    }
+    for (const u of invitados.slice(0, 20)) await invitar(u.email, 'PLANNER')
+
+    const ultimo = invitados[20]
+    await request(url)
+      .post(`/events/${evento}/members`)
+      .set(auth(ana))
+      .send({ email: ultimo?.email, role: 'PLANNER' })
+      .expect(429)
   })
 })

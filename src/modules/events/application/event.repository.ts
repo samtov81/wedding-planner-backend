@@ -152,6 +152,13 @@ export interface EventRepository {
    */
   listarMiembros(eventId: string): Promise<MiembroPersistido[]>
 
+  /**
+   * UNA fila de las que lista `listarMiembros`, con los mismos campos: sólo
+   * INVITED o ACTIVE y sólo de ESTE evento; `null` en otro caso. Es lo que
+   * relee `UpdateMemberUseCase` tras escribir, sin traerse todo el evento.
+   */
+  buscarMiembro(eventId: string, membershipId: string): Promise<MiembroPersistido | null>
+
   /** En cualquier estado, pero sólo si es de ESTE evento. */
   buscarMembresiaPorId(eventId: string, membershipId: string): Promise<MembresiaGestionable | null>
 
@@ -160,6 +167,9 @@ export interface EventRepository {
    * CONDICIONAL: sólo si la membresía sigue INVITED o ACTIVE en este evento;
    * `false` si cambió por debajo (el caso de uso responde 404). El `UPDATE`
    * bloquea la fila hasta el commit, así que un DELETE concurrente espera.
+   *
+   * Con `cambios` vacío (ni rol ni grant) sólo comprueba que siga viva: no
+   * escribe, no toca `updatedAt` y no deja `AuditLog`.
    */
   actualizarMembresia(
     eventId: string,
@@ -185,7 +195,10 @@ export interface EventRepository {
   /** INVITED → ACTIVE de la membresía de `userId` + `AuditLog`. `false` si no estaba INVITED. */
   aceptarInvitacion(eventId: string, userId: string): Promise<boolean>
 
-  /** INVITED del usuario, más recientes primero, con nombre del evento y de quien invitó. */
+  /**
+   * INVITED del usuario, más recientes primero (`updatedAt desc`, `id asc` de
+   * desempate), con nombre del evento y de quien invitó.
+   */
   listarInvitacionesPendientes(userId: string): Promise<InvitacionPendiente[]>
 }
 

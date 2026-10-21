@@ -34,6 +34,33 @@ describe('NotificationProcessor', () => {
     })
   })
 
+  describe('invitacion-de-miembro', () => {
+    const userId = randomUUID()
+
+    it.each(['nueva', 'cancelada'] as const)('emite %s al invitado y sólo a él', async (cambio) => {
+      await procesador.process(job('invitacion-de-miembro', { userId, eventId, cambio }))
+
+      expect(realtime.emitidas).toEqual([
+        { destino: { userId }, tipo: 'member-invitation.changed', payload: { eventId, cambio } },
+      ])
+    })
+
+    it('emite SÓLO lo validado: un campo de más en Redis no llega al socket', async () => {
+      await procesador.process(
+        job('invitacion-de-miembro', { userId, eventId, cambio: 'nueva', extra: 'x' }),
+      )
+
+      expect(realtime.emitidas[0]?.payload).toEqual({ eventId, cambio: 'nueva' })
+    })
+
+    it('un payload roto no se reintenta', async () => {
+      await expect(
+        procesador.process(job('invitacion-de-miembro', { userId, eventId, cambio: 'otra' })),
+      ).rejects.toBeInstanceOf(UnrecoverableError)
+      expect(realtime.emitidas).toEqual([])
+    })
+  })
+
   describe('guest.rsvp.updated', () => {
     const payload = { guestId, guestName: 'Ana', rsvp: 'CONFIRMED' }
 

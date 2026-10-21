@@ -23,6 +23,7 @@ describe('Webhook de Resend e2e', () => {
   let prisma: PrismaClient
   let guestId: string
   let tokenPareja: string
+  let tokenPlanner: string
 
   /** Una invitación ya enviada (SENT) con su id del proveedor, como la deja el worker. */
   async function invitacionEnviada(
@@ -111,6 +112,16 @@ describe('Webhook de Resend e2e', () => {
     tokenPareja = app
       .get(TokenService)
       .firmarAccess({ id: usuario.id, systemRole: usuario.systemRole })
+    // Un segundo miembro ACTIVE: el aviso de rebote va a TODOS los miembros.
+    const planner = await prisma.user.create({
+      data: { email: 'planner@test.com', passwordHash: 'x', fullName: 'Planner' },
+    })
+    await prisma.eventMembership.create({
+      data: { eventId: evento.id, userId: planner.id, role: 'PLANNER' },
+    })
+    tokenPlanner = app
+      .get(TokenService)
+      .firmarAccess({ id: planner.id, systemRole: planner.systemRole })
   }, 240_000)
 
   beforeEach(async () => {
@@ -168,12 +179,12 @@ describe('Webhook de Resend e2e', () => {
   })
 
   describe('notificaciones de rebote y spam', () => {
-    async function misNotificaciones(): Promise<
-      Array<{ type: string; payload?: { guestName?: string; status?: string } }>
-    > {
+    async function misNotificaciones(
+      token: string = tokenPareja,
+    ): Promise<Array<{ type: string; payload?: { guestName?: string; status?: string } }>> {
       const respuesta = await request(url)
-        .get('/me/notifications')
-        .set('Authorization', `Bearer ${tokenPareja}`)
+        .get('/me/notifications?limit=100')
+        .set('Authorization', `Bearer ${token}`)
         .expect(200)
       return (respuesta.body as { items: Array<{ type: string }> }).items
     }
@@ -193,6 +204,19 @@ describe('Webhook de Resend e2e', () => {
       expect(items[0]?.type).toBe('guest.invitation.status')
       const guardadas = await prisma.notification.findMany()
       expect(guardadas[0]?.payload).toMatchObject({ guestName: 'Invitada', status: 'BOUNCED' })
+    })
+
+    it('la reentrega del mismo bounced no duplica: una notificación por miembro ACTIVE', async () => {
+      const { mensaje } = await invitacionEnviada()
+      const cuerpo = cuerpoDe('email.bounced', mensaje)
+
+      await enviar(cuerpo, firmar(cuerpo)).expect(204)
+      await enviar(cuerpo, firmar(cuerpo)).expect(204)
+
+      for (const token of [tokenPareja, tokenPlanner]) {
+        const items = await misNotificaciones(token)
+        expect(items.filter((n) => n.type === 'guest.invitation.status')).toHaveLength(1)
+      }
     })
 
     it('un delivered no crea ninguna', async () => {

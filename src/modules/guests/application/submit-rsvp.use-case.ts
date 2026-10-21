@@ -19,6 +19,10 @@ import { INVITATION_REPOSITORY, type InvitationRepository } from './invitation.r
 /**
  * Tipo de la notificación, nombre del job en la cola `notifications` y evento
  * de socket que emitirá el worker. La Tarea 15 lo escucha por este nombre.
+ *
+ * Tipo → permiso → vista (spec §3):
+ *
+ *   `guest.rsvp.updated`  →  `COUPLE` | `PLANNER`  →  `/events/:id/guests`  →  todos los miembros ACTIVE
  */
 export const TIPO_RSVP_ACTUALIZADO = 'guest.rsvp.updated'
 

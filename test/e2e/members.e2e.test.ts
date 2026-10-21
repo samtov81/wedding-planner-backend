@@ -302,20 +302,20 @@ describe('Miembros e invitaciones e2e', () => {
       u: { accessToken: string },
       eventId: string,
     ): Promise<CuerpoMias['items']> {
-      const r = await request(url).get('/me/notifications').set(auth(u)).expect(200)
+      const r = await request(url).get('/me/notifications?limit=100').set(auth(u)).expect(200)
       return (r.body as CuerpoMias).items.filter(
         (n) => n.type === 'event.member.responded' && n.event.id === eventId,
       )
     }
 
-    /** Evento nuevo de `ana` con un PLANNER ACTIVE y un invitado pendiente. */
+    /** Evento nuevo de `ana` con un PLANNER y un segundo COUPLE ACTIVE y un invitado pendiente. */
     async function escenario() {
       const eventoNuevo = await crearEventoPublicado(url, ana.accessToken, 'Boda con equipo')
-      const invitarAlNuevo = async (u: Usuario): Promise<void> => {
+      const invitarAlNuevo = async (u: Usuario, role = 'PLANNER'): Promise<void> => {
         await request(url)
           .post(`/events/${eventoNuevo}/members`)
           .set(auth(ana))
-          .send({ email: u.email, role: 'PLANNER' })
+          .send({ email: u.email, role })
           .expect(201)
       }
       const planner = await registrarYEntrar(`planner-${randomUUID()}@test.com`, 'Planner')
@@ -324,13 +324,19 @@ describe('Miembros e invitaciones e2e', () => {
         .post(`/events/${eventoNuevo}/invitation/accept`)
         .set(auth(planner))
         .expect(200)
+      const pareja = await registrarYEntrar(`pareja-${randomUUID()}@test.com`, 'Pareja')
+      await invitarAlNuevo(pareja, 'COUPLE')
+      await request(url)
+        .post(`/events/${eventoNuevo}/invitation/accept`)
+        .set(auth(pareja))
+        .expect(200)
       const invitado = await registrarYEntrar(`invitado-${randomUUID()}@test.com`, 'Invitada')
       await invitarAlNuevo(invitado)
-      return { eventoNuevo, planner, invitado }
+      return { eventoNuevo, planner, pareja, invitado }
     }
 
     it('al aceptar, el dueño ve event.member.responded en /me/notifications y el planner no', async () => {
-      const { eventoNuevo, planner, invitado } = await escenario()
+      const { eventoNuevo, planner, pareja, invitado } = await escenario()
 
       await request(url)
         .post(`/events/${eventoNuevo}/invitation/accept`)
@@ -345,11 +351,13 @@ describe('Miembros e invitaciones e2e', () => {
         }),
       )
       expect(await respuestasVistasPor(planner, eventoNuevo)).toEqual([])
+      // Ni un segundo COUPLE: la vista de destino exige ser el dueño.
+      expect(await respuestasVistasPor(pareja, eventoNuevo)).toEqual([])
       expect(await respuestasVistasPor(invitado, eventoNuevo)).toEqual([])
     })
 
     it('al rechazar, el dueño ve DECLINED y quien rechaza no ve nada', async () => {
-      const { eventoNuevo, planner, invitado } = await escenario()
+      const { eventoNuevo, planner, pareja, invitado } = await escenario()
 
       await request(url)
         .post(`/events/${eventoNuevo}/invitation/decline`)
@@ -362,6 +370,8 @@ describe('Miembros e invitaciones e2e', () => {
         }),
       )
       expect(await respuestasVistasPor(planner, eventoNuevo)).toEqual([])
+      // Ni un segundo COUPLE: la vista de destino exige ser el dueño.
+      expect(await respuestasVistasPor(pareja, eventoNuevo)).toEqual([])
       expect(await respuestasVistasPor(invitado, eventoNuevo)).toEqual([])
     })
   })

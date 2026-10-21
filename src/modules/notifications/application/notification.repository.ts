@@ -60,6 +60,14 @@ export interface NotificationRepository {
    * aquí): es el mismo filtro de datos que ya usa `destinatarios()`. Alternativa
    * descartada: listar todas las filas del usuario y filtrar después, que
    * rompe la paginación (páginas cortas) y deja el contador inflado.
+   *
+   * Comportamiento deliberado: la visibilidad es «ACTIVE HOY». Si un miembro
+   * revocado es reinvitado y acepta, sus notificaciones antiguas de ese evento
+   * (también las no leídas que `marcarTodasLeidas` no tocó mientras eran
+   * invisibles) vuelven a verse. Alternativa descartada en esta ronda: filtrar
+   * por la fecha de la última activación de la membresía; la regla del spec es
+   * literal y eso exige una columna/fecha nueva. Decisión de producto para más
+   * adelante.
    */
   listarDeUsuario(
     userId: string,

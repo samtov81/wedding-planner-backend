@@ -99,6 +99,22 @@ describe('PrismaNotificationRepository', () => {
     await pg.stop()
   }, 60_000)
 
+  describe('listarDeUsuario', () => {
+    it('no ve las de otro usuario', async () => {
+      const mia = await sembrar({ userId: parejaId, minuto: 1 })
+      await sembrar({ userId: plannerId, minuto: 2 })
+
+      const pagina = await repo.listarDeUsuario(parejaId, {
+        desde: null,
+        limite: 10,
+        soloNoLeidas: false,
+      })
+
+      expect(pagina.items.map((n) => n.id)).toEqual([mia])
+      expect(pagina.items[0]?.event).toEqual({ id: eventId, name: 'Boda' })
+    })
+  })
+
   describe('crearParaMiembros', () => {
     it('crea UNA por miembro ACTIVO; ni INVITED, ni REVOKED, ni el vendor contratado', async () => {
       await repo.crearParaMiembros(eventId, 'guest.rsvp.updated', { guestId: 'g-1' })

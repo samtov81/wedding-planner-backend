@@ -4,7 +4,7 @@ import type {
   NotificationRepository,
   OpcionesListado,
 } from '../application/notification.repository'
-import type { Notificacion } from '../domain/notification'
+import type { Notificacion, NotificacionConEvento } from '../domain/notification'
 
 export interface NotificacionEnMemoria extends Notificacion {
   eventId: string
@@ -20,10 +20,16 @@ export interface NotificacionEnMemoria extends Notificacion {
 export class NotificationRepositoryEnMemoria implements NotificationRepository {
   readonly filas: NotificacionEnMemoria[] = []
   private readonly miembros = new Map<string, readonly string[]>()
+  private readonly eventos = new Map<string, string>()
 
   /** Los `userId` con membresía ACTIVA del evento, como los leería el adaptador real. */
   registrarMiembros(eventId: string, userIds: readonly string[]): void {
     this.miembros.set(eventId, [...userIds])
+  }
+
+  /** El nombre con el que `listarDeUsuario` etiqueta las notificaciones de ese evento. */
+  registrarEvento(eventId: string, name: string): void {
+    this.eventos.set(eventId, name)
   }
 
   listar(
@@ -67,6 +73,54 @@ export class NotificationRepositoryEnMemoria implements NotificationRepository {
 
   destinatarios(eventId: string): Promise<string[]> {
     return Promise.resolve([...(this.miembros.get(eventId) ?? [])])
+  }
+
+  listarDeUsuario(
+    userId: string,
+    { desde, limite, soloNoLeidas }: OpcionesListado,
+  ): Promise<CursorPage<NotificacionConEvento>> {
+    const ordenadas = this.visiblesDe(userId)
+      .filter((n) => !soloNoLeidas || n.readAt === null)
+      .filter(
+        (n) =>
+          desde === null ||
+          n.createdAt < desde.createdAt ||
+          (n.createdAt.getTime() === desde.createdAt.getTime() && n.id < desde.id),
+      )
+      .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime() || (a.id < b.id ? 1 : -1))
+
+    const pagina = ordenadas.slice(0, limite)
+    const ultimo = pagina.at(-1)
+    return Promise.resolve({
+      items: pagina.map(({ eventId, userId: _u, ...vista }) => ({
+        ...vista,
+        event: { id: eventId, name: this.nombreDe(eventId) },
+      })),
+      nextCursor: ordenadas.length > limite && ultimo !== undefined ? encodeCursor(ultimo) : null,
+    })
+  }
+
+  contarNoLeidasDeUsuario(userId: string): Promise<number> {
+    return Promise.resolve(this.visiblesDe(userId).filter((n) => n.readAt === null).length)
+  }
+
+  marcarTodasLeidas(userId: string, ahora: Date): Promise<number> {
+    const pendientes = this.visiblesDe(userId).filter((n) => n.readAt === null)
+    for (const fila of pendientes) fila.readAt = ahora
+    return Promise.resolve(pendientes.length)
+  }
+
+  /** Del usuario y de un evento donde sigue siendo miembro ACTIVO (ver el puerto). */
+  private visiblesDe(userId: string): NotificacionEnMemoria[] {
+    return this.filas.filter(
+      (n) => n.userId === userId && (this.miembros.get(n.eventId) ?? []).includes(userId),
+    )
+  }
+
+  private nombreDe(eventId: string): string {
+    const name = this.eventos.get(eventId)
+    if (name === undefined) throw new Error(`evento ${eventId} sin registrarEvento en el doble`)
+    return name
   }
 
   private delUsuario(eventId: string, userId: string): NotificacionEnMemoria[] {

@@ -10,7 +10,7 @@ import type {
   NotificationRepository,
   OpcionesListado,
 } from '../application/notification.repository'
-import type { Notificacion } from '../domain/notification'
+import type { Notificacion, NotificacionConEvento } from '../domain/notification'
 
 /**
  * Más recientes primero. (`createdAt`, `id`) es un orden total: con
@@ -29,6 +29,24 @@ const ORDEN_ESTABLE = [
  * regla aquí es el test de este repositorio con INVITED y REVOKED.
  */
 const MIEMBRO_ACTIVO = { status: 'ACTIVE' } satisfies Prisma.EventMembershipWhereInput
+
+/**
+ * Las notificaciones de `userId` cuyo evento le sigue dando membresía ACTIVE.
+ * Una sola definición para listar, contar y marcar: lista, insignia y "marcar
+ * todas" no pueden discrepar.
+ *
+ * Índice (decisión de la Tarea 1): `EXPLAIN` de `listarDeUsuario` en Postgres 16
+ * con 30 000 notificaciones, 51 usuarios y 5 eventos NO hace seq scan sobre
+ * `notifications`: usa `notifications_userId_readAt_idx` (Bitmap Index Scan por
+ * `userId`) y ordena sólo las filas de ese usuario. Se descarta añadir
+ * `@@index([userId, createdAt])`: evitaría el sort, pero un usuario tiene
+ * cientos de filas, no millones, y cada índice encarece la escritura de
+ * `crearParaMiembros`. Si el volumen por usuario crece, es lo primero a medir.
+ */
+const visiblesDe = (userId: string): Prisma.NotificationWhereInput => ({
+  userId,
+  event: { memberships: { some: { userId, ...MIEMBRO_ACTIVO } } },
+})
 
 /**
  * Adaptador de Prisma de los DOS puertos del módulo: `NotificationPort` (crear,
@@ -112,6 +130,50 @@ export class PrismaNotificationRepository implements NotificationPort, Notificat
     })
     if (count === 1) return true
     return (await this.prisma.notification.count({ where: donde })) === 1
+  }
+
+  async listarDeUsuario(
+    userId: string,
+    { desde, limite, soloNoLeidas }: OpcionesListado,
+  ): Promise<CursorPage<NotificacionConEvento>> {
+    const filas = await this.prisma.notification.findMany({
+      where: {
+        ...visiblesDe(userId),
+        ...(soloNoLeidas ? { readAt: null } : {}),
+        ...(desde !== null
+          ? {
+              OR: [
+                { createdAt: { lt: desde.createdAt } },
+                { createdAt: desde.createdAt, id: { lt: desde.id } },
+              ],
+            }
+          : {}),
+      },
+      include: { event: { select: { id: true, name: true } } },
+      orderBy: ORDEN_ESTABLE,
+      take: limite + 1,
+    })
+
+    const hayMas = filas.length > limite
+    const pagina = hayMas ? filas.slice(0, limite) : filas
+    const ultimo = pagina.at(-1)
+    return {
+      items: pagina.map((fila) => ({ ...aNotificacion(fila), event: fila.event })),
+      nextCursor: hayMas && ultimo !== undefined ? encodeCursor(ultimo) : null,
+    }
+  }
+
+  async contarNoLeidasDeUsuario(userId: string): Promise<number> {
+    return await this.prisma.notification.count({ where: { ...visiblesDe(userId), readAt: null } })
+  }
+
+  async marcarTodasLeidas(userId: string, ahora: Date): Promise<number> {
+    // `readAt: null` en el WHERE: las ya leídas conservan su `readAt` original.
+    const { count } = await this.prisma.notification.updateMany({
+      where: { ...visiblesDe(userId), readAt: null },
+      data: { readAt: ahora },
+    })
+    return count
   }
 
   async destinatarios(eventId: string): Promise<string[]> {

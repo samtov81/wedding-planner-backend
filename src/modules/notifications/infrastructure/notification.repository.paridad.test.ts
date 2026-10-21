@@ -231,4 +231,120 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
       (await doble.destinatarios(eventId)).sort(),
     )
   })
+
+  describe('a nivel de usuario', () => {
+    /** Sin ids ni timestamps: lo que no es comparable entre los dos (ver `sinVolatiles`). */
+    const sinVolatiles = (items: Array<{ id: string }>): unknown[] =>
+      items.map(({ id: _id, ...resto }) => {
+        const { createdAt: _c, ...sinFecha } = resto as Record<string, unknown>
+        return sinFecha
+      })
+
+    async function fijarMembresiaEnOtroEvento(status: 'ACTIVE' | 'REVOKED'): Promise<void> {
+      await prisma.eventMembership.upsert({
+        where: { eventId_userId: { eventId: otroEventId, userId: miId } },
+        create: { eventId: otroEventId, userId: miId, role: 'COUPLE', status },
+        update: { status },
+      })
+      doble.registrarMiembros(otroEventId, status === 'ACTIVE' ? [miId] : [])
+    }
+
+    beforeEach(() => {
+      doble.registrarEvento(eventId, 'Boda')
+      doble.registrarEvento(otroEventId, 'Otra')
+    })
+
+    const todas = { desde: null, limite: 10, soloNoLeidas: false }
+
+    it('listarDeUsuario mezcla eventos, más recientes primero, con el nombre del evento', async () => {
+      await fijarMembresiaEnOtroEvento('ACTIVE')
+      const enE1 = await sembrarEnAmbos({ userId: miId, minuto: 1 })
+      const enE2 = await sembrarEnAmbos({ userId: miId, eventId: otroEventId, minuto: 2 })
+      await sembrarEnAmbos({ userId: otroId, minuto: 3 })
+
+      const conPrisma = await real.listarDeUsuario(miId, todas)
+      const conDoble = await doble.listarDeUsuario(miId, todas)
+
+      expect(conPrisma.items.map((n) => n.id)).toEqual([enE2, enE1])
+      expect(conPrisma.items.map((n) => n.event)).toEqual([
+        { id: otroEventId, name: 'Otra' },
+        { id: eventId, name: 'Boda' },
+      ])
+      expect(conDoble.items.map((n) => n.id)).toEqual([enE2, enE1])
+      expect(sinVolatiles(conDoble.items)).toEqual(sinVolatiles(conPrisma.items))
+    })
+
+    it('listarDeUsuario y contarNoLeidasDeUsuario ignoran eventos donde ya no es ACTIVE', async () => {
+      await fijarMembresiaEnOtroEvento('REVOKED')
+      const enE1 = await sembrarEnAmbos({ userId: miId, minuto: 1 })
+      await sembrarEnAmbos({ userId: miId, minuto: 2, leida: true })
+      await sembrarEnAmbos({ userId: miId, eventId: otroEventId, minuto: 3 })
+
+      for (const [, repo] of implementaciones()) {
+        const pagina = await repo.listarDeUsuario(miId, todas)
+        expect(pagina.items.map((n) => n.event.id)).toEqual([eventId, eventId])
+        expect(pagina.items.map((n) => n.id)).toContain(enE1)
+        expect(await repo.contarNoLeidasDeUsuario(miId)).toBe(1)
+      }
+    })
+
+    it('listarDeUsuario pagina igual en los dos con createdAt empatados', async () => {
+      await fijarMembresiaEnOtroEvento('ACTIVE')
+      for (let i = 0; i < 3; i += 1) await sembrarEnAmbos({ userId: miId, minuto: 5 })
+      await sembrarEnAmbos({ userId: miId, eventId: otroEventId, minuto: 5 })
+
+      const recorrido = async (repo: NotificationRepository): Promise<string[]> => {
+        const vistas: string[] = []
+        let desde = null
+        for (let vuelta = 0; vuelta < 10; vuelta += 1) {
+          const pagina = await repo.listarDeUsuario(miId, {
+            desde,
+            limite: 1,
+            soloNoLeidas: false,
+          })
+          vistas.push(...pagina.items.map((n) => n.id))
+          if (pagina.nextCursor === null) break
+          desde = decodeCursor(pagina.nextCursor)
+        }
+        return vistas
+      }
+
+      const conPrisma = await recorrido(real)
+      expect(conPrisma).toHaveLength(4)
+      expect(new Set(conPrisma).size).toBe(4)
+      expect(await recorrido(doble)).toEqual(conPrisma)
+    })
+
+    it('marcarTodasLeidas marca sólo las visibles y es idempotente', async () => {
+      await fijarMembresiaEnOtroEvento('REVOKED')
+      await sembrarEnAmbos({ userId: miId, minuto: 1 })
+      await sembrarEnAmbos({ userId: miId, minuto: 2 })
+      await sembrarEnAmbos({ userId: miId, minuto: 3, leida: true })
+      await sembrarEnAmbos({ userId: miId, eventId: otroEventId, minuto: 4 })
+      await sembrarEnAmbos({ userId: otroId, minuto: 5 })
+      const ahora = new Date('2026-04-01T00:00:00.000Z')
+
+      for (const [, repo] of implementaciones()) {
+        expect(await repo.marcarTodasLeidas(miId, ahora)).toBe(2)
+        expect(await repo.marcarTodasLeidas(miId, new Date('2026-05-01T00:00:00.000Z'))).toBe(0)
+        expect(await repo.contarNoLeidasDeUsuario(miId)).toBe(0)
+      }
+
+      // La del evento revocado y la de otro usuario siguen sin leer.
+      const enPrisma = await prisma.notification.findMany({ where: { readAt: null } })
+      expect(enPrisma.map((f) => [f.userId, f.eventId]).sort()).toEqual(
+        [
+          [miId, otroEventId],
+          [otroId, eventId],
+        ].sort(),
+      )
+      const enDoble = doble.filas.filter((f) => f.readAt === null)
+      expect(enDoble.map((f) => [f.userId, f.eventId]).sort()).toEqual(
+        [
+          [miId, otroEventId],
+          [otroId, eventId],
+        ].sort(),
+      )
+    })
+  })
 })

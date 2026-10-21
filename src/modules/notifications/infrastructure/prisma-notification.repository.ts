@@ -78,6 +78,27 @@ export class PrismaNotificationRepository implements NotificationPort, Notificat
     })
   }
 
+  /**
+   * Como `crearParaMiembros`, por `clienteDe(this.prisma)`: se llama dentro de
+   * la unidad de trabajo que escribe la membresía, y la fila se confirma con
+   * ella o no se confirma. Un evento que no existe no crea nada (no es un
+   * error: el caso de uso ya validó el evento antes).
+   */
+  async crearParaDueno(eventId: string, tipo: string, payload: unknown): Promise<void> {
+    const json = comoJson(payload)
+    const cliente = clienteDe(this.prisma)
+
+    const evento = await cliente.event.findUnique({
+      where: { id: eventId },
+      select: { ownerId: true },
+    })
+    if (evento === null) return
+
+    await cliente.notification.create({
+      data: { eventId, userId: evento.ownerId, type: tipo, payload: json },
+    })
+  }
+
   async listar(
     eventId: string,
     userId: string,

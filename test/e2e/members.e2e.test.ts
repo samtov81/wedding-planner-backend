@@ -290,4 +290,79 @@ describe('Miembros e invitaciones e2e', () => {
       .send({ email: ultimo?.email, role: 'PLANNER' })
       .expect(429)
   })
+
+  describe('aviso al dueño en /me/notifications', () => {
+    interface CuerpoMias {
+      items: Array<{ type: string; payload: unknown; event: { id: string } }>
+      unreadCount: number
+    }
+
+    /** Las `event.member.responded` de `u` en un evento, tal como las ve su campana. */
+    async function respuestasVistasPor(
+      u: { accessToken: string },
+      eventId: string,
+    ): Promise<CuerpoMias['items']> {
+      const r = await request(url).get('/me/notifications').set(auth(u)).expect(200)
+      return (r.body as CuerpoMias).items.filter(
+        (n) => n.type === 'event.member.responded' && n.event.id === eventId,
+      )
+    }
+
+    /** Evento nuevo de `ana` con un PLANNER ACTIVE y un invitado pendiente. */
+    async function escenario() {
+      const eventoNuevo = await crearEventoPublicado(url, ana.accessToken, 'Boda con equipo')
+      const invitarAlNuevo = async (u: Usuario): Promise<void> => {
+        await request(url)
+          .post(`/events/${eventoNuevo}/members`)
+          .set(auth(ana))
+          .send({ email: u.email, role: 'PLANNER' })
+          .expect(201)
+      }
+      const planner = await registrarYEntrar(`planner-${randomUUID()}@test.com`, 'Planner')
+      await invitarAlNuevo(planner)
+      await request(url)
+        .post(`/events/${eventoNuevo}/invitation/accept`)
+        .set(auth(planner))
+        .expect(200)
+      const invitado = await registrarYEntrar(`invitado-${randomUUID()}@test.com`, 'Invitada')
+      await invitarAlNuevo(invitado)
+      return { eventoNuevo, planner, invitado }
+    }
+
+    it('al aceptar, el dueño ve event.member.responded en /me/notifications y el planner no', async () => {
+      const { eventoNuevo, planner, invitado } = await escenario()
+
+      await request(url)
+        .post(`/events/${eventoNuevo}/invitation/accept`)
+        .set(auth(invitado))
+        .expect(200)
+
+      // El dueño ve también la del planner que entró antes: se busca la de la invitada.
+      const delDueno = await respuestasVistasPor(ana, eventoNuevo)
+      expect(delDueno).toContainEqual(
+        expect.objectContaining({
+          payload: { userId: invitado.id, fullName: 'Invitada', response: 'ACCEPTED' },
+        }),
+      )
+      expect(await respuestasVistasPor(planner, eventoNuevo)).toEqual([])
+      expect(await respuestasVistasPor(invitado, eventoNuevo)).toEqual([])
+    })
+
+    it('al rechazar, el dueño ve DECLINED y quien rechaza no ve nada', async () => {
+      const { eventoNuevo, planner, invitado } = await escenario()
+
+      await request(url)
+        .post(`/events/${eventoNuevo}/invitation/decline`)
+        .set(auth(invitado))
+        .expect(204)
+
+      expect(await respuestasVistasPor(ana, eventoNuevo)).toContainEqual(
+        expect.objectContaining({
+          payload: { userId: invitado.id, fullName: 'Invitada', response: 'DECLINED' },
+        }),
+      )
+      expect(await respuestasVistasPor(planner, eventoNuevo)).toEqual([])
+      expect(await respuestasVistasPor(invitado, eventoNuevo)).toEqual([])
+    })
+  })
 })

@@ -4,6 +4,7 @@ import { Module } from '@nestjs/common'
 import { AuthModule } from '@/modules/auth/auth.module'
 import { PrismaService } from '@/modules/database/prisma.service'
 import { MailModule } from '@/modules/mail/mail.module'
+import { NotificationWriterModule } from '@/modules/notifications/notification-writer.module'
 import { UsersModule } from '@/modules/users/users.module'
 
 import { CreateEventUseCase } from './application/create-event.use-case'
@@ -47,6 +48,9 @@ import { MyInvitationsController } from './interfaces/my-invitations.controller'
     AuthModule,
     UsersModule,
     MailModule,
+    // Sólo el puerto de escritura: `NotificationsModule` importa este módulo y
+    // la importación inversa sería un ciclo (ver `NotificationWriterModule`).
+    NotificationWriterModule,
     // Sin este `registerQueue`, `MemberInvitationProcessor` no arranca
     // (NO_QUEUE_FOUND): el explorador de `@nestjs/bullmq` necesita la cola
     // registrada en el módulo del worker. Cola PROPIA, no `email` (ruling C17).

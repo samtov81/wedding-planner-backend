@@ -12,10 +12,17 @@
  *    respuesta del invitado o no se confirma. Una notificación persistida es lo
  *    que un cliente desconectado recupera por REST; perderla en silencio
  *    rompería esa promesa.
+ *  - `crearParaDueno` crea UNA para `Event.ownerId` y nada si el evento no
+ *    existe. Es para los avisos cuya vista de destino sólo puede abrir el
+ *    dueño (p. ej. `event.member.responded`, que lleva a la sección de
+ *    miembros y ésta exige `OWNER`): notificar a quien no puede abrir la vista
+ *    sería un aviso que lleva a un 403. Mismo contrato de transacción que
+ *    `crearParaMiembros`.
  *  - `payload` se guarda como JSON: sólo valores serializables.
  */
 export interface NotificationPort {
   crearParaMiembros(eventId: string, tipo: string, payload: unknown): Promise<void>
+  crearParaDueno(eventId: string, tipo: string, payload: unknown): Promise<void>
 }
 
 export const NOTIFICATION_PORT = Symbol('NOTIFICATION_PORT')

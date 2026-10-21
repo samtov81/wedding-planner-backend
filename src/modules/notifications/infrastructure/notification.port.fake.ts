@@ -10,6 +10,7 @@ export interface NotificacionCreada {
 /**
  * Doble en memoria del puerto (ruling H1). No es más permisivo que el
  * adaptador real en lo que un test puede observar:
+ *  - `crearParaDueno` notifica sólo al dueño REGISTRADO (`registrarDueno`);
  *  - sólo notifica a los miembros REGISTRADOS del evento; un evento sin
  *    miembros registrados no produce ninguna (como uno sin membresías ACTIVAS);
  *  - el `payload` pasa por JSON, como la columna `Json`: un `Date` llega como
@@ -18,11 +19,17 @@ export interface NotificacionCreada {
 export class NotificationPortEnMemoria implements NotificationPort {
   readonly creadas: NotificacionCreada[] = []
   private readonly miembros = new Map<string, readonly string[]>()
+  private readonly duenos = new Map<string, string>()
   private falloProximo: Error | null = null
 
   /** Los `userId` con membresía ACTIVA del evento, como los leería el adaptador real. */
   registrarMiembros(eventId: string, userIds: readonly string[]): void {
     this.miembros.set(eventId, [...userIds])
+  }
+
+  /** El `Event.ownerId` del evento, como lo leería el adaptador real. */
+  registrarDueno(eventId: string, userId: string): void {
+    this.duenos.set(eventId, userId)
   }
 
   /** Hace fallar SÓLO la siguiente creación (p. ej. la base de datos caída). */
@@ -31,6 +38,21 @@ export class NotificationPortEnMemoria implements NotificationPort {
   }
 
   crearParaMiembros(eventId: string, tipo: string, payload: unknown): Promise<void> {
+    return this.crear(eventId, this.miembros.get(eventId) ?? [], tipo, payload)
+  }
+
+  /** Una sola fila, para el dueño registrado; un evento sin dueño registrado no crea nada. */
+  crearParaDueno(eventId: string, tipo: string, payload: unknown): Promise<void> {
+    const dueno = this.duenos.get(eventId)
+    return this.crear(eventId, dueno === undefined ? [] : [dueno], tipo, payload)
+  }
+
+  private crear(
+    eventId: string,
+    destinatarios: readonly string[],
+    tipo: string,
+    payload: unknown,
+  ): Promise<void> {
     if (this.falloProximo !== null) {
       const error = this.falloProximo
       this.falloProximo = null
@@ -42,7 +64,7 @@ export class NotificationPortEnMemoria implements NotificationPort {
       return Promise.reject(new Error('payload no serializable a JSON'))
     }
 
-    for (const userId of this.miembros.get(eventId) ?? []) {
+    for (const userId of destinatarios) {
       this.creadas.push({ eventId, userId, tipo, payload: JSON.parse(serializado) as unknown })
     }
     return Promise.resolve()

@@ -8,6 +8,10 @@ import {
   TIPO_INVITACION_DE_MIEMBRO,
 } from '@/modules/events/application/aviso-invitacion'
 import {
+  type JobRespuestaDeMiembro,
+  TIPO_RESPUESTA_DE_MIEMBRO,
+} from '@/modules/events/application/aviso-respuesta-miembro'
+import {
   type JobEstadoInvitacion,
   TIPO_ESTADO_INVITACION,
 } from '@/modules/guests/application/handle-delivery-event.use-case'
@@ -18,6 +22,7 @@ import {
 import type { QueueName } from '@/modules/queue/application/queue.port'
 
 import { BroadcastNoticeUseCase } from '../application/broadcast-notice.use-case'
+import { NOTIFICACION_CREADA } from '../domain/notification'
 
 /**
  * La cola es de ESTE módulo (ruling C17): sólo la llenan productores que avisan
@@ -56,6 +61,11 @@ const invitacionDeMiembroSchema = z.object({
   cambio: z.enum(['nueva', 'cancelada']),
 }) satisfies z.ZodType<JobInvitacionDeMiembro>
 
+const respuestaDeMiembroSchema = z.object({
+  eventId: z.guid(),
+  ownerId: z.guid(),
+}) satisfies z.ZodType<JobRespuestaDeMiembro>
+
 function leer<T>(esquema: z.ZodType<T>, job: Job): T {
   const leido = esquema.safeParse(job.data)
   // Un payload roto no lo arregla ningún reintento: a fallidos, sin cinco
@@ -79,7 +89,8 @@ function leer<T>(esquema: z.ZodType<T>, job: Job): T {
  * Tipos de job: el RSVP y el estado de entrega de una invitación de boda (al
  * evento; el rebote y el spam además notifican a los miembros), y
  * `invitacion-de-miembro` (a la sala personal del invitado a un evento, que
- * aún no tiene acceso a la sala del evento).
+ * aún no tiene acceso a la sala del evento) y `event.member.responded` (a la
+ * sala personal del dueño, que es el único que puede abrir su vista).
  *
  * Los errores de emisión SALEN (ver `BroadcastNoticeUseCase`): así BullMQ
  * reintenta con la política común (5 intentos, backoff exponencial).
@@ -117,6 +128,18 @@ export class NotificationProcessor extends WorkerHost {
         // Al usuario, no al evento: el invitado aún no tiene acceso y no está en
         // `event:<id>`. No se crea `Notification` (spec 2026-10-14 §3.1).
         await this.avisos.avisarAUsuario(userId, EVENTO_INVITACION_CAMBIADA, { eventId, cambio })
+        return
+      }
+      case TIPO_RESPUESTA_DE_MIEMBRO: {
+        const { eventId, ownerId } = leer(respuestaDeMiembroSchema, job)
+        // SÓLO al dueño, en su sala personal: la vista de destino
+        // (`/events/:id/settings`, Miembros) exige `OWNER`, y la sala del evento
+        // llegaría también a planners que no pueden abrirla. La `Notification`
+        // ya está confirmada (`aviso-respuesta-miembro.ts`).
+        await this.avisos.avisarAUsuario(ownerId, NOTIFICACION_CREADA, {
+          eventId,
+          type: TIPO_RESPUESTA_DE_MIEMBRO,
+        })
         return
       }
       default:

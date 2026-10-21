@@ -1,6 +1,10 @@
 import { Logger } from '@nestjs/common'
 
+import { UnidadDeTrabajoEnMemoria } from '@/modules/database/infrastructure/unidad-de-trabajo.fake'
+import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
+
+import { UserRepositoryEnMemoria } from '@/modules/users/infrastructure/user.repository.fake'
 
 import { EventRepositoryEnMemoria } from '../infrastructure/event.repository.fake'
 import {
@@ -21,11 +25,35 @@ describe('casos de uso de miembros', () => {
 
   let repo: EventRepositoryEnMemoria
   let cola: InMemoryQueueAdapter
+  let notificaciones: NotificationPortEnMemoria
+  let unidad: UnidadDeTrabajoEnMemoria
   let piaId: string
+
+  /** Los casos de uso de responder, cableados con los dobles de cada beforeEach. */
+  const aceptarCaso = () =>
+    new AcceptInvitationUseCase(repo, notificaciones, unidad, cola, usuariosDeTest())
+  const rechazarCaso = () =>
+    new DeclineInvitationUseCase(repo, notificaciones, unidad, cola, usuariosDeTest())
+  const usuariosDeTest = () =>
+    new UserRepositoryEnMemoria([
+      {
+        id: PIA,
+        email: 'pia@test.com',
+        fullName: 'Pia',
+        systemRole: 'USER',
+        emailVerifiedAt: null,
+        passwordHash: 'x',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    ])
 
   beforeEach(async () => {
     repo = new EventRepositoryEnMemoria()
     cola = new InMemoryQueueAdapter()
+    notificaciones = new NotificationPortEnMemoria()
+    notificaciones.registrarDueno(EVENTO, ANA)
+    unidad = new UnidadDeTrabajoEnMemoria()
     repo.eventos.push({ id: EVENTO, ownerId: ANA, name: 'Boda de Ana' })
     repo.membresias.push({
       id: 'm-ana',
@@ -195,7 +223,7 @@ describe('casos de uso de miembros', () => {
     expect(await new ListMyInvitationsUseCase(repo).ejecutar(PIA)).toMatchObject([
       { eventId: EVENTO, eventName: 'Boda de Ana', invitedByName: 'Ana' },
     ])
-    const aceptar = new AcceptInvitationUseCase(repo)
+    const aceptar = aceptarCaso()
     await aceptar.ejecutar(EVENTO, PIA)
     expect(await repo.buscarMembresiaActiva(EVENTO, PIA)).not.toBeNull()
     await expect(aceptar.ejecutar(EVENTO, PIA)).rejects.toMatchObject({
@@ -204,7 +232,7 @@ describe('casos de uso de miembros', () => {
   })
 
   it('rechazar deja REVOKED y no da acceso; sin invitación es 404', async () => {
-    const rechazar = new DeclineInvitationUseCase(repo)
+    const rechazar = rechazarCaso()
     await rechazar.ejecutar(EVENTO, PIA)
     expect(await repo.buscarMembresiaPorId(EVENTO, piaId)).toMatchObject({ status: 'REVOKED' })
     expect(repo.auditoria.at(-1)).toMatchObject({
@@ -223,15 +251,110 @@ describe('casos de uso de miembros', () => {
     // La carrera: la invitación seguía INVITED al leerla, pero otra petición
     // (un rechazo, una revocación) la cambió antes del UPDATE condicional.
     repo.aceptarInvitacion = () => Promise.resolve(false)
-    await expect(new AcceptInvitationUseCase(repo).ejecutar(EVENTO, PIA)).rejects.toMatchObject({
+    await expect(aceptarCaso().ejecutar(EVENTO, PIA)).rejects.toMatchObject({
       code: 'NO_PENDING_INVITATION',
     })
   })
 
   it('rechazar responde NO_PENDING_INVITATION si la escritura condicional no escribe', async () => {
     repo.revocarMembresia = () => Promise.resolve(false)
-    await expect(new DeclineInvitationUseCase(repo).ejecutar(EVENTO, PIA)).rejects.toMatchObject({
+    await expect(rechazarCaso().ejecutar(EVENTO, PIA)).rejects.toMatchObject({
       code: 'NO_PENDING_INVITATION',
+    })
+  })
+
+  describe('aviso al dueño', () => {
+    it('aceptar crea event.member.responded ACCEPTED para el dueño con el nombre de quien acepta', async () => {
+      await aceptarCaso().ejecutar(EVENTO, PIA)
+
+      expect(notificaciones.creadas).toEqual([
+        {
+          eventId: EVENTO,
+          userId: ANA,
+          tipo: 'event.member.responded',
+          payload: { userId: PIA, fullName: 'Pia', response: 'ACCEPTED' },
+        },
+      ])
+    })
+
+    it('rechazar crea event.member.responded DECLINED para el dueño', async () => {
+      await rechazarCaso().ejecutar(EVENTO, PIA)
+
+      expect(notificaciones.creadas).toEqual([
+        {
+          eventId: EVENTO,
+          userId: ANA,
+          tipo: 'event.member.responded',
+          payload: { userId: PIA, fullName: 'Pia', response: 'DECLINED' },
+        },
+      ])
+    })
+
+    it('la escritura de la membresía y la notificación van dentro de UNA unidad de trabajo', async () => {
+      await aceptarCaso().ejecutar(EVENTO, PIA)
+
+      expect(unidad.transacciones).toBe(1)
+    })
+
+    it('si crear la notificación falla, el caso de uso propaga el error y no encola nada', async () => {
+      notificaciones.fallarProximaCreacion(new Error('base de datos caída'))
+
+      await expect(aceptarCaso().ejecutar(EVENTO, PIA)).rejects.toThrow('base de datos caída')
+
+      // Que la membresía vuelva a INVITED lo hace la transacción real: el doble
+      // de la unidad de trabajo no deshace (ver `atomicidad` contra Postgres).
+      expect(notificaciones.creadas).toEqual([])
+      expect(cola.encolados).toEqual([])
+    })
+
+    it('si crear la notificación falla al rechazar, tampoco se encola nada', async () => {
+      notificaciones.fallarProximaCreacion(new Error('base de datos caída'))
+
+      await expect(rechazarCaso().ejecutar(EVENTO, PIA)).rejects.toThrow('base de datos caída')
+
+      expect(cola.encolados).toEqual([])
+    })
+
+    it('sin invitación pendiente en la escritura condicional, no se crea notificación', async () => {
+      repo.aceptarInvitacion = () => Promise.resolve(false)
+
+      await expect(aceptarCaso().ejecutar(EVENTO, PIA)).rejects.toMatchObject({
+        code: 'NO_PENDING_INVITATION',
+      })
+
+      expect(notificaciones.creadas).toEqual([])
+      expect(cola.encolados).toEqual([])
+    })
+
+    it('encola el aviso al dueño tras escribir', async () => {
+      await aceptarCaso().ejecutar(EVENTO, PIA)
+
+      expect(cola.encolados).toEqual([
+        expect.objectContaining({
+          cola: 'notifications',
+          nombre: 'event.member.responded',
+          datos: { eventId: EVENTO, ownerId: ANA },
+        }),
+      ])
+    })
+
+    it('si encolar falla, aceptar no falla', async () => {
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      cola.enqueue = () => Promise.reject(new Error('redis caído'))
+
+      await expect(aceptarCaso().ejecutar(EVENTO, PIA)).resolves.toBeUndefined()
+
+      expect(await repo.buscarMembresiaActiva(EVENTO, PIA)).not.toBeNull()
+      expect(notificaciones.creadas).toHaveLength(1)
+    })
+
+    it('si encolar falla, rechazar no falla', async () => {
+      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      cola.enqueue = () => Promise.reject(new Error('redis caído'))
+
+      await expect(rechazarCaso().ejecutar(EVENTO, PIA)).resolves.toBeUndefined()
+
+      expect(notificaciones.creadas).toHaveLength(1)
     })
   })
 })

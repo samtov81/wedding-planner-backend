@@ -61,6 +61,37 @@ describe('NotificationProcessor', () => {
     })
   })
 
+  describe('event.member.responded', () => {
+    const ownerId = randomUUID()
+
+    it('event.member.responded avisa sólo al dueño en su sala personal', async () => {
+      await procesador.process(job('event.member.responded', { eventId, ownerId }))
+
+      // Nada a `event:<id>` (los planners no pueden abrir la vista) ni a los
+      // miembros del evento: sólo `notification.created` al dueño.
+      expect(realtime.emitidas).toEqual([
+        {
+          destino: { userId: ownerId },
+          tipo: 'notification.created',
+          payload: { eventId, type: 'event.member.responded' },
+        },
+      ])
+    })
+
+    it('emite SÓLO lo validado: un campo de más en Redis no llega al socket', async () => {
+      await procesador.process(job('event.member.responded', { eventId, ownerId, extra: 'x' }))
+
+      expect(realtime.emitidas[0]?.payload).toEqual({ eventId, type: 'event.member.responded' })
+    })
+
+    it('un job de respuesta con payload roto es irrecuperable', async () => {
+      await expect(
+        procesador.process(job('event.member.responded', { eventId, ownerId: 'no-es-guid' })),
+      ).rejects.toBeInstanceOf(UnrecoverableError)
+      expect(realtime.emitidas).toEqual([])
+    })
+  })
+
   describe('guest.rsvp.updated', () => {
     const payload = { guestId, guestName: 'Ana', rsvp: 'CONFIRMED' }
 

@@ -5,6 +5,7 @@ import { decodeCursor } from '@/shared/domain'
 
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 import type { NotificationRepository } from '../application/notification.repository'
+import { NotificationPortEnMemoria } from './notification.port.fake'
 import { NotificationRepositoryEnMemoria } from './notification.repository.fake'
 import { PrismaNotificationRepository } from './prisma-notification.repository'
 
@@ -345,6 +346,48 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
           [otroId, eventId],
         ].sort(),
       )
+    })
+  })
+
+  describe('crearParaDueno (puerto de escritura)', () => {
+    /** Lo que quedó escrito, sin ids ni fechas: lo comparable entre los dos. */
+    const filasEnPrisma = async (): Promise<unknown[]> =>
+      (await prisma.notification.findMany({ orderBy: { id: 'asc' } })).map((f) => ({
+        eventId: f.eventId,
+        userId: f.userId,
+        tipo: f.type,
+        payload: f.payload,
+      }))
+
+    it('crearParaDueno crea UNA fila, para el dueño, en los dos', async () => {
+      const puerto = new NotificationPortEnMemoria()
+      puerto.registrarMiembros(eventId, [miId, otroId])
+      puerto.registrarDueno(eventId, miId)
+
+      await real.crearParaDueno(eventId, 'event.member.responded', { response: 'ACCEPTED' })
+      await puerto.crearParaDueno(eventId, 'event.member.responded', { response: 'ACCEPTED' })
+
+      const esperado = [
+        {
+          eventId,
+          userId: miId,
+          tipo: 'event.member.responded',
+          payload: { response: 'ACCEPTED' },
+        },
+      ]
+      expect(await filasEnPrisma()).toEqual(esperado)
+      expect(puerto.creadas).toEqual(esperado)
+    })
+
+    it('crearParaDueno con un evento que no existe no crea nada en los dos', async () => {
+      const puerto = new NotificationPortEnMemoria()
+      const inexistente = '99999999-9999-4999-8999-999999999999'
+
+      await real.crearParaDueno(inexistente, 'event.member.responded', {})
+      await puerto.crearParaDueno(inexistente, 'event.member.responded', {})
+
+      expect(await filasEnPrisma()).toEqual([])
+      expect(puerto.creadas).toEqual([])
     })
   })
 })

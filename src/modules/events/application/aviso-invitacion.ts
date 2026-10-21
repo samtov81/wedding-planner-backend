@@ -6,8 +6,14 @@ import type { QueuePort } from '@/modules/queue/application/queue.port'
  * Contrato del aviso en tiempo real de una invitación a un evento (spec
  * 2026-10-14 §3.1). Vive en `events/application` porque lo PRODUCEN los casos de
  * uso de este módulo; el worker de `notifications` lo importa de aquí, como ya
- * importa los de `guests/application`. `events` no importa nada de
- * `notifications`.
+ * importa los de `guests/application`.
+ *
+ * Ya NO es cierto que `events` no importe nada de `notifications`: desde que
+ * aceptar o rechazar una invitación notifica al dueño (`aviso-respuesta-miembro.ts`),
+ * los casos de uso de `events` usan el puerto de escritura
+ * (`NOTIFICATION_PORT`), cableado por `NotificationWriterModule`. Lo que sigue
+ * valiendo: ESTE aviso (`invitacion-de-miembro`) no tiene `Notification`
+ * detrás, sólo el emit por la cola.
  */
 export const TIPO_INVITACION_DE_MIEMBRO = 'invitacion-de-miembro'
 

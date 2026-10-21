@@ -1,11 +1,26 @@
 import { Inject, Injectable, Logger } from '@nestjs/common'
 
+import {
+  UNIDAD_DE_TRABAJO,
+  type UnidadDeTrabajo,
+} from '@/modules/database/application/unidad-de-trabajo'
+import {
+  NOTIFICATION_PORT,
+  type NotificationPort,
+} from '@/modules/notifications/application/notification.port'
 import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
+import { USER_REPOSITORY, type UserRepository } from '@/modules/users/application/user.repository'
+import { NotFoundError } from '@/shared/domain'
 
 import { accesoAlPresupuesto, type EventRole } from '../domain/event-access'
 import { MiembroNoEncontradoError, SinInvitacionPendienteError } from '../domain/event-errors'
 import { exigirGestionable, exigirInvitacionPendiente } from '../domain/membresia'
 import { encolarAvisoInvitacion } from './aviso-invitacion'
+import {
+  encolarAvisoRespuesta,
+  type PayloadRespuestaDeMiembro,
+  TIPO_RESPUESTA_DE_MIEMBRO,
+} from './aviso-respuesta-miembro'
 import {
   EVENT_REPOSITORY,
   type EventRepository,
@@ -120,21 +135,106 @@ export class ListMyInvitationsUseCase {
   }
 }
 
+/**
+ * Lo común de aceptar y rechazar: dentro de UNA unidad de trabajo se escribe la
+ * membresía y se crea la notificación del dueño; fuera, ya confirmado, se encola
+ * el aviso en tiempo real (ver `aviso-respuesta-miembro.ts`).
+ *
+ * Si la notificación falla, la transacción deshace también la membresía: sigue
+ * INVITED y sin fila de auditoría, y el invitado puede reintentar. Es el precio
+ * de no perder en silencio el aviso al dueño. El doble de la unidad de trabajo
+ * no deshace; eso se prueba contra Postgres.
+ */
+async function responder(
+  dependencias: {
+    eventos: EventRepository
+    notificaciones: NotificationPort
+    unidadDeTrabajo: UnidadDeTrabajo
+    cola: QueuePort
+    usuarios: UserRepository
+    registro: Logger
+  },
+  datos: {
+    eventId: string
+    userId: string
+    response: PayloadRespuestaDeMiembro['response']
+    escribir: () => Promise<boolean>
+  },
+): Promise<void> {
+  const { eventos, notificaciones, unidadDeTrabajo, cola, usuarios, registro } = dependencias
+  const { eventId, userId, response, escribir } = datos
+
+  // Antes de abrir la transacción: no hay por qué retenerla para una lectura.
+  const usuario = await usuarios.findById(userId)
+  if (usuario === null) throw new NotFoundError('User not found', 'USER_NOT_FOUND')
+  const payload: PayloadRespuestaDeMiembro = { userId, fullName: usuario.fullName, response }
+
+  await unidadDeTrabajo.ejecutar(async () => {
+    if (!(await escribir())) throw new SinInvitacionPendienteError()
+    await notificaciones.crearParaDueno(eventId, TIPO_RESPUESTA_DE_MIEMBRO, payload)
+  })
+
+  const evento = await eventos.buscarPorId(eventId)
+  if (evento === null) return
+  await encolarAvisoRespuesta(cola, registro, { eventId, ownerId: evento.ownerId }, userId)
+}
+
 @Injectable()
 export class AcceptInvitationUseCase {
-  constructor(@Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository) {}
+  private readonly registro = new Logger(AcceptInvitationUseCase.name)
+
+  constructor(
+    @Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository,
+    @Inject(NOTIFICATION_PORT) private readonly notificaciones: NotificationPort,
+    @Inject(UNIDAD_DE_TRABAJO) private readonly unidadDeTrabajo: UnidadDeTrabajo,
+    @Inject(QUEUE_PORT) private readonly cola: QueuePort,
+    @Inject(USER_REPOSITORY) private readonly usuarios: UserRepository,
+  ) {}
+
+  private dependencias() {
+    return {
+      eventos: this.eventos,
+      notificaciones: this.notificaciones,
+      unidadDeTrabajo: this.unidadDeTrabajo,
+      cola: this.cola,
+      usuarios: this.usuarios,
+      registro: this.registro,
+    }
+  }
 
   async ejecutar(eventId: string, userId: string): Promise<void> {
     exigirInvitacionPendiente(await this.eventos.buscarMembresia(eventId, userId))
-    if (!(await this.eventos.aceptarInvitacion(eventId, userId))) {
-      throw new SinInvitacionPendienteError()
-    }
+    await responder(this.dependencias(), {
+      eventId,
+      userId,
+      response: 'ACCEPTED',
+      escribir: () => this.eventos.aceptarInvitacion(eventId, userId),
+    })
   }
 }
 
 @Injectable()
 export class DeclineInvitationUseCase {
-  constructor(@Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository) {}
+  private readonly registro = new Logger(DeclineInvitationUseCase.name)
+
+  constructor(
+    @Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository,
+    @Inject(NOTIFICATION_PORT) private readonly notificaciones: NotificationPort,
+    @Inject(UNIDAD_DE_TRABAJO) private readonly unidadDeTrabajo: UnidadDeTrabajo,
+    @Inject(QUEUE_PORT) private readonly cola: QueuePort,
+    @Inject(USER_REPOSITORY) private readonly usuarios: UserRepository,
+  ) {}
+
+  private dependencias() {
+    return {
+      eventos: this.eventos,
+      notificaciones: this.notificaciones,
+      unidadDeTrabajo: this.unidadDeTrabajo,
+      cola: this.cola,
+      usuarios: this.usuarios,
+      registro: this.registro,
+    }
+  }
 
   /**
    * Rechazar = REVOKED (spec §3.1): no se añade `DECLINED` al enum. Quien
@@ -143,8 +243,11 @@ export class DeclineInvitationUseCase {
   async ejecutar(eventId: string, userId: string): Promise<void> {
     const membresia = await this.eventos.buscarMembresia(eventId, userId)
     exigirInvitacionPendiente(membresia)
-    if (!(await this.eventos.revocarMembresia(eventId, membresia.id, userId, 'declined'))) {
-      throw new SinInvitacionPendienteError()
-    }
+    await responder(this.dependencias(), {
+      eventId,
+      userId,
+      response: 'DECLINED',
+      escribir: () => this.eventos.revocarMembresia(eventId, membresia.id, userId, 'declined'),
+    })
   }
 }

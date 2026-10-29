@@ -10,6 +10,7 @@ import type {
   MensajeVista,
 } from '../application/conversation.repository'
 import { avanzar, claveDePar, type Marca, type RolEnEvento } from '../domain/conversacion'
+import { ParNoPermitidoError } from '../domain/messaging-errors'
 
 interface MiembroEnMemoria {
   eventId: string
@@ -115,6 +116,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
   }
 
   abrir(eventId: string, a: string, b: string): Promise<{ id: string; creada: boolean }> {
+    if (a === b) return Promise.reject(new ParNoPermitidoError())
     const pairKey = claveDePar(eventId, a, b)
     const existente = this.conversaciones.find((c) => c.pairKey === pairKey)
     if (existente !== undefined) return Promise.resolve({ id: existente.id, creada: false })
@@ -242,13 +244,14 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
       (m) => m.eventId === conv.eventId && m.userId === otro.userId,
     )
     const rol: RolEnEvento = suRolHoy ?? miembroOtro?.role ?? 'VENDOR'
-    const negocio = this.proveedores.find(
-      (p) => p.eventId === conv.eventId && p.userId === otro.userId,
-    )
+    // Como Prisma: el negocio es de la ficha del usuario (no del evento) y, sin
+    // ficha, cuenta el nombre. Sin ninguno de los dos el escenario está mal montado.
+    const negocio = this.proveedores.find((p) => p.userId === otro.userId)
     const displayName =
-      rol === 'VENDOR'
-        ? (negocio?.businessName ?? miembroOtro?.fullName ?? otro.userId)
-        : (miembroOtro?.fullName ?? otro.userId)
+      rol === 'VENDOR' ? (negocio?.businessName ?? miembroOtro?.fullName) : miembroOtro?.fullName
+    if (displayName === undefined) {
+      throw new Error(`usuario ${otro.userId} sin registrarMiembro/registrarProveedor en el doble`)
+    }
 
     const delChat = this.mensajesGuardados
       .filter((m) => m.conversationId === conv.id)

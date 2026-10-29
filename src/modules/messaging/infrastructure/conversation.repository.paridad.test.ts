@@ -1,9 +1,11 @@
 import { PrismaClient } from '@prisma/client'
 
 import type { PrismaService } from '@/modules/database/prisma.service'
+import type { CursorValue } from '@/shared/domain'
 
 import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
+import { ParNoPermitidoError } from '../domain/messaging-errors'
 import type {
   ConversacionVista,
   ConversationRepository,
@@ -123,7 +125,8 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
     return { real: r.id, doble: d.id }
   }
 
-  const idDe = (par: Par, quien: 'real' | 'doble'): string => par[quien]
+  const idDe = (par: Par, quien: 'real' | 'doble'): string =>
+    quien === 'real' ? par.real : par.doble
 
   /** Lo comparable entre las dos: sin ids de conversación/mensaje ni instantes. */
   function sinVolatiles(v: ConversacionVista): unknown {
@@ -283,7 +286,9 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
       expect((await repo.bandeja(proveedorId)).items).toEqual([])
       expect(await repo.buscar(idDe(conProveedor, quien), proveedorId)).toBeNull()
       expect(await repo.buscar(idDe(conPlanner, quien), plannerId)).not.toBeNull()
-      vistas[quien] = [...pareja.items, ...planner.items].map(sinVolatiles)
+      vistas[quien === 'real' ? 'real' : 'doble'] = [...pareja.items, ...planner.items].map(
+        sinVolatiles,
+      )
     }
     expect(vistas.doble).toEqual(vistas.real)
   })
@@ -361,7 +366,7 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
 
     for (const [quien, repo] of implementaciones()) {
       const todos: Array<{ id: string; createdAt: Date; body: string }> = []
-      let desde = null
+      let desde: CursorValue | null = null
       const tamanos: number[] = []
       for (;;) {
         const pagina = await repo.mensajes(idDe(conv, quien), { desde, limite: 2 })
@@ -403,6 +408,41 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
       expect(atras.deliveredUpTo).toBeNull()
       expect(await repo.marcar(id, parejaId, 'read', idDe(deAjena, quien))).toBe(false)
       expect(await repo.marcar(id, parejaId, 'delivered', idDe(deAjena, quien))).toBe(false)
+    }
+  })
+
+  it('bandeja: con createdAt empatados el id decide qué mensajes quedan tras mi readUpTo', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    await miembro(eventId, plannerId, 'PLANNER')
+    const conv = await abrirEnAmbos(eventId, parejaId, plannerId)
+    // Cuatro mensajes del planner en el MISMO instante: sólo el id los ordena.
+    const ids: Par[] = []
+    for (const cuerpo of ['a', 'b', 'c', 'd']) {
+      ids.push(await enviarEnAmbos(conv, plannerId, cuerpo, 1))
+    }
+
+    for (const [quien, repo] of implementaciones()) {
+      const orden = (await repo.mensajes(idDe(conv, quien), { desde: null, limite: 10 })).items
+      // `items` va de más reciente a más antiguo por (createdAt, id): el 2º es el tercero.
+      const marca = orden[1]
+      if (marca === undefined) throw new Error('faltan mensajes')
+      await repo.marcar(idDe(conv, quien), parejaId, 'read', marca.id)
+      const { items, unreadTotal } = await repo.bandeja(parejaId)
+      // Quedan por leer exactamente los dos de id mayor que la marca.
+      expect(items[0]?.unreadCount).toBe(1)
+      expect(unreadTotal).toBe(1)
+    }
+    expect(ids).toHaveLength(4)
+  })
+
+  it('abrir consigo mismo se rechaza con un error de dominio', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    for (const [, repo] of implementaciones()) {
+      await expect(repo.abrir(eventId, parejaId, parejaId)).rejects.toBeInstanceOf(
+        ParNoPermitidoError,
+      )
     }
   })
 })

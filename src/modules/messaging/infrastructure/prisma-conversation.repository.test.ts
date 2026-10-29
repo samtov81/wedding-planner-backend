@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 
 import type { PrismaService } from '@/modules/database/prisma.service'
+import { PrismaUnidadDeTrabajo } from '@/modules/database/transaccion'
 
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 import { PrismaConversationRepository } from './prisma-conversation.repository'
@@ -86,5 +87,38 @@ describe('PrismaConversationRepository', () => {
     const vista = await repo.marcar(id, aId, 'read', viejo.id)
     if (vista === false) throw new Error('debía aceptar el upTo')
     expect(vista.readUpTo?.id).toBe(nuevo.id)
+  })
+
+  it('abrir un par que ya existe dentro de una unidad de trabajo no aborta la transacción', async () => {
+    const existente = await repo.abrir(eventId, aId, bId)
+    const unidad = new PrismaUnidadDeTrabajo(prisma as unknown as PrismaService)
+
+    const { reabierta, mensaje } = await unidad.ejecutar(async () => {
+      const reabierta = await repo.abrir(eventId, bId, aId)
+      // Otra escritura en la misma transacción: falla si ésta quedó abortada.
+      const mensaje = await repo.agregarMensaje(existente.id, aId, 'tras abrir', new Date())
+      return { reabierta, mensaje }
+    })
+
+    expect(reabierta).toEqual({ id: existente.id, creada: false })
+    expect(await prisma.message.count({ where: { id: mensaje.id } })).toBe(1)
+  })
+
+  it('abrir concurrente dentro de unidades de trabajo distintas tampoco falla', async () => {
+    const otroEvento = await prisma.event.create({ data: { name: 'Otra', ownerId: aId } })
+    const unidad = new PrismaUnidadDeTrabajo(prisma as unknown as PrismaService)
+
+    const resultados = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        unidad.ejecutar(async () => {
+          const r = await repo.abrir(otroEvento.id, aId, bId)
+          await repo.agregarMensaje(r.id, aId, 'hola', new Date())
+          return r
+        }),
+      ),
+    )
+
+    expect(new Set(resultados.map((r) => r.id)).size).toBe(1)
+    expect(resultados.filter((r) => r.creada)).toHaveLength(1)
   })
 })

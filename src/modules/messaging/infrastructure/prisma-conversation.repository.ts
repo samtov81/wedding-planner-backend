@@ -13,6 +13,7 @@ import type {
   MensajeVista,
 } from '../application/conversation.repository'
 import { avanzar, claveDePar, type Marca, type RolEnEvento } from '../domain/conversacion'
+import { ParNoPermitidoError } from '../domain/messaging-errors'
 
 /** Más recientes primero; (`createdAt`, `id`) es un orden total y estable. */
 const ORDEN_ESTABLE = [
@@ -54,12 +55,12 @@ export class PrismaConversationRepository implements ConversationRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async rolEnEvento(eventId: string, userId: string): Promise<RolEnEvento | null> {
-    const membresia = await this.prisma.eventMembership.findFirst({
+    const membresia = await clienteDe(this.prisma).eventMembership.findFirst({
       where: { eventId, userId, status: 'ACTIVE' },
       select: { role: true },
     })
     if (membresia !== null) return membresia.role
-    const contratado = await this.prisma.event.count({
+    const contratado = await clienteDe(this.prisma).event.count({
       where: {
         id: eventId,
         status: 'ACTIVE',
@@ -73,7 +74,7 @@ export class PrismaConversationRepository implements ConversationRepository {
     const miRol = await this.rolEnEvento(eventId, userId)
     if (miRol === null) return []
 
-    const miembros = await this.prisma.eventMembership.findMany({
+    const miembros = await clienteDe(this.prisma).eventMembership.findMany({
       where: { eventId, status: 'ACTIVE', userId: { not: userId } },
       select: { role: true, user: { select: { id: true, fullName: true } } },
     })
@@ -84,7 +85,7 @@ export class PrismaConversationRepository implements ConversationRepository {
     }))
     if (miRol === 'VENDOR') return contactos
 
-    const vendors = await this.prisma.eventVendor.findMany({
+    const vendors = await clienteDe(this.prisma).eventVendor.findMany({
       where: {
         eventId,
         status: 'BOOKED',
@@ -103,46 +104,44 @@ export class PrismaConversationRepository implements ConversationRepository {
   }
 
   /**
-   * `clienteDe`: si se llama dentro de una unidad de trabajo, la conversación
-   * se confirma con ella. Dos aperturas simultáneas del mismo par chocan en el
-   * UNIQUE de `pairKey` (P2002): la perdedora relee y devuelve la existente.
-   * Fuera de una transacción el error no deja nada a medias; dentro de una, el
-   * llamador debe abrir fuera de ella (la transacción quedaría abortada).
+   * `INSERT … ON CONFLICT ("pairKey") DO NOTHING`, no `create` + captura de
+   * P2002: dentro de una unidad de trabajo un error de Postgres deja la
+   * transacción abortada ("current transaction is aborted") y la petición
+   * acabaría en 500, que el ruling 1 prohíbe. Con `DO NOTHING` el choque no es
+   * un error: si no devuelve fila, otra petición ganó y se lee su conversación
+   * (la perdedora espera a que la ganadora confirme). Conversación y
+   * participantes van en `enTransaccion` para que nadie vea la primera sin los
+   * segundos. Alternativa descartada: SAVEPOINT, que Prisma no expone.
    */
   async abrir(eventId: string, a: string, b: string): Promise<{ id: string; creada: boolean }> {
+    if (a === b) throw new ParNoPermitidoError()
     const pairKey = claveDePar(eventId, a, b)
-    const cliente = clienteDe(this.prisma)
-    const existente = await cliente.conversation.findUnique({
-      where: { pairKey },
-      select: { id: true },
-    })
-    if (existente !== null) return { id: existente.id, creada: false }
-
-    try {
-      const creada = await cliente.conversation.create({
-        data: {
-          kind: 'EVENT_DIRECT',
-          eventId,
-          pairKey,
-          participants: { create: [{ userId: a }, { userId: b }] },
-        },
-        select: { id: true },
-      })
-      return { id: creada.id, creada: true }
-    } catch (error) {
-      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
-        throw error
+    return await enTransaccion(this.prisma, async (tx) => {
+      const filas = await tx.$queryRaw<Array<{ id: string }>>`
+        INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey")
+        VALUES (gen_random_uuid(), 'EVENT_DIRECT'::"ConversationKind", ${eventId}::uuid, ${pairKey})
+        ON CONFLICT ("pairKey") DO NOTHING
+        RETURNING "id"`
+      const nueva = filas[0]
+      if (nueva !== undefined) {
+        await tx.conversationParticipant.createMany({
+          data: [
+            { conversationId: nueva.id, userId: a },
+            { conversationId: nueva.id, userId: b },
+          ],
+        })
+        return { id: nueva.id, creada: true }
       }
-      const ganadora = await this.prisma.conversation.findUniqueOrThrow({
+      const existente = await tx.conversation.findUniqueOrThrow({
         where: { pairKey },
         select: { id: true },
       })
-      return { id: ganadora.id, creada: false }
-    }
+      return { id: existente.id, creada: false }
+    })
   }
 
   async buscar(conversationId: string, userId: string): Promise<ConversacionVista | null> {
-    const fila = await this.prisma.conversation.findFirst({
+    const fila = await clienteDe(this.prisma).conversation.findFirst({
       where: { id: conversationId, kind: 'EVENT_DIRECT', participants: { some: { userId } } },
       include: INCLUIR,
     })
@@ -151,7 +150,7 @@ export class PrismaConversationRepository implements ConversationRepository {
   }
 
   async bandeja(userId: string): Promise<{ items: ConversacionVista[]; unreadTotal: number }> {
-    const filas = await this.prisma.conversation.findMany({
+    const filas = await clienteDe(this.prisma).conversation.findMany({
       where: { kind: 'EVENT_DIRECT', participants: { some: { userId } } },
       include: INCLUIR,
     })
@@ -174,7 +173,7 @@ export class PrismaConversationRepository implements ConversationRepository {
     conversationId: string,
     { desde, limite }: { desde: CursorValue | null; limite: number },
   ): Promise<CursorPage<MensajeVista>> {
-    const filas = await this.prisma.message.findMany({
+    const filas = await clienteDe(this.prisma).message.findMany({
       where: {
         conversationId,
         ...(desde !== null
@@ -236,7 +235,7 @@ export class PrismaConversationRepository implements ConversationRepository {
     tipo: 'delivered' | 'read',
     upTo: string,
   ): Promise<MarcasDeParticipante | false> {
-    const mensaje = await this.prisma.message.findFirst({
+    const mensaje = await clienteDe(this.prisma).message.findFirst({
       where: { id: upTo, conversationId },
       select: { id: true, createdAt: true },
     })
@@ -271,7 +270,7 @@ export class PrismaConversationRepository implements ConversationRepository {
   }
 
   async participantes(conversationId: string): Promise<string[]> {
-    const filas = await this.prisma.conversationParticipant.findMany({
+    const filas = await clienteDe(this.prisma).conversationParticipant.findMany({
       where: { conversationId },
       select: { userId: true },
     })
@@ -280,20 +279,21 @@ export class PrismaConversationRepository implements ConversationRepository {
 
   /**
    * Convierte conversaciones en vistas de `userId` y descarta las que no
-   * puede ver. Se resuelve por lotes (membresías, contrataciones, recuentos)
-   * y no una consulta por conversación.
+   * puede ver. Se resuelve por lotes (membresías, contrataciones, recuentos y
+   * último mensaje: cuatro consultas en total) y no una por conversación.
    */
   private async vistas(userId: string, filas: FilaConversacion[]): Promise<ConversacionVista[]> {
     if (filas.length === 0) return []
     const eventIds = [...new Set(filas.flatMap((f) => (f.eventId === null ? [] : [f.eventId])))]
     const usuarios = [...new Set(filas.flatMap((f) => f.participants.map((p) => p.userId)))]
 
+    const cliente = clienteDe(this.prisma)
     const [membresias, contrataciones, noLeidos, ultimos] = await Promise.all([
-      this.prisma.eventMembership.findMany({
+      cliente.eventMembership.findMany({
         where: { eventId: { in: eventIds }, userId: { in: usuarios } },
         select: { eventId: true, userId: true, role: true, status: true },
       }),
-      this.prisma.eventVendor.findMany({
+      cliente.eventVendor.findMany({
         where: {
           eventId: { in: eventIds },
           status: 'BOOKED',
@@ -305,14 +305,7 @@ export class PrismaConversationRepository implements ConversationRepository {
         userId,
         filas.map((f) => f.id),
       ),
-      Promise.all(
-        filas.map((f) =>
-          this.prisma.message.findFirst({
-            where: { conversationId: f.id },
-            orderBy: ORDEN_ESTABLE,
-          }),
-        ),
-      ),
+      this.ultimosMensajes(filas.map((f) => f.id)),
     ])
 
     const situacion = (eventId: string, id: string): SituacionEnEvento => {
@@ -326,7 +319,7 @@ export class PrismaConversationRepository implements ConversationRepository {
     }
 
     const vistas: ConversacionVista[] = []
-    filas.forEach((fila, i) => {
+    filas.forEach((fila) => {
       if (fila.event === null || fila.eventId === null) return
       const yo = fila.participants.find((p) => p.userId === userId)
       const otro = fila.participants.find((p) => p.userId !== userId)
@@ -345,10 +338,13 @@ export class PrismaConversationRepository implements ConversationRepository {
       const miRolHoy = rolHoy(mia)
       const suRolHoy = rolHoy(suya)
       // Quien perdió el acceso sigue viéndola sólo si es (o fue) miembro.
+      // "Fue miembro" = tiene CUALQUIER fila de membresía (no se guarda el historial):
+      // un proveedor que además está INVITED (nunca ACTIVE) conserva la vista de
+      // solo lectura tras cancelarse su contratación. Caso límite aceptado (ruling 3).
       if (miRolHoy === null && mia.membresia === null) return
 
       const rolOtro: RolEnEvento = suRolHoy ?? suya.membresia?.role ?? 'VENDOR'
-      const ultimo = ultimos[i]
+      const ultimo = ultimos.get(fila.id)
       vistas.push({
         id: fila.id,
         event: { id: fila.event.id, name: fila.event.name },
@@ -360,7 +356,7 @@ export class PrismaConversationRepository implements ConversationRepository {
               : otro.user.fullName,
           role: rolOtro,
         },
-        lastMessage: ultimo === null || ultimo === undefined ? null : aMensaje(ultimo),
+        lastMessage: ultimo === undefined ? null : aMensaje(ultimo),
         unreadCount: noLeidos.get(fila.id) ?? 0,
         readOnly: miRolHoy === null || suRolHoy === null,
         otherMarks: {
@@ -373,12 +369,27 @@ export class PrismaConversationRepository implements ConversationRepository {
   }
 
   /**
+   * El último mensaje de cada conversación en UNA consulta (`DISTINCT ON` con
+   * el orden total (createdAt, id)), no un `findFirst` por conversación.
+   */
+  private async ultimosMensajes(ids: string[]): Promise<Map<string, MensajeFila>> {
+    const filas = await clienteDe(this.prisma).$queryRaw<MensajeFila[]>`
+      SELECT DISTINCT ON ("conversationId") "id", "conversationId", "senderId", "body", "createdAt"
+      FROM "messages"
+      WHERE "conversationId" = ANY(${ids}::uuid[])
+      ORDER BY "conversationId", "createdAt" DESC, "id" DESC`
+    return new Map(filas.map((f) => [f.conversationId, f]))
+  }
+
+  /**
    * Mensajes del otro posteriores a MI marca de lectura, por conversación, en
    * una sola consulta. Comparación de fila `(createdAt, id)`: el mismo orden
    * total que usa el dominio. SQL con plantilla etiquetada (parametrizada).
    */
   private async contarNoLeidos(userId: string, ids: string[]): Promise<Map<string, number>> {
-    const filas = await this.prisma.$queryRaw<Array<{ conversationId: string; total: bigint }>>`
+    const filas = await clienteDe(this.prisma).$queryRaw<
+      Array<{ conversationId: string; total: bigint }>
+    >`
       SELECT m."conversationId", count(*) AS total
       FROM "messages" m
       JOIN "conversation_participants" p

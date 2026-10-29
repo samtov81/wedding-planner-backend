@@ -1,5 +1,6 @@
 import { encodeCursor, type CursorPage } from '@/shared/domain'
 
+import { TIPO_PROVEEDOR_CONTRATADO } from '../application/notification.port'
 import type {
   NotificationRepository,
   OpcionesListado,
@@ -137,13 +138,17 @@ export class NotificationRepositoryEnMemoria implements NotificationRepository {
     return Promise.resolve(pendientes.length)
   }
 
-  /** Del usuario y de un evento donde es miembro ACTIVO o proveedor BOOKED de un evento publicado. */
+  /**
+   * Del usuario y de un evento donde es miembro ACTIVO (cualquier tipo) o, sólo
+   * para `event.vendor.booked`, proveedor BOOKED de un evento publicado.
+   */
   private visiblesDe(userId: string): NotificacionEnMemoria[] {
     return this.filas.filter(
       (n) =>
         n.userId === userId &&
         ((this.miembros.get(n.eventId) ?? []).includes(userId) ||
-          (this.publicados.has(n.eventId) &&
+          (n.type === TIPO_PROVEEDOR_CONTRATADO &&
+            this.publicados.has(n.eventId) &&
             (this.proveedores.get(n.eventId) ?? []).includes(userId))),
     )
   }

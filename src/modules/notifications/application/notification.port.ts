@@ -44,6 +44,15 @@ export interface NotificationPort {
    * (`clienteDe(prisma)`).
    */
   avisarAProveedor(eventId: string, userId: string, eventVendorId: string): Promise<void>
+
+  /**
+   * Borra el `event.vendor.booked` de esa contratación (y sólo de ella). Lo
+   * llama el borrado de la contratación en la MISMA transacción: así volver a
+   * añadir y contratar al proveedor (otro `eventVendorId`) deja un solo aviso,
+   * no uno huérfano y otro nuevo. Mismo contrato de transacción que
+   * `avisarAProveedor` (`clienteDe(prisma)`).
+   */
+  retirarAvisoProveedor(eventId: string, eventVendorId: string): Promise<void>
 }
 
 /**

@@ -68,6 +68,20 @@ export class NotificationPortEnMemoria implements NotificationPort {
     })
   }
 
+  /** Borra las filas `event.vendor.booked` de esa contratación y deja el resto. */
+  retirarAvisoProveedor(eventId: string, eventVendorId: string): Promise<void> {
+    const quedan = this.creadas.filter(
+      (c) =>
+        !(
+          c.eventId === eventId &&
+          c.tipo === TIPO_PROVEEDOR_CONTRATADO &&
+          (c.payload as { eventVendorId?: string }).eventVendorId === eventVendorId
+        ),
+    )
+    this.creadas.splice(0, this.creadas.length, ...quedan)
+    return Promise.resolve()
+  }
+
   private crear(
     eventId: string,
     destinatarios: readonly string[],

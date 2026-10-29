@@ -500,6 +500,37 @@ describe('Vendors por evento e2e', () => {
       expect(await contratacionesVistasPor(planner, eventoNuevo)).toEqual([])
     })
 
+    it('borrar la contratación y volver a añadir y contratar al proveedor deja un solo aviso', async () => {
+      const { eventoNuevo, proveedor, eventVendorId, patch } = await escenario()
+      await patch('BOOKED')
+      const perfil = await prisma.vendorProfile.findFirstOrThrow({
+        where: { userId: proveedor.id },
+      })
+
+      await request(url)
+        .delete(`/events/${eventoNuevo}/vendors/${eventVendorId}`)
+        .set(auth(ana))
+        .expect(200)
+      expect(await contratacionesVistasPor(proveedor, eventoNuevo)).toEqual([])
+
+      const nuevo = await request(url)
+        .post(`/events/${eventoNuevo}/vendors`)
+        .set(auth(ana))
+        .send({ vendorProfileId: perfil.id, category: 'photography' })
+        .expect(201)
+      await request(url)
+        .patch(`/events/${eventoNuevo}/vendors/${(nuevo.body as CuerpoEventVendor).id}`)
+        .set(auth(ana))
+        .send({ status: 'BOOKED' })
+        .expect(200)
+
+      expect(await contratacionesVistasPor(proveedor, eventoNuevo)).toEqual([
+        expect.objectContaining({
+          payload: { eventVendorId: (nuevo.body as CuerpoEventVendor).id },
+        }),
+      ])
+    })
+
     it('cancelar y volver a contratar deja un solo aviso, sin leer', async () => {
       const { eventoNuevo, proveedor, patch } = await escenario()
       await patch('BOOKED')

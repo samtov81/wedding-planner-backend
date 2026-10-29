@@ -68,17 +68,21 @@ export class UpdateEventVendorUseCase {
       ...(category === undefined ? {} : { category: await this.categorias.resolver(category) }),
     }
 
-    let avisado: string | null = null
+    // Quien contrata es el actor: si es el dueño de la ficha, ya lo sabe y el
+    // aviso llevaría a quien acaba de hacerlo (spec: sólo se avisa a otro).
+    const destinatarioDe = (proveedorUserId: string | null): string | null =>
+      proveedorUserId !== null && proveedorUserId !== actorUserId ? proveedorUserId : null
+
     const resultado = await this.unidadDeTrabajo.ejecutar(async () => {
       const r = await this.vendors.actualizar(eventId, eventVendorId, cambiosResueltos, actorUserId)
-      const proveedorUserId = r.contratado?.proveedorUserId ?? null
-      if (proveedorUserId !== null) {
-        await this.notificaciones.avisarAProveedor(eventId, proveedorUserId, eventVendorId)
-        avisado = proveedorUserId
+      const destinatario = destinatarioDe(r.contratado?.proveedorUserId ?? null)
+      if (destinatario !== null) {
+        await this.notificaciones.avisarAProveedor(eventId, destinatario, eventVendorId)
       }
       return r
     })
 
+    const avisado = destinatarioDe(resultado.contratado?.proveedorUserId ?? null)
     if (avisado !== null) {
       await encolarAvisoProveedor(
         this.cola,

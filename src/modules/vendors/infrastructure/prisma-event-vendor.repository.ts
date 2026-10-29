@@ -162,8 +162,11 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
     })
   }
 
+  // `enTransaccion`, no `$transaction` a secas: `RemoveEventVendorUseCase`
+  // abre una unidad de trabajo para borrar también el aviso al proveedor, y
+  // una segunda transacción lo confirmaría aunque la exterior se deshiciera.
   async eliminar(eventId: string, eventVendorId: string, actorUserId: string): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
+    await enTransaccion(this.prisma, async (tx) => {
       await tx.eventVendor.deleteMany({ where: { id: eventVendorId, eventId } })
       await tx.auditLog.create({
         data: {

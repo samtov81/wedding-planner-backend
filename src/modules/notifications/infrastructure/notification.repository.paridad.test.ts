@@ -42,6 +42,7 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
     eventId?: string
     minuto: number
     leida?: boolean
+    tipo?: string
   }): Promise<string> {
     const createdAt = new Date(BASE.getTime() + datos.minuto * 60_000)
     const readAt = datos.leida === true ? BASE : null
@@ -49,7 +50,7 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
       data: {
         eventId: datos.eventId ?? eventId,
         userId: datos.userId,
-        type: 'guest.rsvp.updated',
+        type: datos.tipo ?? 'guest.rsvp.updated',
         payload: { minuto: datos.minuto },
         createdAt,
         readAt,
@@ -59,7 +60,7 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
       id: fila.id,
       eventId: datos.eventId ?? eventId,
       userId: datos.userId,
-      type: 'guest.rsvp.updated',
+      type: datos.tipo ?? 'guest.rsvp.updated',
       payload: { minuto: datos.minuto },
       createdAt,
       readAt,
@@ -398,7 +399,11 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
 
     it('un proveedor BOOKED ve y cuenta su aviso; si lo cancelan, ni lo ve ni lo cuenta', async () => {
       const ev = await contratar(eventId)
-      const aviso = await sembrarEnAmbos({ userId: provId, minuto: 1 })
+      const aviso = await sembrarEnAmbos({
+        userId: provId,
+        tipo: TIPO_PROVEEDOR_CONTRATADO,
+        minuto: 1,
+      })
 
       for (const [, repo] of implementaciones()) {
         const pagina = await repo.listarDeUsuario(provId, todas)
@@ -418,7 +423,11 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
       await prisma.event.update({ where: { id: eventId }, data: { status: 'DRAFT' } })
       await contratar(eventId)
       doble.fijarPublicado(eventId, false)
-      const aviso = await sembrarEnAmbos({ userId: provId, minuto: 1 })
+      const aviso = await sembrarEnAmbos({
+        userId: provId,
+        tipo: TIPO_PROVEEDOR_CONTRATADO,
+        minuto: 1,
+      })
 
       for (const [, repo] of implementaciones()) {
         expect((await repo.listarDeUsuario(provId, todas)).items).toEqual([])
@@ -439,8 +448,13 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
       await contratar(eventId)
       const cancelada = await contratar(otroEventId)
       await cancelar(cancelada, otroEventId)
-      await sembrarEnAmbos({ userId: provId, minuto: 1 })
-      await sembrarEnAmbos({ userId: provId, eventId: otroEventId, minuto: 2 })
+      await sembrarEnAmbos({ userId: provId, tipo: TIPO_PROVEEDOR_CONTRATADO, minuto: 1 })
+      await sembrarEnAmbos({
+        userId: provId,
+        tipo: TIPO_PROVEEDOR_CONTRATADO,
+        eventId: otroEventId,
+        minuto: 2,
+      })
 
       for (const [, repo] of implementaciones()) {
         expect(await repo.marcarTodasLeidas(provId, new Date('2026-04-01T00:00:00.000Z'))).toBe(1)
@@ -467,13 +481,95 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
         },
       })
       doble.registrarProveedorContratado(eventId, otroId)
-      const aviso = await sembrarEnAmbos({ userId: otroId, minuto: 1 })
+      const aviso = await sembrarEnAmbos({
+        userId: otroId,
+        tipo: TIPO_PROVEEDOR_CONTRATADO,
+        minuto: 1,
+      })
 
       for (const [, repo] of implementaciones()) {
         const pagina = await repo.listarDeUsuario(otroId, todas)
         expect(pagina.items.map((n) => n.id)).toEqual([aviso])
         expect(await repo.contarNoLeidasDeUsuario(otroId)).toBe(1)
       }
+    })
+
+    it('un miembro revocado que luego es proveedor contratado no vuelve a ver sus avisos de miembro', async () => {
+      // `otroId` pasa a REVOKED en el evento y es contratado como proveedor.
+      await prisma.eventMembership.updateMany({
+        where: { eventId, userId: otroId },
+        data: { status: 'REVOKED' },
+      })
+      doble.registrarMiembros(eventId, [miId])
+      const perfilDeOtro = await prisma.vendorProfile.upsert({
+        where: { userId: otroId },
+        update: {},
+        create: { userId: otroId, businessName: 'Revocado', categoryId: categoria },
+      })
+      await prisma.eventVendor.create({
+        data: {
+          eventId,
+          vendorProfileId: perfilDeOtro.id,
+          categoryId: categoria,
+          status: 'BOOKED',
+        },
+      })
+      doble.registrarProveedorContratado(eventId, otroId)
+      const deMiembro = await sembrarEnAmbos({ userId: otroId, minuto: 1 })
+      const reserva = await prisma.notification.create({
+        data: { eventId, userId: otroId, type: TIPO_PROVEEDOR_CONTRATADO, payload: {} },
+      })
+      doble.filas.push({
+        id: reserva.id,
+        eventId,
+        userId: otroId,
+        type: TIPO_PROVEEDOR_CONTRATADO,
+        payload: {},
+        createdAt: reserva.createdAt,
+        readAt: null,
+      })
+
+      try {
+        for (const [, repo] of implementaciones()) {
+          const pagina = await repo.listarDeUsuario(otroId, todas)
+          expect(pagina.items.map((n) => n.id)).toEqual([reserva.id])
+          expect(pagina.items.map((n) => n.id)).not.toContain(deMiembro)
+          expect(await repo.contarNoLeidasDeUsuario(otroId)).toBe(1)
+          expect(await repo.marcarTodasLeidas(otroId, new Date())).toBe(1)
+        }
+      } finally {
+        await prisma.eventMembership.updateMany({
+          where: { eventId, userId: otroId },
+          data: { status: 'ACTIVE' },
+        })
+      }
+    })
+
+    it('retirarAvisoProveedor borra el aviso de esa contratación y no otros', async () => {
+      const ev = await contratar(eventId)
+      const otra = await contratar(otroEventId)
+      const puerto = new NotificationPortEnMemoria()
+      for (const [evento, id] of [
+        [eventId, ev],
+        [otroEventId, otra],
+      ] as const) {
+        await real.avisarAProveedor(evento, provId, id)
+        await puerto.avisarAProveedor(evento, provId, id)
+      }
+      // Un aviso de otro tipo del mismo evento tampoco se toca.
+      await sembrarEnAmbos({ userId: provId, minuto: 1 })
+
+      await real.retirarAvisoProveedor(eventId, ev)
+      await puerto.retirarAvisoProveedor(eventId, ev)
+
+      const quedan = await prisma.notification.findMany({ where: { userId: provId } })
+      expect(quedan.map((f) => f.type).sort()).toEqual(
+        ['event.vendor.booked', 'guest.rsvp.updated'].sort(),
+      )
+      expect(quedan.find((f) => f.type === TIPO_PROVEEDOR_CONTRATADO)?.payload).toEqual({
+        eventVendorId: otra,
+      })
+      expect(puerto.creadas.map((c) => c.payload)).toEqual([{ eventVendorId: otra }])
     })
 
     it('avisarAProveedor crea una fila y, llamado otra vez para la misma contratación, la reaviva sin crear otra', async () => {

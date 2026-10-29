@@ -217,6 +217,18 @@ describe('UpdateEventVendorUseCase', () => {
       expect(cola.encolados).toEqual([])
     })
 
+    it('el dueño que contrata su propia ficha no se avisa a sí mismo', async () => {
+      const vendors = conPerfil()
+      const { caso, notificaciones, cola } = armar(vendors)
+      const vista = await contratacion(vendors, enlazado)
+
+      const r = await caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED' }, PROVEEDOR)
+
+      expect(r.status).toBe('BOOKED')
+      expect(notificaciones.creadas).toEqual([])
+      expect(cola.encolados).toEqual([])
+    })
+
     it('si avisar falla, el PATCH falla y no se encola nada', async () => {
       const vendors = conPerfil()
       const { caso, notificaciones, cola } = armar(vendors)
@@ -234,7 +246,7 @@ describe('UpdateEventVendorUseCase', () => {
       const vendors = conPerfil()
       const { notificaciones } = armar(vendors)
       const vista = await contratacion(vendors, enlazado)
-      vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      const aviso = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       const cola = new InMemoryQueueAdapter()
       vi.spyOn(cola, 'enqueue').mockRejectedValue(new Error('redis caído'))
       const casoConCola = new UpdateEventVendorUseCase(
@@ -249,6 +261,8 @@ describe('UpdateEventVendorUseCase', () => {
 
       expect(r.status).toBe('BOOKED')
       expect(notificaciones.creadas).toHaveLength(1)
+      expect(aviso).toHaveBeenCalled()
+      aviso.mockRestore()
     })
   })
 })

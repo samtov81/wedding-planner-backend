@@ -1,3 +1,6 @@
+import { UnidadDeTrabajoEnMemoria } from '@/modules/database/infrastructure/unidad-de-trabajo.fake'
+import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
+
 import { categoriaSembrada } from '../infrastructure/vendor-category.repository.fake'
 import { EventVendorNoEncontradoError, ProveedorConGastosError } from '../domain/vendor-errors'
 import { EventVendorRepositoryEnMemoria } from '../infrastructure/event-vendor.repository.fake'
@@ -6,10 +9,16 @@ import { RemoveEventVendorUseCase } from './remove-event-vendor.use-case'
 const EVENTO = '11111111-1111-4111-8111-111111111111'
 const OTRO_EVENTO = '22222222-2222-4222-8222-222222222222'
 
+function armar(vendors: EventVendorRepositoryEnMemoria) {
+  const notificaciones = new NotificationPortEnMemoria()
+  const caso = new RemoveEventVendorUseCase(vendors, notificaciones, new UnidadDeTrabajoEnMemoria())
+  return { caso, notificaciones }
+}
+
 describe('RemoveEventVendorUseCase', () => {
   it('elimina el proveedor del evento', async () => {
     const vendors = new EventVendorRepositoryEnMemoria()
-    const caso = new RemoveEventVendorUseCase(vendors)
+    const caso = armar(vendors).caso
     const vista = await vendors.crear({
       eventId: EVENTO,
       vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
@@ -26,7 +35,7 @@ describe('RemoveEventVendorUseCase', () => {
 
   it('deja rastro en la auditoría de quién eliminó, sin datos personales', async () => {
     const vendors = new EventVendorRepositoryEnMemoria()
-    const caso = new RemoveEventVendorUseCase(vendors)
+    const caso = armar(vendors).caso
     const vista = await vendors.crear({
       eventId: EVENTO,
       vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
@@ -48,7 +57,7 @@ describe('RemoveEventVendorUseCase', () => {
 
   it('rechaza eliminar un id que no existe', async () => {
     const vendors = new EventVendorRepositoryEnMemoria()
-    const caso = new RemoveEventVendorUseCase(vendors)
+    const caso = armar(vendors).caso
 
     await expect(caso.ejecutar(EVENTO, 'no-existe', 'ana')).rejects.toBeInstanceOf(
       EventVendorNoEncontradoError,
@@ -57,7 +66,7 @@ describe('RemoveEventVendorUseCase', () => {
 
   it('rechaza eliminar un proveedor de OTRO evento', async () => {
     const vendors = new EventVendorRepositoryEnMemoria()
-    const caso = new RemoveEventVendorUseCase(vendors)
+    const caso = armar(vendors).caso
     const vista = await vendors.crear({
       eventId: OTRO_EVENTO,
       vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
@@ -74,7 +83,7 @@ describe('RemoveEventVendorUseCase', () => {
 
   it('rechaza eliminar un proveedor con gastos registrados (409)', async () => {
     const vendors = new EventVendorRepositoryEnMemoria()
-    const caso = new RemoveEventVendorUseCase(vendors)
+    const caso = armar(vendors).caso
     const vista = await vendors.crear({
       eventId: EVENTO,
       vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
@@ -89,5 +98,26 @@ describe('RemoveEventVendorUseCase', () => {
       ProveedorConGastosError,
     )
     expect(await vendors.buscarPorId(EVENTO, vista.id)).not.toBeNull()
+  })
+
+  it('retira el aviso de esa contratación y deja los de otras', async () => {
+    const vendors = new EventVendorRepositoryEnMemoria()
+    const { caso, notificaciones } = armar(vendors)
+    const vista = await vendors.crear({
+      eventId: EVENTO,
+      vendorRef: { kind: 'external', name: 'Flores Pepa', email: null, phone: null },
+      category: categoriaSembrada('decor-floral'),
+      specialty: null,
+      assignedBudget: null,
+      actorUserId: 'ana',
+    })
+    await notificaciones.avisarAProveedor(EVENTO, 'prov', vista.id)
+    await notificaciones.avisarAProveedor(EVENTO, 'prov', 'otra-contratacion')
+
+    await caso.ejecutar(EVENTO, vista.id, 'ana')
+
+    expect(notificaciones.creadas.map((c) => c.payload)).toEqual([
+      { eventVendorId: 'otra-contratacion' },
+    ])
   })
 })

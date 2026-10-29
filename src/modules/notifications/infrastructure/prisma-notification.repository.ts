@@ -32,12 +32,15 @@ const MIEMBRO_ACTIVO = { status: 'ACTIVE' } satisfies Prisma.EventMembershipWher
 
 /**
  * Las notificaciones de `userId` cuyo evento le sigue dando acceso: membresía
- * ACTIVE, o ser el proveedor de una contratación BOOKED de ese evento (el
- * `VendorProfile.userId` es él) con el evento PUBLICADO (`status: 'ACTIVE'`),
- * exactamente como `buscarContratacionReservada` concede acceso a un proveedor:
- * visibilidad y acceso no pueden discrepar. Un aviso de un evento en borrador
- * aparece cuando éste se publica. Un usuario que es las dos cosas ve cada fila
- * una sola vez: el `OR` está sobre el evento, no es un join por rol. Una
+ * ACTIVE (cualquier tipo), o, SÓLO para `event.vendor.booked`, ser el proveedor
+ * de una contratación BOOKED de ese evento (el `VendorProfile.userId` es él)
+ * con el evento PUBLICADO (`status: 'ACTIVE'`), exactamente como
+ * `buscarContratacionReservada` concede acceso a un proveedor: visibilidad y
+ * acceso no pueden discrepar. La rama de proveedor va filtrada por tipo: un
+ * miembro revocado que luego es contratado no recupera sus avisos de miembro,
+ * que llevan a páginas que el proveedor no puede abrir. Un aviso de un evento
+ * en borrador aparece cuando éste se publica. Un usuario que es las dos cosas
+ * ve cada fila una sola vez: el `OR` está sobre la notificación, no es un join. Una
  * contratación cancelada (o sólo preseleccionada) retira la visibilidad igual
  * que revocar una membresía. Una sola definición para listar, contar y marcar:
  * lista, insignia y "marcar todas" no pueden discrepar.
@@ -52,15 +55,16 @@ const MIEMBRO_ACTIVO = { status: 'ACTIVE' } satisfies Prisma.EventMembershipWher
  */
 const visiblesDe = (userId: string): Prisma.NotificationWhereInput => ({
   userId,
-  event: {
-    OR: [
-      { memberships: { some: { userId, ...MIEMBRO_ACTIVO } } },
-      {
+  OR: [
+    { event: { memberships: { some: { userId, ...MIEMBRO_ACTIVO } } } },
+    {
+      type: TIPO_PROVEEDOR_CONTRATADO,
+      event: {
         status: 'ACTIVE',
         vendors: { some: { status: 'BOOKED', vendorProfile: { userId } } },
       },
-    ],
-  },
+    },
+  ],
 })
 
 /**
@@ -141,6 +145,22 @@ export class PrismaNotificationRepository implements NotificationPort, Notificat
 
     await cliente.notification.create({
       data: { eventId, userId, type: TIPO_PROVEEDOR_CONTRATADO, payload: { eventVendorId } },
+    })
+  }
+
+  /**
+   * Borra el `event.vendor.booked` de esa contratación (spec §3: una fila por
+   * contratación). Se llama dentro de la misma transacción que borra el
+   * `EventVendor`, por `clienteDe(this.prisma)`: si se borrara la contratación y
+   * quedara el aviso, éste apuntaría a un evento que ya no contrata al proveedor.
+   */
+  async retirarAvisoProveedor(eventId: string, eventVendorId: string): Promise<void> {
+    await clienteDe(this.prisma).notification.deleteMany({
+      where: {
+        eventId,
+        type: TIPO_PROVEEDOR_CONTRATADO,
+        payload: { path: ['eventVendorId'], equals: eventVendorId },
+      },
     })
   }
 

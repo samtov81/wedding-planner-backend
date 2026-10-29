@@ -89,14 +89,16 @@ model User {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
-  sessions                Session[]
-  memberships             EventMembership[]
-  ownedEvents             Event[]                  @relation("EventOwner")
-  vendorProfile           VendorProfile?
-  notifications           Notification[]
-  emailVerificationTokens EmailVerificationToken[]
-  passwordResetTokens     PasswordResetToken[]
-  expensesCreated         Expense[]                @relation("ExpenseCreatedBy")
+  sessions                   Session[]
+  memberships                EventMembership[]
+  ownedEvents                Event[]                   @relation("EventOwner")
+  vendorProfile              VendorProfile?
+  notifications              Notification[]
+  conversationParticipations ConversationParticipant[]
+  messagesSent               Message[]
+  emailVerificationTokens    EmailVerificationToken[]
+  passwordResetTokens        PasswordResetToken[]
+  expensesCreated            Expense[]                 @relation("ExpenseCreatedBy")
 
   @@map("users")
 }
@@ -236,6 +238,7 @@ model Event {
   vendors         EventVendor[]
   guests          Guest[]
   notifications   Notification[]
+  conversations   Conversation[]
   scheduleItems   ScheduleItem[]
   expenses        Expense[]
   seatingTables   SeatingTable[]
@@ -544,4 +547,66 @@ model SeatAssignment {
   @@unique([guestId, companionIndex])
   @@index([eventId])
   @@map("seat_assignments")
+}
+
+/// Tipo de conversación. Sólo `EVENT_DIRECT` se usa en la parte 1; los otros
+/// dos están reservados (sala de evento, chat de perfil) para no migrar el enum.
+enum ConversationKind {
+  EVENT_DIRECT
+  EVENT_ROOM
+  PROFILE
+}
+
+/// Conversación de mensajería. `EVENT_DIRECT` es 1:1 dentro de un evento y se
+/// identifica por `pairKey` (`eventId:menor:mayor`, ver `claveDePar`): el
+/// UNIQUE garantiza una por evento y pareja sin importar quién la abra.
+/// `eventId` es nulo para tipos sin evento (PROFILE); NULL no choca en UNIQUE.
+model Conversation {
+  id            String           @id @default(uuid()) @db.Uuid
+  kind          ConversationKind
+  eventId       String?          @db.Uuid
+  pairKey       String?          @unique
+  createdAt     DateTime         @default(now())
+  lastMessageAt DateTime?
+
+  event        Event?                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  participants ConversationParticipant[]
+  messages     Message[]
+
+  @@index([eventId])
+  @@map("conversations")
+}
+
+/// Participante y sus dos marcas ("recibido hasta" y "leído hasta"), cada una
+/// un par (instante, id del mensaje). Sólo avanzan; lo garantiza el dominio.
+model ConversationParticipant {
+  conversationId  String    @db.Uuid
+  userId          String    @db.Uuid
+  deliveredUpToAt DateTime?
+  deliveredUpToId String?   @db.Uuid
+  readUpToAt      DateTime?
+  readUpToId      String?   @db.Uuid
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([conversationId, userId])
+  @@index([userId])
+  @@map("conversation_participants")
+}
+
+/// Mensaje. Orden total por (`createdAt`, `id`). Un CHECK (añadido a mano en la
+/// migración, Prisma no los modela) exige 1..2000 caracteres tras recortar.
+model Message {
+  id             String   @id @default(uuid()) @db.Uuid
+  conversationId String   @db.Uuid
+  senderId       String   @db.Uuid
+  body           String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Restrict)
+
+  @@index([conversationId, createdAt, id])
+  @@map("messages")
 }

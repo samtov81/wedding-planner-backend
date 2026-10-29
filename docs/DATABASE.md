@@ -84,6 +84,27 @@ CHECK constraints:
 
 That `seatIndex < seatCount` of its table, and that the person fits the guest's current RSVP, cross tables and are enforced by the use cases, which lock the event row (`SELECT … FOR UPDATE`) inside a transaction before validating. A seat whose occupant no longer fits (the guest declined or lowered their companions) is kept and reported as `sobrante`.
 
+### `conversations`
+
+A messaging conversation. `kind` is `ConversationKind` (`EVENT_DIRECT` | `EVENT_ROOM` | `PROFILE`); only `EVENT_DIRECT` (1:1 inside an event) is used so far, the other two are reserved. `eventId` is nullable (`onDelete: Cascade`: deleting the event deletes its conversations, participants and messages). `pairKey` is `unique` and holds `eventId:smaller:larger` (the two user ids ordered), so there is at most one direct conversation per event and pair, whoever opens it; it is null for kinds without a pair (nulls do not collide). `lastMessageAt` is null until the first message.
+
+Enforced by the use cases, not by the database: that a direct conversation has `eventId` and `pairKey`, that its two participants are allowed together (member↔member and member↔vendor, never vendor↔vendor) and that both have access to the event when it is opened.
+
+### `conversation_participants`
+
+Primary key `(conversationId, userId)`, both `onDelete: Cascade`. Holds the two per-participant marks, "delivered up to" (`deliveredUpToAt`/`deliveredUpToId`) and "read up to" (`readUpToAt`/`readUpToId`): the `createdAt` and `id` of a message of that conversation. Messages are ordered by `(createdAt, id)`.
+
+Enforced by the use cases, not by the database: marks only move forward (never backwards), each `...Id` points at a message of that conversation (it is not a foreign key), and `...At` and `...Id` are written together.
+
+### `messages`
+
+Belongs to a `Conversation` (`onDelete: Cascade`) and to its sender, a `User` (`onDelete: Restrict` — a user with messages cannot be deleted). Indexed by `(conversationId, createdAt, id)` for backwards cursor pagination.
+
+CHECK constraints:
+- `messages_cuerpo_longitud` — `char_length(btrim(body))` is between 1 and 2000.
+
+That the sender is a participant of the conversation and still has access to the event is enforced by the use cases.
+
 ## Development Workflow
 
 ### Creating a New Migration

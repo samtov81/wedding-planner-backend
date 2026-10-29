@@ -2,6 +2,7 @@ import type { Server } from 'node:http'
 
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
+import { io, type Socket as SocketCliente } from 'socket.io-client'
 import request from 'supertest'
 
 import { TokenService } from '@/modules/auth/application/token.service'
@@ -48,6 +49,8 @@ describe('mensajería REST e2e', () => {
   let redis: StartedRedisContainer
   let cerrar: () => Promise<void>
   let server: Server
+  let url: string
+  const abiertos: SocketCliente[] = []
   let prisma: PrismaClient
   let eventoId: string
   let eventoAjenoId: string
@@ -80,6 +83,7 @@ describe('mensajería REST e2e', () => {
     const arrancada = await arrancarAppDeTest()
     cerrar = arrancada.cerrar
     server = arrancada.app.getHttpServer()
+    url = arrancada.url
     prisma = new PrismaClient({ datasources: { db: { url: pg.url } } })
     const tokens = arrancada.app.get(TokenService)
 
@@ -149,6 +153,10 @@ describe('mensajería REST e2e', () => {
       if (uid === provA.id) contratacionA = c.id
     }
   }, 240_000)
+
+  afterEach(() => {
+    for (const socket of abiertos.splice(0)) socket.disconnect()
+  })
 
   beforeEach(async () => {
     await limpiarContadoresDeRitmo(redis.getConnectionUrl())
@@ -241,6 +249,20 @@ describe('mensajería REST e2e', () => {
   })
 
   describe('mensajes', () => {
+    it('cuenta puntos de código: 2000 emoji se aceptan (201) y 2001 dan 400', async () => {
+      const conv = await conversacionEntre(t.pareja, id.provA)
+      await request(server)
+        .post(`/conversations/${conv}/messages`)
+        .set(como(t.pareja))
+        .send({ body: '😀'.repeat(2000) })
+        .expect(201)
+      await request(server)
+        .post(`/conversations/${conv}/messages`)
+        .set(como(t.pareja))
+        .send({ body: '😀'.repeat(2001) })
+        .expect(400)
+    })
+
     it('enviar y leer la bandeja del otro: unreadCount 1, luego read → 0', async () => {
       const conv = await conversacionEntre(t.pareja, id.provA)
       const enviado = await request(server)
@@ -394,6 +416,66 @@ describe('mensajería REST e2e', () => {
         .set(como(t.planner))
         .send({ upTo: 'no-guid' })
         .expect(400)
+    })
+  })
+
+  describe('tiempo real', () => {
+    async function conectarComo(token: string): Promise<SocketCliente> {
+      const socket = io(`${url}/realtime`, {
+        auth: { token },
+        transports: ['websocket'],
+        reconnection: false,
+        forceNew: true,
+      })
+      abiertos.push(socket)
+      await new Promise<void>((resolve, reject) => {
+        socket.once('connect', () => resolve())
+        socket.once('connect_error', reject)
+      })
+      return socket
+    }
+
+    function esperar(socket: SocketCliente, evento: string, ms = 10_000): Promise<unknown> {
+      return new Promise((resolve, reject) => {
+        const reloj = setTimeout(() => reject(new Error(`no llegó ${evento} en ${ms} ms`)), ms)
+        socket.once(evento, (datos: unknown) => {
+          clearTimeout(reloj)
+          resolve(datos)
+        })
+      })
+    }
+
+    it('el destinatario recibe message.created al enviar y el emisor recibe message.receipt al leer', async () => {
+      const conv = await conversacionEntre(t.pareja, id.provA)
+      const socketPareja = await conectarComo(t.pareja)
+      const socketProv = await conectarComo(t.provA)
+      const recibidosPareja: string[] = []
+      socketPareja.onAny((evento: string) => recibidosPareja.push(evento))
+
+      const llega = esperar(socketProv, 'message.created')
+      const enviado = await request(server)
+        .post(`/conversations/${conv}/messages`)
+        .set(como(t.pareja))
+        .send({ body: 'hola desde la pareja' })
+        .expect(201)
+      const mensaje = enviado.body as MensajeCuerpo
+      expect(await llega).toEqual({ conversationId: conv, message: mensaje })
+
+      const recibo = esperar(socketPareja, 'message.receipt')
+      await request(server)
+        .post(`/conversations/${conv}/read`)
+        .set(como(t.provA))
+        .send({ upTo: mensaje.id })
+        .expect(204)
+      const marca = { at: mensaje.createdAt, id: mensaje.id }
+      expect(await recibo).toEqual({
+        conversationId: conv,
+        userId: id.provA,
+        deliveredUpTo: null,
+        readUpTo: marca,
+      })
+      // El emisor no recibe su propio message.created.
+      expect(recibidosPareja).not.toContain('message.created')
     })
   })
 

@@ -196,6 +196,13 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     return Promise.resolve({ ...mensaje })
   }
 
+  mensaje(conversationId: string, messageId: string): Promise<MensajeVista | null> {
+    const m = this.mensajesGuardados.find(
+      (x) => x.id === messageId && x.conversationId === conversationId,
+    )
+    return Promise.resolve(m === undefined ? null : { ...m })
+  }
+
   marcar(
     conversationId: string,
     userId: string,

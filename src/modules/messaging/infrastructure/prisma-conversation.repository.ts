@@ -224,6 +224,13 @@ export class PrismaConversationRepository implements ConversationRepository {
     })
   }
 
+  async mensaje(conversationId: string, messageId: string): Promise<MensajeVista | null> {
+    const fila = await clienteDe(this.prisma).message.findFirst({
+      where: { id: messageId, conversationId },
+    })
+    return fila === null ? null : aMensaje(fila)
+  }
+
   /**
    * Bloquea la fila del participante (`FOR UPDATE`) antes de leer su marca:
    * dos marcados simultáneos serializan y el segundo ve el resultado del

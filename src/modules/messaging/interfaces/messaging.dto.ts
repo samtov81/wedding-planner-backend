@@ -9,11 +9,19 @@ export const idSchema = z.guid()
 export const abrirConversacionSchema = z.object({ userId: z.guid() })
 
 /**
- * Recortado y acotado. Zod cuenta unidades UTF-16 y el dominio puntos de
- * código, así que aquí un emoji pesa 2: este tope es el más estricto y el
- * definitivo es `normalizarCuerpo`, la segunda barrera.
+ * Recortado y acotado EN PUNTOS DE CÓDIGO, como `normalizarCuerpo`. Se hace
+ * explícito con `refine` aunque el `max` de Zod 4 (4.6.5, comprobado) ya cuente
+ * puntos de código: una versión de Zod que contara unidades UTF-16 pesaría un
+ * emoji como 2 y rechazaría aquí lo que el dominio acepta. El e2e de 2000/2001
+ * emoji fija el comportamiento. `[...s]` itera por puntos de código.
  */
-export const enviarMensajeSchema = z.object({ body: z.string().trim().min(1).max(2000) })
+export const enviarMensajeSchema = z.object({
+  body: z
+    .string()
+    .trim()
+    .min(1)
+    .refine((s) => [...s].length <= 2000, { message: 'Too big: expected at most 2000 characters' }),
+})
 
 export const marcarSchema = z.object({ upTo: z.guid() })
 

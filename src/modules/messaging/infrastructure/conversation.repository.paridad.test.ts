@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { PrismaClient } from '@prisma/client'
 
 import type { PrismaService } from '@/modules/database/prisma.service'
@@ -434,6 +436,24 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
       expect(unreadTotal).toBe(1)
     }
     expect(ids).toHaveLength(4)
+  })
+
+  it('mensaje: lo devuelve por id y es null si es de otra conversación o no existe', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    await miembro(eventId, plannerId, 'PLANNER')
+    const conv = await abrirEnAmbos(eventId, parejaId, plannerId)
+    const otra = await abrirEnAmbos(eventId, parejaId, invitadoId)
+    const msg = await enviarEnAmbos(conv, parejaId, 'hola', 1)
+    const vistos = []
+    for (const [quien, repo] of implementaciones()) {
+      const m = await repo.mensaje(idDe(conv, quien), idDe(msg, quien))
+      vistos.push({ body: m?.body, senderId: m?.senderId, createdAt: m?.createdAt })
+      expect(await repo.mensaje(idDe(otra, quien), idDe(msg, quien))).toBeNull()
+      expect(await repo.mensaje(idDe(conv, quien), randomUUID())).toBeNull()
+    }
+    expect(vistos[0]).toEqual(vistos[1])
+    expect(vistos[0]).toEqual({ body: 'hola', senderId: parejaId, createdAt: minuto(1) })
   })
 
   it('abrir consigo mismo se rechaza con un error de dominio', async () => {

@@ -1,10 +1,13 @@
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, Logger } from '@nestjs/common'
+
+import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
 
 import { normalizarCuerpo } from '../domain/conversacion'
 import {
   ConversacionNoEncontradaError,
   ConversacionSoloLecturaError,
 } from '../domain/messaging-errors'
+import { encolarAvisoMensaje } from './avisos-mensajeria'
 import {
   CONVERSATION_REPOSITORY,
   type ConversationRepository,
@@ -16,14 +19,19 @@ import {
  * si no (`readOnly`) es un 403. Quien no participa recibe el mismo 404 que con
  * un id inexistente. El cuerpo se normaliza aquí (segunda barrera tras Zod).
  *
- * Devuelve el mensaje y a quién hay que avisar (los demás participantes) para
- * que la Tarea 4 encole el aviso en tiempo real. Este caso de uso NO encola:
- * guardar y avisar son pasos separados, y un fallo de Redis no debe perder el
- * mensaje ya guardado.
+ * Devuelve el mensaje y los demás participantes. Tras guardar, ENCOLA el aviso
+ * en tiempo real (`avisos-mensajeria.ts`): guardar y avisar son pasos separados
+ * y un fallo de Redis se registra pero no deshace ni falla un mensaje ya
+ * guardado (la respuesta REST no cambia). El worker decide a quién emitir.
  */
 @Injectable()
 export class SendMessageUseCase {
-  constructor(@Inject(CONVERSATION_REPOSITORY) private readonly repo: ConversationRepository) {}
+  private readonly registro = new Logger(SendMessageUseCase.name)
+
+  constructor(
+    @Inject(CONVERSATION_REPOSITORY) private readonly repo: ConversationRepository,
+    @Inject(QUEUE_PORT) private readonly cola: QueuePort,
+  ) {}
 
   async ejecutar(
     userId: string,
@@ -36,6 +44,7 @@ export class SendMessageUseCase {
 
     const cuerpo = normalizarCuerpo(texto)
     const mensaje = await this.repo.agregarMensaje(conversationId, userId, cuerpo, new Date())
+    await encolarAvisoMensaje(this.cola, this.registro, { conversationId, messageId: mensaje.id })
     const participantes = await this.repo.participantes(conversationId)
     return { mensaje, destinatarios: participantes.filter((p) => p !== userId) }
   }

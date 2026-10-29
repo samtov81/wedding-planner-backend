@@ -10,12 +10,7 @@ import { decodeCursor, NotFoundError, UnauthorizedError } from '@/shared/domain'
 import { LIMITADOR_MESSAGES, LimiteDeRuta } from '@/shared/http/limitadores'
 import { validarCon } from '@/shared/http/validar-con'
 
-import type {
-  Contacto,
-  ConversacionVista,
-  MarcasDeParticipante,
-  MensajeVista,
-} from '../application/conversation.repository'
+import type { Contacto, ConversacionVista } from '../application/conversation.repository'
 import { ListContactsUseCase } from '../application/list-contacts.use-case'
 import { ListConversationsUseCase } from '../application/list-conversations.use-case'
 import { ListMessagesUseCase } from '../application/list-messages.use-case'
@@ -23,7 +18,6 @@ import { MarkConversationUseCase } from '../application/mark-conversation.use-ca
 import { OpenConversationUseCase } from '../application/open-conversation.use-case'
 import { SendMessageUseCase } from '../application/send-message.use-case'
 import { ConversacionNoEncontradaError } from '../domain/messaging-errors'
-import type { Marca } from '../domain/conversacion'
 import {
   abrirConversacionSchema,
   enviarMensajeSchema,
@@ -31,24 +25,12 @@ import {
   listarMensajesQuerySchema,
   marcarSchema,
 } from './messaging.dto'
-
-interface MarcaJson {
-  at: string
-  id: string
-}
-
-interface MensajeJson {
-  id: string
-  conversationId: string
-  senderId: string
-  body: string
-  createdAt: string
-}
-
-interface OtherMarksJson {
-  deliveredUpTo: MarcaJson | null
-  readUpTo: MarcaJson | null
-}
+import {
+  mensajeJson,
+  otherMarksJson,
+  type MensajeJson,
+  type OtherMarksJson,
+} from './messaging.json'
 
 interface ConversacionJson {
   id: string
@@ -59,22 +41,6 @@ interface ConversacionJson {
   readOnly: boolean
   otherMarks: OtherMarksJson
 }
-
-const marcaJson = (m: Marca | null): MarcaJson | null =>
-  m === null ? null : { at: m.at.toISOString(), id: m.id }
-
-const otherMarksJson = (m: MarcasDeParticipante): OtherMarksJson => ({
-  deliveredUpTo: marcaJson(m.deliveredUpTo),
-  readUpTo: marcaJson(m.readUpTo),
-})
-
-const mensajeJson = (m: MensajeVista): MensajeJson => ({
-  id: m.id,
-  conversationId: m.conversationId,
-  senderId: m.senderId,
-  body: m.body,
-  createdAt: m.createdAt.toISOString(),
-})
 
 const conversacionJson = (c: ConversacionVista): ConversacionJson => ({
   id: c.id,

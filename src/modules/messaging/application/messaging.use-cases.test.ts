@@ -1,3 +1,7 @@
+import { Logger } from '@nestjs/common'
+
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
+
 import { ConversationRepositoryEnMemoria } from '../infrastructure/conversation.repository.fake'
 import {
   ConversacionNoEncontradaError,
@@ -27,11 +31,13 @@ function escenario() {
   repo.registrarMiembro(EVENTO, PLANNER, 'PLANNER', 'ACTIVE', 'Planner')
   repo.registrarProveedor(EVENTO, PROV_A, 'Foto A', true)
   repo.registrarProveedor(EVENTO, PROV_B, 'Flores B', true)
+  const cola = new InMemoryQueueAdapter()
   return {
     repo,
+    cola,
     abrir: new OpenConversationUseCase(repo),
-    enviar: new SendMessageUseCase(repo),
-    marcar: new MarkConversationUseCase(repo),
+    enviar: new SendMessageUseCase(repo, cola),
+    marcar: new MarkConversationUseCase(repo, cola),
     mensajes: new ListMessagesUseCase(repo),
     bandeja: new ListConversationsUseCase(repo),
   }
@@ -88,6 +94,44 @@ describe('casos de uso de mensajería', () => {
       expect(r.destinatarios).toEqual([PROV_A])
     })
 
+    it('encola tras persistir: el aviso lleva ids y el mensaje ya está guardado', async () => {
+      const { repo, cola, abrir, enviar } = escenario()
+      const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
+      const { mensaje } = await enviar.ejecutar(PAREJA, conversacion.id, 'hola')
+      expect(cola.encolados).toHaveLength(1)
+      expect(cola.encolados[0]).toMatchObject({
+        cola: 'messaging',
+        nombre: 'message.created',
+        datos: { conversationId: conversacion.id, messageId: mensaje.id },
+        jobId: `message-${mensaje.id}`,
+      })
+      expect(await repo.mensaje(conversacion.id, mensaje.id)).not.toBeNull()
+    })
+
+    it('si encolar falla, el envío responde igual y se avisa con un warn', async () => {
+      const aviso = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      const { cola, abrir, enviar } = escenario()
+      const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
+      cola.enqueue = () => Promise.reject(new Error('redis caído'))
+      await expect(enviar.ejecutar(PAREJA, conversacion.id, 'hola')).resolves.toMatchObject({
+        mensaje: { body: 'hola' },
+      })
+      expect(aviso).toHaveBeenCalledOnce()
+      expect(aviso).toHaveBeenCalledWith(
+        expect.stringMatching(/^Mensaje guardado pero su aviso no se pudo encolar .*redis caído$/),
+      )
+      aviso.mockRestore()
+    })
+
+    it('un envío rechazado no encola nada', async () => {
+      const { cola, abrir, enviar } = escenario()
+      const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
+      await expect(enviar.ejecutar(PAREJA, conversacion.id, '   ')).rejects.toBeInstanceOf(
+        MensajeInvalidoError,
+      )
+      expect(cola.encolados).toEqual([])
+    })
+
     it('un cuerpo vacío lanza MensajeInvalidoError', async () => {
       const { abrir, enviar } = escenario()
       const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
@@ -134,6 +178,30 @@ describe('casos de uso de mensajería', () => {
       expect(r.marcas.readUpTo?.id).toBe(mensaje.id)
       expect(r.destinatarios).toEqual([PAREJA])
       expect((await bandeja.ejecutar(PROV_A)).unreadTotal).toBe(0)
+    })
+
+    it('encola el recibo tras persistir y, si encolar falla, responde igual', async () => {
+      const aviso = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
+      const { cola, abrir, enviar, marcar } = escenario()
+      const c = (await abrir.ejecutar(PAREJA, EVENTO, PROV_A)).conversacion
+      const { mensaje } = await enviar.ejecutar(PAREJA, c.id, 'hola')
+      await marcar.ejecutar(PROV_A, c.id, 'read', mensaje.id)
+      const recibo = cola.encolados.find((e) => e.nombre === 'message.receipt')
+      expect(recibo).toMatchObject({
+        cola: 'messaging',
+        datos: { conversationId: c.id, userId: PROV_A },
+      })
+      expect(recibo?.jobId.startsWith(`receipt-${c.id}-${PROV_A}-`)).toBe(true)
+      expect(recibo?.jobId).not.toContain(':')
+
+      cola.enqueue = () => Promise.reject(new Error('redis caído'))
+      await expect(marcar.ejecutar(PROV_A, c.id, 'read', mensaje.id)).resolves.toMatchObject({
+        conversationId: c.id,
+      })
+      expect(aviso).toHaveBeenCalledWith(
+        expect.stringMatching(/^Recibo guardado pero su aviso no se pudo encolar .*redis caído$/),
+      )
+      aviso.mockRestore()
     })
 
     it('se puede marcar en una conversación de solo lectura', async () => {

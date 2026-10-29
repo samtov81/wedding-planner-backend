@@ -85,6 +85,9 @@ export interface ConversationRepository {
     ahora: Date,
   ): Promise<MensajeVista>
 
+  /** Un mensaje por id, acotado a su conversación; null si no existe ahí. */
+  mensaje(conversationId: string, messageId: string): Promise<MensajeVista | null>
+
   /** Avanza la marca (nunca retrocede). false si `upTo` no es de la conversación. */
   marcar(
     conversationId: string,

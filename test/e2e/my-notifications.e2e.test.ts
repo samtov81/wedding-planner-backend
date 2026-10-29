@@ -178,49 +178,66 @@ describe('GET /me/notifications y POST /me/notifications/read-all e2e', () => {
   })
 
   describe('proveedor contratado', () => {
-    it('un proveedor contratado ve su aviso con el nombre del evento y lo marca leído (204)', async () => {
+    /**
+     * Siembra el escenario explícito: un evento (publicado o en borrador), un
+     * proveedor BOOKED en él y su aviso `event.vendor.booked`.
+     */
+    async function sembrarProveedor(
+      email: string,
+      status: 'ACTIVE' | 'DRAFT',
+    ): Promise<{ tokenProv: string; eventId: string; contratacionId: string }> {
       const prov = await prisma.user.create({
-        data: { email: 'prov@test.com', passwordHash: 'x', fullName: 'Prov' },
+        data: { email, passwordHash: 'x', fullName: 'Prov' },
       })
       const categoria = await categoriaId(prisma)
       const perfil = await prisma.vendorProfile.create({
-        data: { userId: prov.id, businessName: 'Foto', categoryId: categoria },
+        data: { userId: prov.id, businessName: `Negocio ${email}`, categoryId: categoria },
+      })
+      const evento = await prisma.event.create({
+        data: {
+          name: status === 'ACTIVE' ? 'Boda publicada' : 'Boda en borrador',
+          weddingDate: new Date(Date.now() + 180 * 86_400_000),
+          ownerId: parejaId,
+          status,
+        },
       })
       const contratacion = await prisma.eventVendor.create({
         data: {
-          eventId: eventoA,
+          eventId: evento.id,
           vendorProfileId: perfil.id,
           categoryId: categoria,
           status: 'BOOKED',
         },
       })
-      const tokenProv = app.get(TokenService).firmarAccess({
-        id: prov.id,
-        systemRole: prov.systemRole,
-      })
       await prisma.notification.create({
         data: {
-          eventId: eventoA,
+          eventId: evento.id,
           userId: prov.id,
           type: 'event.vendor.booked',
           payload: { eventVendorId: contratacion.id },
         },
       })
+      const tokenProv = app
+        .get(TokenService)
+        .firmarAccess({ id: prov.id, systemRole: prov.systemRole })
+      return { tokenProv, eventId: evento.id, contratacionId: contratacion.id }
+    }
+
+    it('un proveedor contratado ve su aviso con el nombre del evento y lo marca leído (204)', async () => {
+      const { tokenProv, eventId } = await sembrarProveedor('prov@test.com', 'ACTIVE')
 
       const r = await request(server).get('/me/notifications').set(como(tokenProv)).expect(200)
       const cuerpo = r.body as CuerpoMias
       expect(cuerpo.items).toHaveLength(1)
       expect(cuerpo.items[0]).toMatchObject({
         type: 'event.vendor.booked',
-        event: { id: eventoA, name: 'Boda de Ana' },
+        event: { id: eventId, name: 'Boda publicada' },
         readAt: null,
       })
       expect(cuerpo.unreadCount).toBe(1)
 
-      // El acceso de un proveedor exige evento ACTIVE (`buscarContratacionReservada`).
-      await prisma.event.update({ where: { id: eventoA }, data: { status: 'ACTIVE' } })
       await request(server)
-        .post(`/events/${eventoA}/notifications/${cuerpo.items[0]?.id ?? ''}/read`)
+        .post(`/events/${eventId}/notifications/${cuerpo.items[0]?.id ?? ''}/read`)
         .set(como(tokenProv))
         .expect(204)
 
@@ -232,36 +249,27 @@ describe('GET /me/notifications y POST /me/notifications/read-all e2e', () => {
       expect((despues.body as CuerpoMias).items[0]?.readAt).not.toBeNull()
     })
 
+    it('un proveedor contratado en un evento sin publicar no ve el aviso hasta que se publica', async () => {
+      const { tokenProv, eventId } = await sembrarProveedor('prov3@test.com', 'DRAFT')
+
+      const antes = await request(server).get('/me/notifications').set(como(tokenProv)).expect(200)
+      expect((antes.body as CuerpoMias).items).toEqual([])
+      expect((antes.body as CuerpoMias).unreadCount).toBe(0)
+
+      await prisma.event.update({ where: { id: eventId }, data: { status: 'ACTIVE' } })
+
+      const despues = await request(server)
+        .get('/me/notifications')
+        .set(como(tokenProv))
+        .expect(200)
+      expect((despues.body as CuerpoMias).items).toHaveLength(1)
+      expect((despues.body as CuerpoMias).unreadCount).toBe(1)
+    })
+
     it('al cancelar su contratación el aviso desaparece del listado y del contador', async () => {
-      const prov = await prisma.user.create({
-        data: { email: 'prov2@test.com', passwordHash: 'x', fullName: 'Prov2' },
-      })
-      const categoria = await categoriaId(prisma)
-      const perfil = await prisma.vendorProfile.create({
-        data: { userId: prov.id, businessName: 'Flores', categoryId: categoria },
-      })
-      const contratacion = await prisma.eventVendor.create({
-        data: {
-          eventId: eventoA,
-          vendorProfileId: perfil.id,
-          categoryId: categoria,
-          status: 'BOOKED',
-        },
-      })
-      const tokenProv = app.get(TokenService).firmarAccess({
-        id: prov.id,
-        systemRole: prov.systemRole,
-      })
-      await prisma.notification.create({
-        data: {
-          eventId: eventoA,
-          userId: prov.id,
-          type: 'event.vendor.booked',
-          payload: { eventVendorId: contratacion.id },
-        },
-      })
+      const { tokenProv, contratacionId } = await sembrarProveedor('prov2@test.com', 'ACTIVE')
       await prisma.eventVendor.update({
-        where: { id: contratacion.id },
+        where: { id: contratacionId },
         data: { status: 'CANCELLED' },
       })
 

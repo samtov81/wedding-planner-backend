@@ -370,7 +370,11 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
     })
 
     beforeEach(async () => {
+      // Estado limpio por caso: el doble es nuevo (lo crea el `beforeEach` de
+      // arriba, con su mapa de proveedores vacío) y en Prisma se vacían las
+      // contrataciones y se publican los dos eventos.
       await prisma.eventVendor.deleteMany()
+      await prisma.event.updateMany({ data: { status: 'ACTIVE' } })
       doble.registrarEvento(eventId, 'Boda')
       doble.registrarEvento(otroEventId, 'Otra')
     })
@@ -407,6 +411,27 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
       for (const [, repo] of implementaciones()) {
         expect((await repo.listarDeUsuario(provId, todas)).items).toEqual([])
         expect(await repo.contarNoLeidasDeUsuario(provId)).toBe(0)
+      }
+    })
+
+    it('un proveedor BOOKED en un evento sin publicar no ve ni cuenta su aviso', async () => {
+      await prisma.event.update({ where: { id: eventId }, data: { status: 'DRAFT' } })
+      await contratar(eventId)
+      doble.fijarPublicado(eventId, false)
+      const aviso = await sembrarEnAmbos({ userId: provId, minuto: 1 })
+
+      for (const [, repo] of implementaciones()) {
+        expect((await repo.listarDeUsuario(provId, todas)).items).toEqual([])
+        expect(await repo.contarNoLeidasDeUsuario(provId)).toBe(0)
+        expect(await repo.marcarTodasLeidas(provId, new Date())).toBe(0)
+      }
+
+      // Al publicarse el evento, el aviso aparece.
+      await prisma.event.update({ where: { id: eventId }, data: { status: 'ACTIVE' } })
+      doble.fijarPublicado(eventId, true)
+      for (const [, repo] of implementaciones()) {
+        expect((await repo.listarDeUsuario(provId, todas)).items.map((n) => n.id)).toEqual([aviso])
+        expect(await repo.contarNoLeidasDeUsuario(provId)).toBe(1)
       }
     })
 

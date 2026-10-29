@@ -22,16 +22,28 @@ export class NotificationRepositoryEnMemoria implements NotificationRepository {
   private readonly miembros = new Map<string, readonly string[]>()
   private readonly eventos = new Map<string, string>()
   private readonly proveedores = new Map<string, readonly string[]>()
+  private readonly publicados = new Set<string>()
 
   /** Los `userId` con membresía ACTIVA del evento, como los leería el adaptador real. */
   registrarMiembros(eventId: string, userIds: readonly string[]): void {
     this.miembros.set(eventId, [...userIds])
   }
 
-  /** `userId` es el proveedor de una contratación BOOKED del evento (ve sus avisos). */
-  registrarProveedorContratado(eventId: string, userId: string): void {
+  /**
+   * `userId` es el proveedor de una contratación BOOKED del evento. Sus avisos
+   * sólo se ven con el evento PUBLICADO (como `status: 'ACTIVE'` en Prisma):
+   * `publicado` (por defecto `true`) fija ese estado del evento.
+   */
+  registrarProveedorContratado(eventId: string, userId: string, publicado = true): void {
+    this.fijarPublicado(eventId, publicado)
     const actuales = this.proveedores.get(eventId) ?? []
     if (!actuales.includes(userId)) this.proveedores.set(eventId, [...actuales, userId])
+  }
+
+  /** Publica (`true`) o devuelve a borrador (`false`) el evento, como `Event.status`. */
+  fijarPublicado(eventId: string, publicado: boolean): void {
+    if (publicado) this.publicados.add(eventId)
+    else this.publicados.delete(eventId)
   }
 
   /** La contratación se cancela: deja de ser visible, como en el adaptador real. */
@@ -125,13 +137,14 @@ export class NotificationRepositoryEnMemoria implements NotificationRepository {
     return Promise.resolve(pendientes.length)
   }
 
-  /** Del usuario y de un evento donde es miembro ACTIVO o proveedor BOOKED (ver el puerto). */
+  /** Del usuario y de un evento donde es miembro ACTIVO o proveedor BOOKED de un evento publicado. */
   private visiblesDe(userId: string): NotificacionEnMemoria[] {
     return this.filas.filter(
       (n) =>
         n.userId === userId &&
         ((this.miembros.get(n.eventId) ?? []).includes(userId) ||
-          (this.proveedores.get(n.eventId) ?? []).includes(userId)),
+          (this.publicados.has(n.eventId) &&
+            (this.proveedores.get(n.eventId) ?? []).includes(userId))),
     )
   }
 

@@ -52,8 +52,10 @@ export interface NotificationRepository {
    * (campana global), con el mismo orden total y el mismo cursor.
    *
    * "Visible" = es del usuario Y, en ese evento, su membresía sigue ACTIVE o es
-   * el proveedor de una contratación BOOKED (`event.vendor.booked`). El
-   * filtro va en la consulta, no en el caso de uso (spec §4.1): quien es
+   * el proveedor de una contratación BOOKED de un evento PUBLICADO
+   * (`event.vendor.booked`; la misma condición que da acceso a un proveedor,
+   * `buscarContratacionReservada`: un aviso de un evento en borrador aparece
+   * cuando el evento se publica). El filtro va en la consulta, no en el caso de uso (spec §4.1): quien es
    * revocado deja de ver las notificaciones de ese evento, y el contador de
    * `contarNoLeidasDeUsuario` y `marcarTodasLeidas` aplican la MISMA regla para
    * que la lista, la insignia y el "marcar todas" nunca discrepen. No es la
@@ -62,8 +64,8 @@ export interface NotificationRepository {
    * descartada: listar todas las filas del usuario y filtrar después, que
    * rompe la paginación (páginas cortas) y deja el contador inflado.
    *
-   * Comportamiento deliberado: la visibilidad es «ACTIVE o proveedor BOOKED HOY». Si un miembro
-   * revocado es reinvitado y acepta, sus notificaciones antiguas de ese evento
+   * Comportamiento deliberado: la visibilidad es «ACTIVE o proveedor BOOKED
+   * (con evento publicado) HOY». Si un miembro revocado es reinvitado y acepta, sus notificaciones antiguas de ese evento
    * (también las no leídas que `marcarTodasLeidas` no tocó mientras eran
    * invisibles) vuelven a verse. Alternativa descartada en esta ronda: filtrar
    * por la fecha de la última activación de la membresía; la regla del spec es
@@ -80,9 +82,10 @@ export interface NotificationRepository {
 
   /**
    * Marca como leídas todas las visibles sin leer y devuelve cuántas marcó.
-   * Sólo las visibles (membresía ACTIVE o contratación BOOKED): las de un
-   * evento donde ya no es miembro ni proveedor contratado quedan intactas. Idempotente: la segunda llamada devuelve 0 y
-   * no mueve ningún `readAt`.
+   * Sólo las visibles (membresía ACTIVE, o contratación BOOKED en un evento
+   * publicado): las de un evento donde ya no es miembro ni proveedor contratado
+   * quedan intactas. Idempotente: la segunda llamada devuelve 0 y no mueve ningún
+   * `readAt`.
    */
   marcarTodasLeidas(userId: string, ahora: Date): Promise<number>
 }

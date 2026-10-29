@@ -33,11 +33,14 @@ const MIEMBRO_ACTIVO = { status: 'ACTIVE' } satisfies Prisma.EventMembershipWher
 /**
  * Las notificaciones de `userId` cuyo evento le sigue dando acceso: membresía
  * ACTIVE, o ser el proveedor de una contratación BOOKED de ese evento (el
- * `VendorProfile.userId` es él). Un usuario que es las dos cosas ve cada fila
+ * `VendorProfile.userId` es él) con el evento PUBLICADO (`status: 'ACTIVE'`),
+ * exactamente como `buscarContratacionReservada` concede acceso a un proveedor:
+ * visibilidad y acceso no pueden discrepar. Un aviso de un evento en borrador
+ * aparece cuando éste se publica. Un usuario que es las dos cosas ve cada fila
  * una sola vez: el `OR` está sobre el evento, no es un join por rol. Una
  * contratación cancelada (o sólo preseleccionada) retira la visibilidad igual
- * que revocar una membresía. Una sola definición para listar, contar y marcar: lista, insignia y "marcar
- * todas" no pueden discrepar.
+ * que revocar una membresía. Una sola definición para listar, contar y marcar:
+ * lista, insignia y "marcar todas" no pueden discrepar.
  *
  * Índice (decisión de la Tarea 1): `EXPLAIN` de `listarDeUsuario` en Postgres 16
  * con 30 000 notificaciones, 51 usuarios y 5 eventos NO hace seq scan sobre
@@ -52,7 +55,10 @@ const visiblesDe = (userId: string): Prisma.NotificationWhereInput => ({
   event: {
     OR: [
       { memberships: { some: { userId, ...MIEMBRO_ACTIVO } } },
-      { vendors: { some: { status: 'BOOKED', vendorProfile: { userId } } } },
+      {
+        status: 'ACTIVE',
+        vendors: { some: { status: 'BOOKED', vendorProfile: { userId } } },
+      },
     ],
   },
 })
@@ -112,6 +118,13 @@ export class PrismaNotificationRepository implements NotificationPort, Notificat
    * Una fila por contratación: se busca por `payload.eventVendorId` y, si
    * existe, se reaviva (`readAt = null`, `createdAt = ahora`); si no, se crea.
    * `clienteDe(this.prisma)` en las dos escrituras, como el resto del puerto.
+   *
+   * NO es atómico: `updateMany` + `create` sin índice único podría duplicar la
+   * fila si dos llamadas para la misma contratación corrieran a la vez. El
+   * llamador debe serializar por contratación: el de `vendors` lo hace con la
+   * escritura condicional del estado en la fila `EventVendor` dentro de la misma
+   * transacción, que deja ver la transición a una sola transacción y retiene el
+   * bloqueo de la fila hasta confirmar.
    */
   async avisarAProveedor(eventId: string, userId: string, eventVendorId: string): Promise<void> {
     const cliente = clienteDe(this.prisma)

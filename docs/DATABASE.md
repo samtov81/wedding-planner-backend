@@ -94,7 +94,11 @@ Enforced by the use cases, not by the database: that a direct conversation has `
 
 Primary key `(conversationId, userId)`, both `onDelete: Cascade`. Holds the two per-participant marks, "delivered up to" (`deliveredUpToAt`/`deliveredUpToId`) and "read up to" (`readUpToAt`/`readUpToId`): the `createdAt` and `id` of a message of that conversation. Messages are ordered by `(createdAt, id)`.
 
-Enforced by the use cases, not by the database: marks only move forward (never backwards), each `...Id` points at a message of that conversation (it is not a foreign key), and `...At` and `...Id` are written together.
+CHECK constraints:
+- `conversation_participants_leido_par` — `readUpToAt` and `readUpToId` are both set or both null.
+- `conversation_participants_recibido_par` — `deliveredUpToAt` and `deliveredUpToId` are both set or both null.
+
+Enforced by the use cases, not by the database: marks only move forward (never backwards) and each `...Id` points at a message of that conversation (it is not a foreign key).
 
 ### `messages`
 

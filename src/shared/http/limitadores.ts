@@ -38,6 +38,7 @@ export const LIMITADOR_RESET_PASSWORD = 'reset-password'
 export const LIMITADOR_VENDOR_CATALOG = 'vendor-catalog'
 export const LIMITADOR_VENDOR_PROFILE = 'vendor-profile'
 export const LIMITADOR_INVITE = 'invite'
+export const LIMITADOR_MESSAGES = 'messages'
 
 type LimitadorDeRuta =
   | typeof LIMITADOR_RSVP
@@ -51,6 +52,7 @@ type LimitadorDeRuta =
   | typeof LIMITADOR_VENDOR_CATALOG
   | typeof LIMITADOR_VENDOR_PROFILE
   | typeof LIMITADOR_INVITE
+  | typeof LIMITADOR_MESSAGES
 
 const reflector = new Reflector()
 const marca = (nombre: LimitadorDeRuta): string => `limitador-de-ruta:${nombre}`
@@ -164,6 +166,15 @@ export function crearLimitadores(limiteGlobalPorMinuto: number): ThrottlerOption
       ttl: 3_600_000,
       limit: 20,
       skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_INVITE),
+    },
+    // Enviar un mensaje: 30/min por IP (decisión de la spec de mensajería). Por IP,
+    // como el resto: el mismo DESIGN-GAP que `vendor-catalog` (el guard cuenta
+    // antes de que exista `req.user`).
+    {
+      name: LIMITADOR_MESSAGES,
+      ttl: 60_000,
+      limit: 30,
+      skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_MESSAGES),
     },
   ]
 }

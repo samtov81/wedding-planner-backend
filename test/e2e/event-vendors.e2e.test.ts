@@ -424,4 +424,93 @@ describe('Vendors por evento e2e', () => {
     const restante = await prisma.eventVendor.findUnique({ where: { id } })
     expect(restante).toBeNull()
   })
+
+  describe('aviso al proveedor contratado en /me/notifications', () => {
+    interface CuerpoMias {
+      items: Array<{
+        type: string
+        payload: unknown
+        readAt: string | null
+        event: { id: string }
+      }>
+      unreadCount: number
+    }
+
+    const auth = (u: { accessToken: string }) => ({ Authorization: `Bearer ${u.accessToken}` })
+
+    /** Los `event.vendor.booked` de `u` en un evento, tal como los ve su campana. */
+    async function contratacionesVistasPor(
+      u: { accessToken: string },
+      eventId: string,
+    ): Promise<CuerpoMias['items']> {
+      const r = await request(url).get('/me/notifications?limit=100').set(auth(u)).expect(200)
+      return (r.body as CuerpoMias).items.filter(
+        (n) => n.type === 'event.vendor.booked' && n.event.id === eventId,
+      )
+    }
+
+    /** Evento publicado de Ana con un planner activo y un proveedor con ficha ya contratable. */
+    async function escenario() {
+      const eventoNuevo = await crearEvento(ana.accessToken, 'Boda con proveedor')
+      const emailPlanner = `planner-${randomUUID()}@test.com`
+      const planner = await registrarYEntrar(emailPlanner, 'Planner')
+      await request(url)
+        .post(`/events/${eventoNuevo}/members`)
+        .set(auth(ana))
+        .send({ email: emailPlanner, role: 'PLANNER' })
+        .expect(201)
+      await request(url)
+        .post(`/events/${eventoNuevo}/invitation/accept`)
+        .set(auth(planner))
+        .expect(200)
+      const proveedor = await registrarYEntrar(`prov-${randomUUID()}@test.com`, 'Proveedor')
+      const perfil = await prisma.vendorProfile.create({
+        data: {
+          userId: proveedor.id,
+          businessName: 'Lumière',
+          categoryId: await categoriaId(prisma, 'photography'),
+          status: 'PUBLISHED',
+        },
+      })
+      const creado = await request(url)
+        .post(`/events/${eventoNuevo}/vendors`)
+        .set(auth(ana))
+        .send({ vendorProfileId: perfil.id, category: 'photography' })
+        .expect(201)
+      const eventVendorId = (creado.body as CuerpoEventVendor).id
+      const patch = async (status: string) =>
+        await request(url)
+          .patch(`/events/${eventoNuevo}/vendors/${eventVendorId}`)
+          .set(auth(ana))
+          .send({ status })
+          .expect(200)
+      return { eventoNuevo, planner, proveedor, eventVendorId, patch }
+    }
+
+    it('el dueño contrata y el proveedor ve "event.vendor.booked" en /me/notifications; la pareja y el planner no', async () => {
+      const { eventoNuevo, planner, proveedor, eventVendorId, patch } = await escenario()
+
+      await patch('BOOKED')
+
+      expect(await contratacionesVistasPor(proveedor, eventoNuevo)).toEqual([
+        expect.objectContaining({ payload: { eventVendorId }, readAt: null }),
+      ])
+      // La pareja (el dueño) y el planner ya lo saben: no reciben el aviso.
+      expect(await contratacionesVistasPor(ana, eventoNuevo)).toEqual([])
+      expect(await contratacionesVistasPor(planner, eventoNuevo)).toEqual([])
+    })
+
+    it('cancelar y volver a contratar deja un solo aviso, sin leer', async () => {
+      const { eventoNuevo, proveedor, patch } = await escenario()
+      await patch('BOOKED')
+      await request(url).post('/me/notifications/read-all').set(auth(proveedor)).expect(204)
+      await patch('CANCELLED')
+
+      await patch('BOOKED')
+
+      const avisos = await contratacionesVistasPor(proveedor, eventoNuevo)
+      expect(avisos).toHaveLength(1)
+      expect(avisos[0]?.readAt).toBeNull()
+    })
+  })
 })

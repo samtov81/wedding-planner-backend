@@ -5,6 +5,7 @@ import type {
   DatosCrearEventVendor,
   EventVendorRepository,
   EventVendorVista,
+  ResultadoActualizacion,
 } from '../application/event-vendor.repository'
 import { aCategoriaVista, type CategoriaVista } from '../domain/categoria'
 import type { VendorRef } from '../domain/vendor-ref'
@@ -13,6 +14,8 @@ export interface PerfilPublicadoEnMemoria {
   id: string
   status: 'DRAFT' | 'PUBLISHED' | 'SUSPENDED'
   businessName?: string
+  /** El `VendorProfile.userId`: a quien se avisa de una contratación. */
+  userId?: string
 }
 
 interface FilaEnMemoria {
@@ -88,9 +91,10 @@ export class EventVendorRepositoryEnMemoria implements EventVendorRepository {
     eventVendorId: string,
     cambios: CambiosEventVendor,
     actorUserId: string,
-  ): Promise<EventVendorVista> {
+  ): Promise<ResultadoActualizacion> {
     const fila = this.filas.find((f) => f.id === eventVendorId && f.eventId === eventId)
     if (fila === undefined) throw new Error('fila inexistente en el doble en memoria')
+    const transicion = cambios.status === 'BOOKED' && fila.status !== 'BOOKED'
     if (cambios.category !== undefined) fila.category = aCategoriaVista(cambios.category)
     if (cambios.specialty !== undefined) fila.specialty = cambios.specialty
     if (cambios.assignedBudget !== undefined) fila.assignedBudget = cambios.assignedBudget
@@ -102,7 +106,16 @@ export class EventVendorRepositoryEnMemoria implements EventVendorRepository {
       action: 'event_vendor.updated',
       target: `event_vendor:${eventVendorId}`,
     })
-    return Promise.resolve(this.aVista(fila))
+    const perfil =
+      fila.vendorRef.kind === 'linked'
+        ? this.perfiles.find(
+            (p) => p.id === (fila.vendorRef as { vendorProfileId: string }).vendorProfileId,
+          )
+        : undefined
+    return Promise.resolve({
+      vista: this.aVista(fila),
+      contratado: transicion ? { proveedorUserId: perfil?.userId ?? null } : null,
+    })
   }
 
   eliminar(eventId: string, eventVendorId: string, actorUserId: string): Promise<void> {

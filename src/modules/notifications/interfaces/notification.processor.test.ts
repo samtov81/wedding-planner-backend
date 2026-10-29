@@ -92,6 +92,31 @@ describe('NotificationProcessor', () => {
     })
   })
 
+  describe('event.vendor.booked', () => {
+    const userId = randomUUID()
+
+    it('event.vendor.booked avisa sólo al proveedor en su sala personal', async () => {
+      await procesador.process(job('event.vendor.booked', { eventId, userId }))
+
+      // Nada a `event:<id>` (la pareja y los planners ya lo saben) ni a los
+      // miembros: sólo `notification.created` al proveedor.
+      expect(realtime.emitidas).toEqual([
+        {
+          destino: { userId },
+          tipo: 'notification.created',
+          payload: { eventId, type: 'event.vendor.booked' },
+        },
+      ])
+    })
+
+    it('un job de proveedor con payload roto es irrecuperable', async () => {
+      await expect(
+        procesador.process(job('event.vendor.booked', { eventId, userId: 'no-es-guid' })),
+      ).rejects.toBeInstanceOf(UnrecoverableError)
+      expect(realtime.emitidas).toEqual([])
+    })
+  })
+
   describe('guest.rsvp.updated', () => {
     const payload = { guestId, guestName: 'Ana', rsvp: 'CONFIRMED' }
 

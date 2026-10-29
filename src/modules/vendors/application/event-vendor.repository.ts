@@ -40,6 +40,22 @@ export interface CambiosEventVendor {
   status?: EventVendorStatus | undefined
 }
 
+/**
+ * Resultado de `actualizar`: la vista de siempre y, SÓLO si esta escritura fue
+ * la que pasó la contratación a `BOOKED`, quién es su proveedor.
+ *
+ * `contratado` lo decide una escritura CONDICIONADA (`status <> 'BOOKED'`), no
+ * una lectura previa: dos PATCH concurrentes a `BOOKED` leerían ambos
+ * `SHORTLISTED` y avisarían dos veces; la escritura condicionada deja que sólo
+ * uno afecte a la fila. `proveedorUserId` es `null` en una contratación
+ * externa (sin ficha): hay transición, pero nadie a quien avisar.
+ */
+export interface ResultadoActualizacion {
+  vista: EventVendorVista
+  /** Sólo si ESTA escritura pasó el estado a BOOKED (escritura condicionada). */
+  contratado: { proveedorUserId: string | null } | null
+}
+
 export interface EventVendorRepository {
   /**
    * Ficha del marketplace `PUBLISHED`. Cualquier otro estado (`DRAFT`,
@@ -71,7 +87,7 @@ export interface EventVendorRepository {
     eventVendorId: string,
     cambios: CambiosEventVendor,
     actorUserId: string,
-  ): Promise<EventVendorVista>
+  ): Promise<ResultadoActualizacion>
 
   /**
    * Escribe el `AuditLog` (`event_vendor.removed`) en la MISMA transacción

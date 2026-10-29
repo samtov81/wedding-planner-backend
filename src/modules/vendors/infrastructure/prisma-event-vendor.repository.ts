@@ -2,19 +2,21 @@ import { Injectable } from '@nestjs/common'
 import type { EventVendor as EventVendorFila } from '@prisma/client'
 
 import { PrismaService } from '@/modules/database/prisma.service'
+import { enTransaccion } from '@/modules/database/transaccion'
 
 import type {
   CambiosEventVendor,
   DatosCrearEventVendor,
   EventVendorRepository,
   EventVendorVista,
+  ResultadoActualizacion,
 } from '../application/event-vendor.repository'
 import { EventVendorNoEncontradoError } from '../domain/vendor-errors'
 import type { VendorRef } from '../domain/vendor-ref'
 
 /** Lo que `aVista` necesita de cada fila. */
 const INCLUIR = {
-  vendorProfile: { select: { businessName: true } },
+  vendorProfile: { select: { businessName: true, userId: true } },
   category: { select: { slug: true, name: true } },
 } as const
 
@@ -89,34 +91,46 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
     return fila === null ? null : this.aVista(fila)
   }
 
-  // `this.prisma.$transaction`, no `clienteDe(this.prisma)`: este módulo no
-  // está enganchado a `UnidadDeTrabajo` en ningún caso de uso (ni el propio ni
-  // de otro módulo importa `EventVendorRepository`), así que `actualizar` y
-  // `eliminar` nunca corren dentro de una transacción ajena que anidar. Es la
-  // misma forma que ya usa `crear` para su `AuditLog`.
+  // `enTransaccion`: `UpdateEventVendorUseCase` abre una unidad de trabajo para
+  // que el cambio de estado y el aviso al proveedor se confirmen juntos, así
+  // que `actualizar` se UNE a ella; sin unidad en curso abre la suya.
+  //
+  // El paso a `BOOKED` es una escritura CONDICIONADA (`status <> 'BOOKED'`) y
+  // su `count` decide si hubo transición (ver `ResultadoActualizacion`).
+  // Alternativa descartada: leer el estado antes y comparar; dos PATCH
+  // concurrentes verían ambos `SHORTLISTED` y avisarían dos veces.
   async actualizar(
     eventId: string,
     eventVendorId: string,
     cambios: CambiosEventVendor,
     actorUserId: string,
-  ): Promise<EventVendorVista> {
-    return await this.prisma.$transaction(async (tx) => {
+  ): Promise<ResultadoActualizacion> {
+    return await enTransaccion(this.prisma, async (tx) => {
       // `updateMany` + relectura, no `update`: `update` exige una clave única
       // (`id`), y con sólo `id` no se comprueba que la fila sea de ESTE
       // evento. El caso de uso ya comprobó existencia con `buscarPorId`, pero
       // repetir el filtro aquí evita que una futura llamada directa al
       // repositorio la salte.
+      const { status, ...otros } = cambios
       await tx.eventVendor.updateMany({
         where: { id: eventVendorId, eventId },
         data: {
-          ...(cambios.category !== undefined ? { categoryId: cambios.category.id } : {}),
-          ...(cambios.specialty !== undefined ? { specialty: cambios.specialty } : {}),
-          ...(cambios.assignedBudget !== undefined
-            ? { assignedBudget: cambios.assignedBudget }
-            : {}),
-          ...(cambios.status !== undefined ? { status: cambios.status } : {}),
+          ...(otros.category !== undefined ? { categoryId: otros.category.id } : {}),
+          ...(otros.specialty !== undefined ? { specialty: otros.specialty } : {}),
+          ...(otros.assignedBudget !== undefined ? { assignedBudget: otros.assignedBudget } : {}),
+          // `BOOKED` va aparte, condicionado; cualquier otro estado, sin condición.
+          ...(status !== undefined && status !== 'BOOKED' ? { status } : {}),
         },
       })
+      const transicion =
+        status === 'BOOKED'
+          ? (
+              await tx.eventVendor.updateMany({
+                where: { id: eventVendorId, eventId, status: { not: 'BOOKED' } },
+                data: { status: 'BOOKED' },
+              })
+            ).count === 1
+          : false
       // `findFirst`, no `findFirstOrThrow`: si la fila desapareció ENTRE el
       // `updateMany` y esta relectura (borrado concurrente), lanzar un P2025
       // crudo sería un 500. El caso de uso ya comprobó que existía antes de
@@ -141,7 +155,10 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
         },
       })
 
-      return this.aVista(fila)
+      return {
+        vista: this.aVista(fila),
+        contratado: transicion ? { proveedorUserId: fila.vendorProfile?.userId ?? null } : null,
+      }
     })
   }
 
@@ -168,7 +185,7 @@ export class PrismaEventVendorRepository implements EventVendorRepository {
   /** La fila de Prisma no sale de infrastructure/: reconstruye el `VendorRef`. */
   private aVista(
     fila: EventVendorFila & {
-      vendorProfile: { businessName: string } | null
+      vendorProfile: { businessName: string; userId: string } | null
       category: { slug: string; name: string }
     },
   ): EventVendorVista {

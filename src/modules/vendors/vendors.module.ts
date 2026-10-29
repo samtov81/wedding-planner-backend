@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common'
 import { AuthModule } from '@/modules/auth/auth.module'
 import { PrismaService } from '@/modules/database/prisma.service'
 import { EventsModule } from '@/modules/events/events.module'
+import { NotificationWriterModule } from '@/modules/notifications/notification-writer.module'
 import { StorageModule } from '@/modules/storage/storage.module'
 import { UsersModule } from '@/modules/users/users.module'
 
@@ -53,7 +54,7 @@ import { VendorCategoriesController } from './interfaces/vendor-categories.contr
  * `StorageModule` aporta las fotos del portfolio (subida y URLs de lectura).
  */
 @Module({
-  imports: [AuthModule, UsersModule, EventsModule, StorageModule],
+  imports: [AuthModule, UsersModule, EventsModule, StorageModule, NotificationWriterModule],
   controllers: [
     EventVendorsController,
     VendorCatalogController,

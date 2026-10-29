@@ -19,9 +19,11 @@ import {
   type JobAvisoRsvp,
   TIPO_RSVP_ACTUALIZADO,
 } from '@/modules/guests/application/submit-rsvp.use-case'
+import { type JobProveedorContratado } from '@/modules/vendors/application/aviso-proveedor-contratado'
 import type { QueueName } from '@/modules/queue/application/queue.port'
 
 import { BroadcastNoticeUseCase } from '../application/broadcast-notice.use-case'
+import { TIPO_PROVEEDOR_CONTRATADO } from '../application/notification.port'
 import { NOTIFICACION_CREADA } from '../domain/notification'
 
 /**
@@ -66,6 +68,11 @@ const respuestaDeMiembroSchema = z.object({
   ownerId: z.guid(),
 }) satisfies z.ZodType<JobRespuestaDeMiembro>
 
+const proveedorContratadoSchema = z.object({
+  eventId: z.guid(),
+  userId: z.guid(),
+}) satisfies z.ZodType<JobProveedorContratado>
+
 function leer<T>(esquema: z.ZodType<T>, job: Job): T {
   const leido = esquema.safeParse(job.data)
   // Un payload roto no lo arregla ningún reintento: a fallidos, sin cinco
@@ -90,7 +97,8 @@ function leer<T>(esquema: z.ZodType<T>, job: Job): T {
  * evento; el rebote y el spam además notifican a los miembros), y
  * `invitacion-de-miembro` (a la sala personal del invitado a un evento, que
  * aún no tiene acceso a la sala del evento) y `event.member.responded` (a la
- * sala personal del dueño, que es el único que puede abrir su vista).
+ * sala personal del dueño, que es el único que puede abrir su vista) y
+ * `event.vendor.booked` (a la sala personal del proveedor contratado).
  *
  * Los errores de emisión SALEN (ver `BroadcastNoticeUseCase`): así BullMQ
  * reintenta con la política común (5 intentos, backoff exponencial).
@@ -139,6 +147,17 @@ export class NotificationProcessor extends WorkerHost {
         await this.avisos.avisarAUsuario(ownerId, NOTIFICACION_CREADA, {
           eventId,
           type: TIPO_RESPUESTA_DE_MIEMBRO,
+        })
+        return
+      }
+      case TIPO_PROVEEDOR_CONTRATADO: {
+        const { eventId, userId } = leer(proveedorContratadoSchema, job)
+        // SÓLO al proveedor, en su sala personal: es el único destinatario y
+        // la sala del evento llegaría a la pareja y los planners. La
+        // `Notification` ya está confirmada (`aviso-proveedor-contratado.ts`).
+        await this.avisos.avisarAUsuario(userId, NOTIFICACION_CREADA, {
+          eventId,
+          type: TIPO_PROVEEDOR_CONTRATADO,
         })
         return
       }

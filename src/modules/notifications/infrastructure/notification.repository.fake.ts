@@ -21,10 +21,25 @@ export class NotificationRepositoryEnMemoria implements NotificationRepository {
   readonly filas: NotificacionEnMemoria[] = []
   private readonly miembros = new Map<string, readonly string[]>()
   private readonly eventos = new Map<string, string>()
+  private readonly proveedores = new Map<string, readonly string[]>()
 
   /** Los `userId` con membresía ACTIVA del evento, como los leería el adaptador real. */
   registrarMiembros(eventId: string, userIds: readonly string[]): void {
     this.miembros.set(eventId, [...userIds])
+  }
+
+  /** `userId` es el proveedor de una contratación BOOKED del evento (ve sus avisos). */
+  registrarProveedorContratado(eventId: string, userId: string): void {
+    const actuales = this.proveedores.get(eventId) ?? []
+    if (!actuales.includes(userId)) this.proveedores.set(eventId, [...actuales, userId])
+  }
+
+  /** La contratación se cancela: deja de ser visible, como en el adaptador real. */
+  quitarProveedorContratado(eventId: string, userId: string): void {
+    this.proveedores.set(
+      eventId,
+      (this.proveedores.get(eventId) ?? []).filter((id) => id !== userId),
+    )
   }
 
   /** El nombre con el que `listarDeUsuario` etiqueta las notificaciones de ese evento. */
@@ -110,10 +125,13 @@ export class NotificationRepositoryEnMemoria implements NotificationRepository {
     return Promise.resolve(pendientes.length)
   }
 
-  /** Del usuario y de un evento donde sigue siendo miembro ACTIVO (ver el puerto). */
+  /** Del usuario y de un evento donde es miembro ACTIVO o proveedor BOOKED (ver el puerto). */
   private visiblesDe(userId: string): NotificacionEnMemoria[] {
     return this.filas.filter(
-      (n) => n.userId === userId && (this.miembros.get(n.eventId) ?? []).includes(userId),
+      (n) =>
+        n.userId === userId &&
+        ((this.miembros.get(n.eventId) ?? []).includes(userId) ||
+          (this.proveedores.get(n.eventId) ?? []).includes(userId)),
     )
   }
 

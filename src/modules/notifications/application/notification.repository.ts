@@ -51,7 +51,8 @@ export interface NotificationRepository {
    * Lo mismo que `listar` pero a nivel de usuario: mezcla TODOS sus eventos
    * (campana global), con el mismo orden total y el mismo cursor.
    *
-   * "Visible" = es del usuario Y su membresía en ese evento sigue ACTIVE. El
+   * "Visible" = es del usuario Y, en ese evento, su membresía sigue ACTIVE o es
+   * el proveedor de una contratación BOOKED (`event.vendor.booked`). El
    * filtro va en la consulta, no en el caso de uso (spec §4.1): quien es
    * revocado deja de ver las notificaciones de ese evento, y el contador de
    * `contarNoLeidasDeUsuario` y `marcarTodasLeidas` aplican la MISMA regla para
@@ -61,7 +62,7 @@ export interface NotificationRepository {
    * descartada: listar todas las filas del usuario y filtrar después, que
    * rompe la paginación (páginas cortas) y deja el contador inflado.
    *
-   * Comportamiento deliberado: la visibilidad es «ACTIVE HOY». Si un miembro
+   * Comportamiento deliberado: la visibilidad es «ACTIVE o proveedor BOOKED HOY». Si un miembro
    * revocado es reinvitado y acepta, sus notificaciones antiguas de ese evento
    * (también las no leídas que `marcarTodasLeidas` no tocó mientras eran
    * invisibles) vuelven a verse. Alternativa descartada en esta ronda: filtrar
@@ -79,8 +80,8 @@ export interface NotificationRepository {
 
   /**
    * Marca como leídas todas las visibles sin leer y devuelve cuántas marcó.
-   * Sólo las visibles (evento con membresía ACTIVE): las de un evento donde ya
-   * no es miembro quedan intactas. Idempotente: la segunda llamada devuelve 0 y
+   * Sólo las visibles (membresía ACTIVE o contratación BOOKED): las de un
+   * evento donde ya no es miembro ni proveedor contratado quedan intactas. Idempotente: la segunda llamada devuelve 0 y
    * no mueve ningún `readAt`.
    */
   marcarTodasLeidas(userId: string, ahora: Date): Promise<number>

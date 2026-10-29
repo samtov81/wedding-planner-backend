@@ -19,10 +19,39 @@
  *    sería un aviso que lleva a un 403. Mismo contrato de transacción que
  *    `crearParaMiembros`.
  *  - `payload` se guarda como JSON: sólo valores serializables.
+ *  - `avisarAProveedor` crea (o reaviva) el `event.vendor.booked` de UN
+ *    proveedor contratado. Ver su docblock: es el único aviso cuyo destinatario
+ *    no es miembro del evento.
  */
 export interface NotificationPort {
   crearParaMiembros(eventId: string, tipo: string, payload: unknown): Promise<void>
   crearParaDueno(eventId: string, tipo: string, payload: unknown): Promise<void>
+
+  /**
+   * Crea `event.vendor.booked` para `userId` (el usuario de la ficha del
+   * proveedor) o reaviva la de ese `eventVendorId`.
+   *
+   * Correspondencia del aviso: `event.vendor.booked` → permiso `VENDOR` →
+   * `/events/:id/dashboard` → sólo el proveedor contratado (el vendor no es
+   * miembro: ver `visiblesDe` en el adaptador).
+   *
+   * Reaviva en vez de duplicar (spec §3): hay UNA fila por contratación. Si la
+   * pareja cancela y vuelve a contratar al mismo proveedor, la fila existente
+   * vuelve a `readAt = null` y `createdAt = ahora`, así que sube arriba del
+   * listado y cuenta como no leída. Alternativa descartada: una fila por cada
+   * contratación, que llenaría la campana de avisos repetidos del mismo
+   * proveedor. Mismo contrato de transacción que `crearParaMiembros`
+   * (`clienteDe(prisma)`).
+   */
+  avisarAProveedor(eventId: string, userId: string, eventVendorId: string): Promise<void>
 }
+
+/**
+ * Tipo del aviso al proveedor contratado. Vive junto al puerto y no en
+ * `notifications/domain` porque lo importa el módulo `vendors` (que llama a
+ * `avisarAProveedor`), y un módulo consume el puerto público de otro, no su
+ * `domain/`. Payload: `{ eventVendorId: string }`.
+ */
+export const TIPO_PROVEEDOR_CONTRATADO = 'event.vendor.booked'
 
 export const NOTIFICATION_PORT = Symbol('NOTIFICATION_PORT')

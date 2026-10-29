@@ -5,7 +5,7 @@ import { PrismaService } from '@/modules/database/prisma.service'
 import { clienteDe } from '@/modules/database/transaccion'
 import { encodeCursor, type CursorPage } from '@/shared/domain'
 
-import type { NotificationPort } from '../application/notification.port'
+import { TIPO_PROVEEDOR_CONTRATADO, type NotificationPort } from '../application/notification.port'
 import type {
   NotificationRepository,
   OpcionesListado,
@@ -31,8 +31,12 @@ const ORDEN_ESTABLE = [
 const MIEMBRO_ACTIVO = { status: 'ACTIVE' } satisfies Prisma.EventMembershipWhereInput
 
 /**
- * Las notificaciones de `userId` cuyo evento le sigue dando membresía ACTIVE.
- * Una sola definición para listar, contar y marcar: lista, insignia y "marcar
+ * Las notificaciones de `userId` cuyo evento le sigue dando acceso: membresía
+ * ACTIVE, o ser el proveedor de una contratación BOOKED de ese evento (el
+ * `VendorProfile.userId` es él). Un usuario que es las dos cosas ve cada fila
+ * una sola vez: el `OR` está sobre el evento, no es un join por rol. Una
+ * contratación cancelada (o sólo preseleccionada) retira la visibilidad igual
+ * que revocar una membresía. Una sola definición para listar, contar y marcar: lista, insignia y "marcar
  * todas" no pueden discrepar.
  *
  * Índice (decisión de la Tarea 1): `EXPLAIN` de `listarDeUsuario` en Postgres 16
@@ -45,7 +49,12 @@ const MIEMBRO_ACTIVO = { status: 'ACTIVE' } satisfies Prisma.EventMembershipWher
  */
 const visiblesDe = (userId: string): Prisma.NotificationWhereInput => ({
   userId,
-  event: { memberships: { some: { userId, ...MIEMBRO_ACTIVO } } },
+  event: {
+    OR: [
+      { memberships: { some: { userId, ...MIEMBRO_ACTIVO } } },
+      { vendors: { some: { status: 'BOOKED', vendorProfile: { userId } } } },
+    ],
+  },
 })
 
 /**
@@ -96,6 +105,29 @@ export class PrismaNotificationRepository implements NotificationPort, Notificat
 
     await cliente.notification.create({
       data: { eventId, userId: evento.ownerId, type: tipo, payload: json },
+    })
+  }
+
+  /**
+   * Una fila por contratación: se busca por `payload.eventVendorId` y, si
+   * existe, se reaviva (`readAt = null`, `createdAt = ahora`); si no, se crea.
+   * `clienteDe(this.prisma)` en las dos escrituras, como el resto del puerto.
+   */
+  async avisarAProveedor(eventId: string, userId: string, eventVendorId: string): Promise<void> {
+    const cliente = clienteDe(this.prisma)
+    const { count } = await cliente.notification.updateMany({
+      where: {
+        eventId,
+        userId,
+        type: TIPO_PROVEEDOR_CONTRATADO,
+        payload: { path: ['eventVendorId'], equals: eventVendorId },
+      },
+      data: { readAt: null, createdAt: new Date() },
+    })
+    if (count > 0) return
+
+    await cliente.notification.create({
+      data: { eventId, userId, type: TIPO_PROVEEDOR_CONTRATADO, payload: { eventVendorId } },
     })
   }
 

@@ -3,7 +3,9 @@ import { PrismaClient } from '@prisma/client'
 import type { PrismaService } from '@/modules/database/prisma.service'
 import { decodeCursor } from '@/shared/domain'
 
+import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
+import { TIPO_PROVEEDOR_CONTRATADO } from '../application/notification.port'
 import type { NotificationRepository } from '../application/notification.repository'
 import { NotificationPortEnMemoria } from './notification.port.fake'
 import { NotificationRepositoryEnMemoria } from './notification.repository.fake'
@@ -346,6 +348,145 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
           [otroId, eventId],
         ].sort(),
       )
+    })
+  })
+
+  describe('proveedor contratado', () => {
+    let provId: string
+    let perfilId: string
+    let categoria: string
+    const todas = { desde: null, limite: 10, soloNoLeidas: false }
+
+    beforeAll(async () => {
+      const prov = await prisma.user.create({
+        data: { email: 'prov@paridad.test', passwordHash: 'x', fullName: 'Prov' },
+      })
+      provId = prov.id
+      categoria = await categoriaId(prisma)
+      const perfil = await prisma.vendorProfile.create({
+        data: { userId: provId, businessName: 'Foto', categoryId: categoria },
+      })
+      perfilId = perfil.id
+    })
+
+    beforeEach(async () => {
+      await prisma.eventVendor.deleteMany()
+      doble.registrarEvento(eventId, 'Boda')
+      doble.registrarEvento(otroEventId, 'Otra')
+    })
+
+    /** Contrata (o no) al proveedor en el evento, en Prisma y en el doble. */
+    async function contratar(
+      evento: string,
+      status: 'BOOKED' | 'SHORTLISTED' | 'CANCELLED' = 'BOOKED',
+    ): Promise<string> {
+      const ev = await prisma.eventVendor.create({
+        data: { eventId: evento, vendorProfileId: perfilId, categoryId: categoria, status },
+      })
+      if (status === 'BOOKED') doble.registrarProveedorContratado(evento, provId)
+      return ev.id
+    }
+
+    async function cancelar(id: string, evento: string): Promise<void> {
+      await prisma.eventVendor.update({ where: { id }, data: { status: 'CANCELLED' } })
+      doble.quitarProveedorContratado(evento, provId)
+    }
+
+    it('un proveedor BOOKED ve y cuenta su aviso; si lo cancelan, ni lo ve ni lo cuenta', async () => {
+      const ev = await contratar(eventId)
+      const aviso = await sembrarEnAmbos({ userId: provId, minuto: 1 })
+
+      for (const [, repo] of implementaciones()) {
+        const pagina = await repo.listarDeUsuario(provId, todas)
+        expect(pagina.items.map((n) => n.id)).toEqual([aviso])
+        expect(await repo.contarNoLeidasDeUsuario(provId)).toBe(1)
+      }
+
+      await cancelar(ev, eventId)
+
+      for (const [, repo] of implementaciones()) {
+        expect((await repo.listarDeUsuario(provId, todas)).items).toEqual([])
+        expect(await repo.contarNoLeidasDeUsuario(provId)).toBe(0)
+      }
+    })
+
+    it('read-all de un proveedor no toca avisos de contrataciones canceladas', async () => {
+      await contratar(eventId)
+      const cancelada = await contratar(otroEventId)
+      await cancelar(cancelada, otroEventId)
+      await sembrarEnAmbos({ userId: provId, minuto: 1 })
+      await sembrarEnAmbos({ userId: provId, eventId: otroEventId, minuto: 2 })
+
+      for (const [, repo] of implementaciones()) {
+        expect(await repo.marcarTodasLeidas(provId, new Date('2026-04-01T00:00:00.000Z'))).toBe(1)
+      }
+
+      const sinLeer = await prisma.notification.findMany({ where: { readAt: null } })
+      expect(sinLeer.map((f) => f.eventId)).toEqual([otroEventId])
+      expect(doble.filas.filter((f) => f.readAt === null).map((f) => f.eventId)).toEqual([
+        otroEventId,
+      ])
+    })
+
+    it('miembro y proveedor a la vez: sus avisos de miembro siguen igual y no se duplican', async () => {
+      // `otroId` es PLANNER ACTIVE del evento y además proveedor BOOKED en él.
+      const perfilDeOtro = await prisma.vendorProfile.create({
+        data: { userId: otroId, businessName: 'Doble rol', categoryId: categoria },
+      })
+      await prisma.eventVendor.create({
+        data: {
+          eventId,
+          vendorProfileId: perfilDeOtro.id,
+          categoryId: categoria,
+          status: 'BOOKED',
+        },
+      })
+      doble.registrarProveedorContratado(eventId, otroId)
+      const aviso = await sembrarEnAmbos({ userId: otroId, minuto: 1 })
+
+      for (const [, repo] of implementaciones()) {
+        const pagina = await repo.listarDeUsuario(otroId, todas)
+        expect(pagina.items.map((n) => n.id)).toEqual([aviso])
+        expect(await repo.contarNoLeidasDeUsuario(otroId)).toBe(1)
+      }
+    })
+
+    it('avisarAProveedor crea una fila y, llamado otra vez para la misma contratación, la reaviva sin crear otra', async () => {
+      const ev = await contratar(eventId)
+      const puerto = new NotificationPortEnMemoria()
+
+      await real.avisarAProveedor(eventId, provId, ev)
+      await puerto.avisarAProveedor(eventId, provId, ev)
+
+      const [primera] = await prisma.notification.findMany({ where: { userId: provId } })
+      expect(primera).toMatchObject({
+        eventId,
+        userId: provId,
+        type: TIPO_PROVEEDOR_CONTRATADO,
+        payload: { eventVendorId: ev },
+        readAt: null,
+      })
+      expect(puerto.creadas).toEqual([
+        {
+          eventId,
+          userId: provId,
+          tipo: TIPO_PROVEEDOR_CONTRATADO,
+          payload: { eventVendorId: ev },
+        },
+      ])
+
+      // La marca como leída y la contratación se repite: reaviva la MISMA fila.
+      await real.marcarLeida(eventId, provId, primera?.id ?? '', new Date())
+      await new Promise((r) => setTimeout(r, 5))
+      await real.avisarAProveedor(eventId, provId, ev)
+      await puerto.avisarAProveedor(eventId, provId, ev)
+
+      const filas = await prisma.notification.findMany({ where: { userId: provId } })
+      expect(filas).toHaveLength(1)
+      expect(filas[0]?.id).toBe(primera?.id)
+      expect(filas[0]?.readAt).toBeNull()
+      expect(filas[0]?.createdAt.getTime()).toBeGreaterThan(primera?.createdAt.getTime() ?? 0)
+      expect(puerto.creadas).toHaveLength(1)
     })
   })
 

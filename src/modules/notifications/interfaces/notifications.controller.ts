@@ -80,8 +80,12 @@ export class NotificationsController {
     }
   }
 
-  /** Idempotente: marcarla dos veces es 204 las dos y no cambia cuándo se leyó. */
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  /**
+   * Idempotente: marcarla dos veces es 204 las dos y no cambia cuándo se leyó.
+   * `VENDOR` también: el proveedor contratado marca su `event.vendor.booked`;
+   * el filtro por `userId` del repositorio le impide tocar avisos ajenos.
+   */
+  @RequireEventAccess('COUPLE', 'PLANNER', 'VENDOR')
   @Post(':notificationId/read')
   @HttpCode(204)
   async marcarLeida(

@@ -23,6 +23,10 @@ import {
  * en tiempo real (`avisos-mensajeria.ts`): guardar y avisar son pasos separados
  * y un fallo de Redis se registra pero no deshace ni falla un mensaje ya
  * guardado (la respuesta REST no cambia). El worker decide a quién emitir.
+ *
+ * Nota: `createdAt` sale del reloj del servidor de la API. Con pods desfasados,
+ * un mensaje podría ordenarse antes de una marca ya existente (raro). El arreglo
+ * sería una marca de tiempo del lado de la base, bajo un bloqueo de fila.
  */
 @Injectable()
 export class SendMessageUseCase {

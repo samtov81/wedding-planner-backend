@@ -46,27 +46,28 @@ describe('MessagingProcessor', () => {
     })
   })
 
-  it('message.created llega al otro participante y no al emisor', async () => {
+  it('message.created llega al otro participante y también al emisor (otras sesiones)', async () => {
     const m = await repo.agregarMensaje(conversationId, PAREJA, 'hola', new Date())
 
     await procesador.process(job(EVENTO_MENSAJE_CREADO, { conversationId, messageId: m.id }))
 
-    expect(realtime.emitidas).toEqual([
-      {
-        destino: { userId: PROV },
-        tipo: 'message.created',
-        payload: {
-          conversationId,
-          message: {
-            id: m.id,
-            conversationId,
-            senderId: PAREJA,
-            body: 'hola',
-            createdAt: m.createdAt.toISOString(),
-          },
-        },
+    const payload = {
+      conversationId,
+      message: {
+        id: m.id,
+        conversationId,
+        senderId: PAREJA,
+        body: 'hola',
+        createdAt: m.createdAt.toISOString(),
       },
-    ])
+    }
+    expect(realtime.emitidas).toHaveLength(2)
+    expect(realtime.emitidas).toEqual(
+      expect.arrayContaining([
+        { destino: { userId: PROV }, tipo: 'message.created', payload },
+        { destino: { userId: PAREJA }, tipo: 'message.created', payload },
+      ]),
+    )
   })
 
   it('no se emite a un proveedor que ya no puede ver la conversación', async () => {
@@ -75,7 +76,8 @@ describe('MessagingProcessor', () => {
 
     await procesador.process(job(EVENTO_MENSAJE_CREADO, { conversationId, messageId: m.id }))
 
-    expect(realtime.emitidas).toEqual([])
+    // Sólo el emisor (que sigue viéndola); el proveedor sin acceso no recibe nada.
+    expect(realtime.emitidas.map((e) => e.destino)).toEqual([{ userId: PAREJA }])
   })
 
   it('message.receipt llega al otro participante con las marcas actuales', async () => {

@@ -21,6 +21,9 @@ import {
  * no existe: no confirma quién está en el evento). `creada` deja que REST
  * conteste 201 o 200; la carrera de dos aperturas simultáneas la resuelve el
  * repositorio, no este caso de uso.
+ *
+ * DESIGN-GAP: la spec §6 decía 403 para quien no participa o es de otro evento;
+ * aquí se contesta 404 para no revelar quién existe ni a qué evento pertenece.
  */
 @Injectable()
 export class OpenConversationUseCase {

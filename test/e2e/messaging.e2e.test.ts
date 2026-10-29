@@ -474,8 +474,8 @@ describe('mensajería REST e2e', () => {
         deliveredUpTo: null,
         readUpTo: marca,
       })
-      // El emisor no recibe su propio message.created.
-      expect(recibidosPareja).not.toContain('message.created')
+      // El emisor también recibe su message.created (sus otras sesiones).
+      expect(recibidosPareja).toContain('message.created')
     })
   })
 

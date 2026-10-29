@@ -191,7 +191,7 @@ describe('casos de uso de mensajería', () => {
         cola: 'messaging',
         datos: { conversationId: c.id, userId: PROV_A },
       })
-      expect(recibo?.jobId.startsWith(`receipt-${c.id}-${PROV_A}-`)).toBe(true)
+      expect(recibo?.jobId).toBe(`receipt-${c.id}-${PROV_A}-none-${mensaje.id}`)
       expect(recibo?.jobId).not.toContain(':')
 
       cola.enqueue = () => Promise.reject(new Error('redis caído'))
@@ -202,6 +202,24 @@ describe('casos de uso de mensajería', () => {
         expect.stringMatching(/^Recibo guardado pero su aviso no se pudo encolar .*redis caído$/),
       )
       aviso.mockRestore()
+    })
+
+    it('el jobId del recibo sale del estado: entregado y leído en el mismo ms difieren', async () => {
+      vi.useFakeTimers()
+      try {
+        const { cola, abrir, enviar, marcar } = escenario()
+        const c = (await abrir.ejecutar(PAREJA, EVENTO, PROV_A)).conversacion
+        const { mensaje } = await enviar.ejecutar(PAREJA, c.id, 'hola')
+        await marcar.ejecutar(PROV_A, c.id, 'delivered', mensaje.id)
+        await marcar.ejecutar(PROV_A, c.id, 'read', mensaje.id)
+        await marcar.ejecutar(PROV_A, c.id, 'read', mensaje.id)
+        const ids = cola.encolados.filter((e) => e.nombre === 'message.receipt').map((e) => e.jobId)
+        // El tercero repite el estado del segundo: mismo jobId, la cola lo deduplica.
+        expect(ids).toHaveLength(2)
+        expect(ids[0]).not.toBe(ids[1])
+      } finally {
+        vi.useRealTimers()
+      }
     })
 
     it('se puede marcar en una conversación de solo lectura', async () => {

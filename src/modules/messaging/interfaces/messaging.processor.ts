@@ -51,6 +51,12 @@ function leer<T>(esquema: z.ZodType<T>, job: Job): T {
  * descontratado), no recibe nada. Alternativa descartada: confiar en la lista
  * de destinatarios del momento de enviar, que emitiría a quien ya no debe verlo.
  *
+ * `message.created` se emite también al propio emisor (sala de su usuario),
+ * para que sus OTRAS sesiones vean el mensaje; el frontend deduplica por
+ * `message.id` y nunca cuenta como no leído un mensaje propio. `message.receipt`
+ * va sólo a los demás: las otras sesiones de quien marca aún no reciben sus
+ * propios recibos (parte 4).
+ *
  * Un nombre de job DESCONOCIDO falla con `UnrecoverableError` (en BullMQ,
  * retornar marca el job completado y ignorarlo lo borraría en silencio). Los
  * errores de emisión SALEN, para que BullMQ reintente con la política común.
@@ -82,7 +88,7 @@ export class MessagingProcessor extends WorkerHost {
     if (mensaje === null) return
     const cuerpo = { conversationId, message: mensajeJson(mensaje) }
     for (const destinatario of await this.repo.participantes(conversationId)) {
-      if (destinatario === mensaje.senderId) continue
+      // También al emisor (sus otras sesiones), tras la misma comprobación.
       if ((await this.repo.buscar(conversationId, destinatario)) === null) continue
       await this.tiempoReal.emitirAUsuario(destinatario, EVENTO_MENSAJE_CREADO, cuerpo)
     }

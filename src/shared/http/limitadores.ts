@@ -167,9 +167,8 @@ export function crearLimitadores(limiteGlobalPorMinuto: number): ThrottlerOption
       limit: 20,
       skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_INVITE),
     },
-    // Enviar un mensaje: 30/min por IP (decisión de la spec de mensajería). Por IP,
-    // como el resto: el mismo DESIGN-GAP que `vendor-catalog` (el guard cuenta
-    // antes de que exista `req.user`).
+    // Enviar un mensaje: 30/min (spec: por usuario; aquí por IP, DESIGN-GAP: el
+    // mismo que `vendor-catalog`, el guard cuenta antes de que exista `req.user`).
     {
       name: LIMITADOR_MESSAGES,
       ttl: 60_000,

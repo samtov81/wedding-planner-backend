@@ -45,7 +45,7 @@ export class MarkConversationUseCase {
     const marcas = await this.repo.marcar(conversationId, userId, tipo, upTo)
     if (marcas === false) throw new ConversacionNoEncontradaError()
 
-    await encolarAvisoRecibo(this.cola, this.registro, { conversationId, userId })
+    await encolarAvisoRecibo(this.cola, this.registro, { conversationId, userId }, marcas)
     const participantes = await this.repo.participantes(conversationId)
     return { conversationId, marcas, destinatarios: participantes.filter((p) => p !== userId) }
   }

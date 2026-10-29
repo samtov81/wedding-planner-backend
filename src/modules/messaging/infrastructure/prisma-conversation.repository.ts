@@ -376,22 +376,35 @@ export class PrismaConversationRepository implements ConversationRepository {
   }
 
   /**
-   * El último mensaje de cada conversación en UNA consulta (`DISTINCT ON` con
-   * el orden total (createdAt, id)), no un `findFirst` por conversación.
+   * El último mensaje de cada conversación en UNA consulta, no un `findFirst`
+   * por conversación. `unnest` + `CROSS JOIN LATERAL ... LIMIT 1` hace, por
+   * conversación, un descenso por el índice `(conversationId, createdAt, id)`
+   * (orden total del dominio) y se detiene en la primera fila. Alternativa
+   * descartada: `DISTINCT ON`, que ordena TODOS los mensajes de las
+   * conversaciones pedidas para quedarse con uno de cada una.
    */
   private async ultimosMensajes(ids: string[]): Promise<Map<string, MensajeFila>> {
     const filas = await clienteDe(this.prisma).$queryRaw<MensajeFila[]>`
-      SELECT DISTINCT ON ("conversationId") "id", "conversationId", "senderId", "body", "createdAt"
-      FROM "messages"
-      WHERE "conversationId" = ANY(${ids}::uuid[])
-      ORDER BY "conversationId", "createdAt" DESC, "id" DESC`
+      SELECT l."id", l."conversationId", l."senderId", l."body", l."createdAt"
+      FROM unnest(${ids}::uuid[]) AS c(id)
+      CROSS JOIN LATERAL (
+        SELECT m."id", m."conversationId", m."senderId", m."body", m."createdAt"
+        FROM "messages" m
+        WHERE m."conversationId" = c.id
+        ORDER BY m."createdAt" DESC, m."id" DESC
+        LIMIT 1
+      ) AS l`
     return new Map(filas.map((f) => [f.conversationId, f]))
   }
 
   /**
    * Mensajes del otro posteriores a MI marca de lectura, por conversación, en
    * una sola consulta. Comparación de fila `(createdAt, id)`: el mismo orden
-   * total que usa el dominio. SQL con plantilla etiquetada (parametrizada).
+   * total que usa el dominio. Sin marca, el límite es `-infinity` / uuid nulo
+   * (todo mensaje es posterior), en vez de un `IS NULL OR ...` que impedía
+   * usar el índice `(conversationId, createdAt, id)` como rango. Los tipos de
+   * las constantes son los de las columnas (`timestamp(3)`, `uuid`). SQL con
+   * plantilla etiquetada (parametrizada).
    */
   private async contarNoLeidos(userId: string, ids: string[]): Promise<Map<string, number>> {
     const filas = await clienteDe(this.prisma).$queryRaw<
@@ -403,7 +416,10 @@ export class PrismaConversationRepository implements ConversationRepository {
         ON p."conversationId" = m."conversationId" AND p."userId" = ${userId}::uuid
       WHERE m."conversationId" = ANY(${ids}::uuid[])
         AND m."senderId" <> p."userId"
-        AND (p."readUpToAt" IS NULL OR (m."createdAt", m."id") > (p."readUpToAt", p."readUpToId"))
+        AND (m."createdAt", m."id") > (
+          COALESCE(p."readUpToAt", '-infinity'::timestamp),
+          COALESCE(p."readUpToId", '00000000-0000-0000-0000-000000000000'::uuid)
+        )
       GROUP BY m."conversationId"`
     return new Map(filas.map((f) => [f.conversationId, Number(f.total)]))
   }

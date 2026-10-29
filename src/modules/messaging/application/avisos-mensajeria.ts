@@ -2,6 +2,8 @@ import type { Logger } from '@nestjs/common'
 
 import type { QueueName, QueuePort } from '@/modules/queue/application/queue.port'
 
+import type { MarcasDeParticipante } from './conversation.repository'
+
 /**
  * Contrato de los avisos en tiempo real de la mensajería (spec 2026-10-29 §5.1).
  * Lo PRODUCEN los casos de uso de enviar y marcar; lo consume
@@ -43,12 +45,20 @@ export interface JobRecibo {
 export const jobIdDeMensaje = (messageId: string): string => `message-${messageId}`
 
 /**
- * Único por MARCADO, no por par conversación/usuario: cada avance de la marca
- * es un aviso distinto y BullMQ descartaría los siguientes por jobId repetido.
+ * Derivado del ESTADO resultante de las marcas, no del reloj: el mismo estado
+ * (un reintento, un doble toque) produce el mismo jobId y BullMQ lo deduplica;
+ * un estado distinto nunca choca, ni siquiera "entregado" y "leído" en el mismo
+ * milisegundo (con la hora como clave, el segundo aviso se descartaría). El
+ * worker lee las marcas actuales, así que un aviso deduplicado no pierde nada.
  * Con `-`, nunca `:` (ver `EnqueueOptions.jobId`).
  */
-export const jobIdDeRecibo = (conversationId: string, userId: string, en: Date): string =>
-  `receipt-${conversationId}-${userId}-${en.getTime()}`
+export const jobIdDeRecibo = (
+  conversationId: string,
+  userId: string,
+  marcas: MarcasDeParticipante,
+): string =>
+  `receipt-${conversationId}-${userId}-${marcas.deliveredUpTo?.id ?? 'none'}-` +
+  `${marcas.readUpTo?.id ?? 'none'}`
 
 async function encolarSinPropagar(
   registro: Logger,
@@ -84,10 +94,11 @@ export function encolarAvisoRecibo(
   cola: QueuePort,
   registro: Logger,
   job: JobRecibo,
+  marcas: MarcasDeParticipante,
 ): Promise<void> {
   return encolarSinPropagar(registro, 'Recibo', job.conversationId, () =>
     cola.enqueue(COLA_MENSAJERIA, EVENTO_MENSAJE_RECIBO, job, {
-      jobId: jobIdDeRecibo(job.conversationId, job.userId, new Date()),
+      jobId: jobIdDeRecibo(job.conversationId, job.userId, marcas),
     }),
   )
 }

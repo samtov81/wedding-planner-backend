@@ -165,6 +165,13 @@ export interface ConversationRepository {
   /** Las marcas de cada participante de la sala, con su nombre y su rol. */
   marcasDeSala(conversationId: string): Promise<MarcaDeMiembro[]>
 
+  /**
+   * El tipo de la conversación, sin mirar quién pregunta (null si no existe).
+   * Lo usa el worker, que debe distinguir sala de 1:1 aunque el remitente ya
+   * no la vea.
+   */
+  tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | null>
+
   /** Destinatarios fijados de cada mensaje pedido (los que no tienen, ausentes). */
   destinatariosDe(messageIds: readonly string[]): Promise<Map<string, string[]>>
 }

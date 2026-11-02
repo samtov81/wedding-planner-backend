@@ -324,6 +324,10 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     )
   }
 
+  tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | null> {
+    return Promise.resolve(this.conversaciones.find((c) => c.id === conversationId)?.kind ?? null)
+  }
+
   destinatariosDe(messageIds: readonly string[]): Promise<Map<string, string[]>> {
     const r = new Map<string, string[]>()
     for (const id of messageIds) {

@@ -725,6 +725,8 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
       expect(await repo.marcar(idDe(sala, quien), plannerId, 'read', idDe(m, quien))).not.toBe(
         false,
       )
+      expect(await repo.tipoDe(idDe(sala, quien))).toBe('EVENT_ROOM')
+      expect(await repo.tipoDe(randomUUID())).toBeNull()
       const marcas = ordenados(await repo.marcasDeSala(idDe(sala, quien)))
       const destinatarios = await repo.destinatariosDe([idDe(m, quien), randomUUID()])
       resultados.push({

@@ -455,6 +455,14 @@ export class PrismaConversationRepository implements ConversationRepository {
     })
   }
 
+  async tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | null> {
+    const fila = await clienteDe(this.prisma).conversation.findUnique({
+      where: { id: conversationId },
+      select: { kind: true },
+    })
+    return fila === null || fila.kind === 'PROFILE' ? null : fila.kind
+  }
+
   async destinatariosDe(messageIds: readonly string[]): Promise<Map<string, string[]>> {
     const filas = await clienteDe(this.prisma).messageRecipient.findMany({
       where: { messageId: { in: [...messageIds] } },

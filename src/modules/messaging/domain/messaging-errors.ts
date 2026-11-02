@@ -46,3 +46,14 @@ export class SinAccesoAlEventoError extends ForbiddenError {
     super('No tienes acceso a este evento', 'EVENT_ACCESS_DENIED')
   }
 }
+
+/**
+ * La sala del evento no está disponible para quien la pide: un proveedor (los
+ * proveedores nunca están en la sala), un administrador del sistema que no es
+ * miembro, un INVITED que nunca estuvo o alguien sin relación con el evento.
+ */
+export class SalaNoDisponibleError extends ForbiddenError {
+  constructor() {
+    super('No tienes acceso a la sala de este evento', 'ROOM_ACCESS_DENIED')
+  }
+}

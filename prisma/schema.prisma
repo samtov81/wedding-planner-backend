@@ -96,6 +96,7 @@ model User {
   notifications              Notification[]
   conversationParticipations ConversationParticipant[]
   messagesSent               Message[]
+  messagesReceived           MessageRecipient[]
   emailVerificationTokens    EmailVerificationToken[]
   passwordResetTokens        PasswordResetToken[]
   expensesCreated            Expense[]                 @relation("ExpenseCreatedBy")
@@ -549,8 +550,8 @@ model SeatAssignment {
   @@map("seat_assignments")
 }
 
-/// Tipo de conversación. Sólo `EVENT_DIRECT` se usa en la parte 1; los otros
-/// dos están reservados (sala de evento, chat de perfil) para no migrar el enum.
+/// Tipo de conversación: `EVENT_DIRECT` (1:1, parte 1) y `EVENT_ROOM` (sala del
+/// evento, parte 2). `PROFILE` está reservado para la parte 3.
 enum ConversationKind {
   EVENT_DIRECT
   EVENT_ROOM
@@ -604,9 +605,26 @@ model Message {
   body           String
   createdAt      DateTime @default(now())
 
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender       User         @relation(fields: [senderId], references: [id], onDelete: Restrict)
+  conversation Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User               @relation(fields: [senderId], references: [id], onDelete: Restrict)
+  recipients   MessageRecipient[]
 
   @@index([conversationId, createdAt, id])
   @@map("messages")
+}
+
+/// Destinatarios de un mensaje de la sala del evento, fijados AL ENVIARLO: los
+/// miembros ACTIVE de ese instante sin el remitente. Fijan la M de "leído por
+/// N de M", hasta dónde ve un miembro que salió y los no leídos de quien entró
+/// tarde (no hay historial de membresías del que sacarlo). Los 1:1 no la usan.
+model MessageRecipient {
+  messageId String @db.Uuid
+  userId    String @db.Uuid
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([messageId, userId])
+  @@index([userId, messageId])
+  @@map("message_recipients")
 }

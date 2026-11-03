@@ -33,3 +33,11 @@ ALTER TABLE "conversations" ADD CONSTRAINT "conversations_perfil_rechazo"
 -- NULL, el CHECK pasa y la fila esquivaría el UNIQUE de `pairKey`.
 ALTER TABLE "conversations" ADD CONSTRAINT "conversations_perfil_clave"
   CHECK ("kind" <> 'PROFILE' OR ("pairKey" IS NOT NULL AND "pairKey" LIKE 'profile:%'));
+
+-- Y al revés: una conversación de evento o sala no lleva NINGUNA de las cuatro
+-- columnas del perfil. `conversations_perfil_campos` sola no basta: con
+-- `eventId` puesto su lado derecho ya es false, así que una EVENT_DIRECT con
+-- `requestStatus` pasaría.
+ALTER TABLE "conversations" ADD CONSTRAINT "conversations_perfil_solo_en_perfil"
+  CHECK ("kind" = 'PROFILE' OR ("requesterId" IS NULL AND "vendorProfileId" IS NULL
+    AND "requestStatus" IS NULL AND "declinedAt" IS NULL));

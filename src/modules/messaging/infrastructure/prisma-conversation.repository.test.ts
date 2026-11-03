@@ -232,6 +232,32 @@ describe('PrismaConversationRepository', () => {
       ).rejects.toThrow(/conversations_perfil_campos/)
     })
 
+    it('el CHECK conversations_perfil_solo_en_perfil rechaza columnas de perfil en una 1:1 o una sala', async () => {
+      const directa = (n: string): string => `direct:solo:${n}`
+      const rechazos = [
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "requestStatus")
+          VALUES (gen_random_uuid(), 'EVENT_DIRECT'::"ConversationKind", ${eventId}::uuid,
+            ${directa('estado')}, 'PENDING'::"ContactRequestStatus")`,
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "requesterId")
+          VALUES (gen_random_uuid(), 'EVENT_DIRECT'::"ConversationKind", ${eventId}::uuid,
+            ${directa('solicitante')}, ${v1.userId}::uuid)`,
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "vendorProfileId")
+          VALUES (gen_random_uuid(), 'EVENT_DIRECT'::"ConversationKind", ${eventId}::uuid,
+            ${directa('ficha')}, ${v2.id}::uuid)`,
+        // DECLINED + declinedAt: `conversations_perfil_rechazo` se cumple, sólo falla éste.
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "eventId", "pairKey", "requestStatus", "declinedAt")
+          VALUES (gen_random_uuid(), 'EVENT_DIRECT'::"ConversationKind", ${eventId}::uuid,
+            ${directa('rechazo')}, 'DECLINED'::"ContactRequestStatus", now())`,
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "requesterId")
+          VALUES (gen_random_uuid(), 'EVENT_ROOM'::"ConversationKind", ${eventId}::uuid,
+            ${`room:${eventId}`}, ${v1.userId}::uuid)`,
+      ]
+      for (const intento of rechazos) {
+        await expect(intento).rejects.toThrow(/conversations_perfil_solo_en_perfil/)
+      }
+    })
+
     it('el CHECK conversations_perfil_rechazo ata declinedAt a DECLINED', async () => {
       const clave = `profile:rechazo:${v1.userId}`
       await expect(

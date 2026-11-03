@@ -5,6 +5,7 @@ import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.po
 import { normalizarCuerpo } from '../domain/conversacion'
 import {
   ConversacionNoEncontradaError,
+  EscrituraEnSolicitudPendienteError,
   ConversacionSoloLecturaError,
 } from '../domain/messaging-errors'
 import { encolarAvisoMensaje } from './avisos-mensajeria'
@@ -18,7 +19,10 @@ import { localizarConversacion } from './localizar-conversacion'
 /**
  * Envía un mensaje a una 1:1 o a la sala del evento. En la sala escribe quien
  * es miembro ACTIVE hoy (si no, `readOnly` → 403) y los destinatarios se fijan
- * al guardar (`agregarMensajeDeSala`). En una 1:1, escribir exige que AMBOS
+ * al guardar (`agregarMensajeDeSala`). En una conversación de perfil
+ * (parte 3) se escribe sólo con la solicitud aceptada: PENDING es 403
+ * `CONTACT_REQUEST_PENDING` y DECLINED 403 `CONVERSATION_READ_ONLY`; aceptada
+ * se envía como una 1:1. En una 1:1, escribir exige que AMBOS
  * participantes tengan acceso hoy:
  * si no (`readOnly`) es un 403. Quien no participa recibe el mismo 404 que con
  * un id inexistente. El cuerpo se normaliza aquí (segunda barrera tras Zod).
@@ -48,7 +52,14 @@ export class SendMessageUseCase {
   ): Promise<{ mensaje: MensajeVista; destinatarios: string[] }> {
     const localizada = await localizarConversacion(this.repo, conversationId, userId)
     if (localizada === null) throw new ConversacionNoEncontradaError()
-    if (localizada.vista.readOnly) throw new ConversacionSoloLecturaError()
+    if (localizada.vista.readOnly) {
+      // Perfil: una solicitud pendiente se distingue de una rechazada (que es
+      // sólo lectura). El proveedor nunca localiza una DECLINED (404).
+      if (localizada.tipo === 'perfil' && localizada.vista.status === 'PENDING') {
+        throw new EscrituraEnSolicitudPendienteError()
+      }
+      throw new ConversacionSoloLecturaError()
+    }
 
     const cuerpo = normalizarCuerpo(texto)
     if (localizada.tipo === 'sala') {

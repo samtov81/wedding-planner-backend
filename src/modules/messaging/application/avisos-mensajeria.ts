@@ -2,6 +2,7 @@ import type { Logger } from '@nestjs/common'
 
 import type { QueueName, QueuePort } from '@/modules/queue/application/queue.port'
 
+import type { EstadoDeSolicitud } from '../domain/perfil'
 import type { MarcasDeParticipante } from './conversation.repository'
 
 /**
@@ -29,6 +30,8 @@ export const COLA_MENSAJERIA = 'messaging' satisfies QueueName
 /** Nombres de job y, a la vez, de evento de socket. */
 export const EVENTO_MENSAJE_CREADO = 'message.created'
 export const EVENTO_MENSAJE_RECIBO = 'message.receipt'
+
+export const EVENTO_CONTACTO_ACTUALIZADO = 'contact.updated'
 
 export interface JobMensajeCreado {
   conversationId: string
@@ -99,6 +102,34 @@ export function encolarAvisoRecibo(
   return encolarSinPropagar(registro, 'Recibo', job.conversationId, () =>
     cola.enqueue(COLA_MENSAJERIA, EVENTO_MENSAJE_RECIBO, job, {
       jobId: jobIdDeRecibo(job.conversationId, job.userId, marcas),
+    }),
+  )
+}
+
+export interface JobContactoActualizado {
+  conversationId: string
+  estado: EstadoDeSolicitud
+  /** El mensaje de la solicitud, si el cambio lo creó (pedir); null al responder. */
+  mensajeId: string | null
+}
+
+/**
+ * Derivado del estado resultante, no del reloj (como `jobIdDeRecibo`): pedir,
+ * rechazar y volver a pedir producen ids distintos y no se comen entre sí; un
+ * reintento del mismo cambio se deduplica. El worker lee el estado actual.
+ */
+export const jobIdDeContacto = (j: JobContactoActualizado): string =>
+  `contact-${j.conversationId}-${j.estado}-${j.mensajeId ?? 'none'}`
+
+/** Cuando se llama, el cambio ya está confirmado: un fallo de Redis sólo se avisa. */
+export function encolarAvisoContacto(
+  cola: QueuePort,
+  registro: Logger,
+  job: JobContactoActualizado,
+): Promise<void> {
+  return encolarSinPropagar(registro, 'Contacto', job.conversationId, () =>
+    cola.enqueue(COLA_MENSAJERIA, EVENTO_CONTACTO_ACTUALIZADO, job, {
+      jobId: jobIdDeContacto(job),
     }),
   )
 }

@@ -62,7 +62,8 @@ export class ListMessagesUseCase {
   ): Promise<PaginaDeMensajes> {
     const localizada = await localizarConversacion(this.repo, conversationId, userId)
     if (localizada === null) throw new ConversacionNoEncontradaError()
-    if (localizada.tipo === 'directa') {
+    // El perfil se trata como la 1:1: dos participantes y las marcas del otro.
+    if (localizada.tipo !== 'sala') {
       const pagina = await this.repo.mensajes(conversationId, opciones)
       return { tipo: 'directa', pagina, otherMarks: localizada.vista.otherMarks }
     }

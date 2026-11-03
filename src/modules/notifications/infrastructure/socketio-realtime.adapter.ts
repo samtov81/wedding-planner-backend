@@ -23,10 +23,23 @@ import { NAMESPACE_REALTIME, salaDeEvento, salaDeUsuario } from '../application/
  * rechaza al agotar sus reintentos, el job falla y BullMQ lo reintenta. Con la
  * conexión lista, un `PUBLISH` que falle justo después se pierde sin aviso: lo
  * que se pierde es latencia, porque la `Notification` ya está en Postgres.
+ *
+ * Cierre. Nest llama a `onModuleDestroy` (que cierra esta conexión) ANTES de
+ * `onApplicationShutdown`, que es donde `@nestjs/bullmq` cierra los workers y
+ * espera a sus jobs activos: un job en vuelo puede emitir con el `QUIT` ya
+ * enviado. Ese `PUBLISH` sale detrás del `QUIT`, ioredis lo rechaza con
+ * "Connection is closed" y, como el emitter descarta la promesa, el rechazo
+ * queda suelto (así cayó CI al cerrar `messaging-sala.e2e`). Por eso, desde que
+ * empieza el cierre, `emitir` rechaza SU promesa: el job falla de forma
+ * controlada y BullMQ lo reintenta al volver. Lo publicado antes del `QUIT`
+ * sale antes que él y no se pierde. Alternativa descartada: cerrar la conexión
+ * en `onApplicationShutdown`; Nest no garantiza el orden de ese hook entre
+ * módulos, así que no asegura que los workers hayan terminado antes.
  */
 export class SocketIoRealtimeAdapter implements RealtimePort, OnModuleDestroy {
   private readonly redis: Redis
   private readonly emisor: Emitter
+  private cerrando = false
 
   constructor(redisUrl: string) {
     this.redis = new Redis(redisUrl)
@@ -42,10 +55,12 @@ export class SocketIoRealtimeAdapter implements RealtimePort, OnModuleDestroy {
   }
 
   async onModuleDestroy(): Promise<void> {
+    this.cerrando = true
     await this.redis.quit()
   }
 
   private async emitir(sala: string, tipo: string, payload: unknown): Promise<void> {
+    if (this.cerrando) throw new Error('RealtimePort cerrándose: no se emite')
     if (this.redis.status !== 'ready') {
       // Recién construido puede estar aún conectando: se le da una oportunidad.
       await this.redis.ping()

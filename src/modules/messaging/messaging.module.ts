@@ -27,7 +27,8 @@ import { ConversationsController } from './interfaces/conversations.controller'
 import { MessagingProcessor } from './interfaces/messaging.processor'
 
 /**
- * Mensajería por evento: 1:1 (parte 1) y sala del evento (parte 2). `AuthModule` + `UsersModule` se
+ * Mensajería: 1:1 y sala por evento (partes 1 y 2) y contacto desde la ficha de un
+ * proveedor, conversaciones `PROFILE` sin evento (parte 3). `AuthModule` + `UsersModule` se
  * importan para que `JwtAuthGuard` resuelva con el mismo `TokenService` que el
  * resto del REST. `NotificationsModule` aporta `REALTIME_PORT` (el emisor de
  * Socket.IO sobre Redis) y `registerQueue` monta `MessagingProcessor` sobre la

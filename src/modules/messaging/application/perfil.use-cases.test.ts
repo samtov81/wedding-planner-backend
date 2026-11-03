@@ -121,6 +121,17 @@ describe('casos de uso del contacto desde la ficha', () => {
     )
   })
 
+  it('quien ya rechazó y vuelve a responder recibe SolicitudNoPendienteError, no 404', async () => {
+    const { pedir, responder, ficha } = escenario()
+    const { conversacion } = await pedir.ejecutar(PEDIDOR, ficha, 'hola')
+    await responder.ejecutar(PROV, conversacion.id, 'DECLINED')
+    for (const decision of ['ACCEPTED', 'DECLINED'] as const) {
+      await expect(responder.ejecutar(PROV, conversacion.id, decision)).rejects.toBeInstanceOf(
+        SolicitudNoPendienteError,
+      )
+    }
+  })
+
   it('en DECLINED el solicitante la ve pero no escribe; el proveedor no la localiza', async () => {
     const { pedir, responder, enviar, mensajes, ficha } = escenario()
     const { conversacion } = await pedir.ejecutar(PEDIDOR, ficha, 'hola')

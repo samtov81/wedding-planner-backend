@@ -292,5 +292,39 @@ describe('MessagingProcessor', () => {
         },
       ])
     })
+
+    it('message.receipt en el otro sentido: marca el solicitante y lo recibe el proveedor', async () => {
+      await repo.responder(perfilId, DUENO, 'ACCEPTED', new Date(2000))
+      await repo.marcar(perfilId, SOLICITANTE, 'read', mensajeId)
+
+      await procesador.process(
+        job(EVENTO_MENSAJE_RECIBO, { conversationId: perfilId, userId: SOLICITANTE }),
+      )
+
+      const marca = { at: new Date(1000).toISOString(), id: mensajeId }
+      expect(realtime.emitidas).toEqual([
+        {
+          destino: { userId: DUENO },
+          tipo: 'message.receipt',
+          payload: {
+            conversationId: perfilId,
+            userId: SOLICITANTE,
+            deliveredUpTo: null,
+            readUpTo: marca,
+          },
+        },
+      ])
+    })
+
+    it('message.receipt no llega a un proveedor que rechazó', async () => {
+      await repo.responder(perfilId, DUENO, 'DECLINED', new Date(2000))
+      await repo.marcar(perfilId, SOLICITANTE, 'read', mensajeId)
+
+      await procesador.process(
+        job(EVENTO_MENSAJE_RECIBO, { conversationId: perfilId, userId: SOLICITANTE }),
+      )
+
+      expect(realtime.emitidas).toEqual([])
+    })
   })
 })

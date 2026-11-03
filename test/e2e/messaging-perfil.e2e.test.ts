@@ -244,6 +244,49 @@ describe('contacto desde la ficha e2e', () => {
       expect(await mensajes(t.prov, convId)).toEqual(['segundo intento', TEXTO_LARGO])
     })
 
+    it('el proveedor que ya rechazó y vuelve a responder recibe 409, no 404', async () => {
+      const convId = await solicitud()
+      await responder(t.prov, convId, 'decline').expect(200)
+
+      for (const accion of ['accept', 'decline'] as const) {
+        const r = await responder(t.prov, convId, accion).expect(409)
+        expect((r.body as ErrorCuerpo).code).toBe('CONTACT_REQUEST_NOT_PENDING')
+      }
+    })
+
+    it('relación previa al volver a pedir, sin esperar: rechazada y luego relacionados, 201 y ACCEPTED', async () => {
+      const convId = await solicitud()
+      await responder(t.prov, convId, 'decline').expect(200)
+      const categoryId = await categoriaId(prisma, 'photography')
+      const evento = await prisma.event.create({
+        data: {
+          name: 'Boda tras rechazo',
+          weddingDate: new Date(Date.now() + 180 * 86_400_000),
+          ownerId: id.pareja,
+          status: 'ACTIVE',
+        },
+      })
+      try {
+        await prisma.eventMembership.create({
+          data: { eventId: evento.id, userId: id.pareja, role: 'COUPLE' },
+        })
+        await prisma.eventVendor.create({
+          data: { eventId: evento.id, vendorProfileId: ficha.prov, categoryId, status: 'BOOKED' },
+        })
+
+        // Inmediato: sin mover `declinedAt`, la relación salta la espera de 24 h.
+        const r = await pedir(t.pareja, ficha.prov, 'ya nos conocemos').expect(201)
+
+        expect((r.body as { conversation: ConversacionCuerpo }).conversation).toMatchObject({
+          id: convId,
+          status: 'ACCEPTED',
+        })
+        await escribir(t.prov, convId, 'hola').expect(201)
+      } finally {
+        await prisma.event.delete({ where: { id: evento.id } })
+      }
+    })
+
     it('quien rechazó no puede pedir desde la ficha del otro (CONTACT_DECLINED_BY_YOU)', async () => {
       const convId = await solicitud()
       await responder(t.prov, convId, 'decline').expect(200)
@@ -265,6 +308,12 @@ describe('contacto desde la ficha e2e', () => {
       await request(server).get(`/conversations/${convId}/messages`).set(como(t.otro)).expect(404)
       await responder(t.otro, convId, 'accept').expect(404)
       await responder(t.otro, convId, 'decline').expect(404)
+    })
+
+    it('un id que no es UUID es 404 en las rutas nuevas', async () => {
+      await request(server).get('/vendors/no-uuid/contact').set(como(t.pareja)).expect(404)
+      await pedir(t.pareja, 'no-uuid').expect(404)
+      await responder(t.prov, 'no-uuid', 'accept').expect(404)
     })
 
     it('las cinco rutas nuevas exigen sesión y la ficha pública sigue abierta', async () => {
@@ -454,6 +503,7 @@ describe('contacto desde la ficha e2e', () => {
       const prov = await conectarComo(t.prov)
       const convId = await solicitud()
       await esperar(prov, 'message.created', 1)
+      await esperar(prov, 'contact.updated', 1)
       await esperar(pareja, 'contact.updated', 1)
 
       await responder(t.prov, convId, 'accept').expect(200)
@@ -461,6 +511,9 @@ describe('contacto desde la ficha e2e', () => {
         { conversationId: convId },
         { conversationId: convId },
       ])
+      // El proveedor también recibe el aviso de su propia aceptación: se espera
+      // ANTES de vaciar los buzones, o llegaría tarde y contaminaría el segundo tramo.
+      await esperar(prov, 'contact.updated', 2)
 
       // Otra solicitud, esta vez rechazada.
       await prisma.conversation.deleteMany()

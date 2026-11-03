@@ -87,7 +87,8 @@ export function estadoDeContacto(
       retryAt: par.declinedAt === null ? null : reintentoEn(par.declinedAt),
     }
   }
-  return { state: 'DECLINED_BY_ME', conversationId, retryAt: null }
+  // Quien rechazó ya no ve la conversación: no se le da un id que no puede abrir.
+  return { state: 'DECLINED_BY_ME', conversationId: null, retryAt: null }
 }
 
 /** ¿Puede `userId` ver la conversación? El solicitante siempre; el proveedor salvo DECLINED. */

@@ -8,6 +8,12 @@ ADD COLUMN     "requestStatus" "ContactRequestStatus",
 ADD COLUMN     "requesterId" UUID,
 ADD COLUMN     "vendorProfileId" UUID;
 
+-- CreateIndex
+CREATE INDEX "conversations_requesterId_idx" ON "conversations"("requesterId");
+
+-- CreateIndex
+CREATE INDEX "conversations_vendorProfileId_idx" ON "conversations"("vendorProfileId");
+
 -- AddForeignKey
 ALTER TABLE "conversations" ADD CONSTRAINT "conversations_requesterId_fkey" FOREIGN KEY ("requesterId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 

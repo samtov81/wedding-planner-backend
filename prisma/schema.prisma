@@ -553,7 +553,7 @@ model SeatAssignment {
 }
 
 /// Tipo de conversación: `EVENT_DIRECT` (1:1, parte 1) y `EVENT_ROOM` (sala del
-/// evento, parte 2). `PROFILE` está reservado para la parte 3.
+/// evento, parte 2) y `PROFILE` (contacto desde la ficha de un proveedor, parte 3).
 enum ConversationKind {
   EVENT_DIRECT
   EVENT_ROOM
@@ -579,7 +579,7 @@ model Conversation {
   createdAt       DateTime              @default(now())
   lastMessageAt   DateTime?
   /// Sólo `PROFILE` (parte 3): quien pidió el contacto, la ficha y el estado de
-  /// la solicitud. Tres CHECK a mano en la migración las atan a `kind`.
+  /// la solicitud. Cuatro CHECK a mano en la migración las atan a `kind`.
   requesterId     String?               @db.Uuid
   vendorProfileId String?               @db.Uuid
   requestStatus   ContactRequestStatus?
@@ -592,6 +592,8 @@ model Conversation {
   messages      Message[]
 
   @@index([eventId])
+  @@index([requesterId])
+  @@index([vendorProfileId])
   @@map("conversations")
 }
 

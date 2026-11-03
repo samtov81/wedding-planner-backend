@@ -99,7 +99,7 @@ CHECK constraints:
 - `conversations_perfil_clave` — a `PROFILE` has a non-null `pairKey` starting with `profile:` (a null key would dodge the `unique`).
 - `conversations_perfil_solo_en_perfil` — a non-`PROFILE` conversation has `requesterId`, `vendorProfileId`, `requestStatus` and `declinedAt` all null (`conversations_perfil_campos` alone lets an `EVENT_DIRECT` with `eventId` set carry them).
 
-Enforced by the use cases, not by the database: that a direct conversation has `eventId` and `pairKey`, that its two participants are allowed together (member↔member and member↔vendor, never vendor↔vendor) and that both have access to the event when it is opened.
+Enforced by the use cases, not by the database: that a direct conversation has `eventId` and `pairKey`, that its two participants are allowed together (member↔member and member↔vendor, never vendor↔vendor) and that both have access to the event when it is opened. For `PROFILE` conversations: `requestStatus` only moves `PENDING` → `ACCEPTED` \| `DECLINED`, and `DECLINED` → `PENDING` \| `ACCEPTED` when the original requester asks again; a new request after a decline waits 24 h from `declinedAt` (unless requester and vendor are already related, in which case it is accepted at once); the requester cannot be the owner of the vendor profile; `requesterId` and `vendorProfileId` never change after creation.
 
 ### `conversation_participants`
 

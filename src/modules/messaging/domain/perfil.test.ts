@@ -178,7 +178,7 @@ describe('estadoDeContacto', () => {
       DUENO,
       par({ status: 'DECLINED', declinedAt: rechazo, requesterId: 'otro' }),
     )
-    expect(r.state).toBe('DECLINED_BY_ME')
+    expect(r).toEqual({ state: 'DECLINED_BY_ME', conversationId: null, retryAt: null })
   })
 })
 

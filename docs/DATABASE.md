@@ -86,12 +86,17 @@ That `seatIndex < seatCount` of its table, and that the person fits the guest's 
 
 ### `conversations`
 
-A messaging conversation. `kind` is `ConversationKind` (`EVENT_DIRECT` | `EVENT_ROOM` | `PROFILE`): `EVENT_DIRECT` is 1:1 inside an event, `EVENT_ROOM` is the event's group room (couple and planners, never vendors), `PROFILE` is reserved. `eventId` is nullable (`onDelete: Cascade`: deleting the event deletes its conversations, participants and messages). `pairKey` is `unique` and holds `eventId:smaller:larger` (the two user ids ordered), so there is at most one direct conversation per event and pair, whoever opens it; it is null for kinds without a pair (nulls do not collide). `lastMessageAt` is null until the first message.
+A messaging conversation. `kind` is `ConversationKind` (`EVENT_DIRECT` | `EVENT_ROOM` | `PROFILE`): `EVENT_DIRECT` is 1:1 inside an event, `EVENT_ROOM` is the event's group room (couple and planners, never vendors), `PROFILE` is a vendor-profile contact request (part 3). `eventId` is nullable (`onDelete: Cascade`: deleting the event deletes its conversations, participants and messages). `pairKey` is `unique` and holds `eventId:smaller:larger` (the two user ids ordered), so there is at most one direct conversation per event and pair, whoever opens it; it is null for kinds without a pair (nulls do not collide). `lastMessageAt` is null until the first message.
+
+A `PROFILE` conversation has no event: `requesterId` (FK `users`, `onDelete: Cascade`), `vendorProfileId` (FK `vendor_profiles`, `onDelete: Cascade`), `requestStatus` (`ContactRequestStatus`: `PENDING` | `ACCEPTED` | `DECLINED`) and `declinedAt`. Its `pairKey` is `profile:<smaller>:<larger>` (the two user ids), so there is one per pair. These four columns are null in every other kind.
 
 An `EVENT_ROOM` has `pairKey = 'room:<eventId>'`, so the same `unique` allows one room per event; it is created lazily the first time someone opens or lists it.
 
 CHECK constraints:
 - `conversations_sala_clave` — an `EVENT_ROOM` has `eventId` and its `pairKey` is `'room:' || eventId`.
+- `conversations_perfil_campos` — `kind = 'PROFILE'` if and only if `eventId` is null and `requesterId`, `vendorProfileId` and `requestStatus` are all set.
+- `conversations_perfil_rechazo` — `declinedAt` is set if and only if `requestStatus = 'DECLINED'` (a null status counts as not declined).
+- `conversations_perfil_clave` — a `PROFILE` has a `pairKey` starting with `profile:`.
 
 Enforced by the use cases, not by the database: that a direct conversation has `eventId` and `pairKey`, that its two participants are allowed together (member↔member and member↔vendor, never vendor↔vendor) and that both have access to the event when it is opened.
 

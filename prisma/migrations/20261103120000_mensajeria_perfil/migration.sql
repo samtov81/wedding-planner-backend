@@ -1,0 +1,33 @@
+
+-- CreateEnum
+CREATE TYPE "ContactRequestStatus" AS ENUM ('PENDING', 'ACCEPTED', 'DECLINED');
+
+-- AlterTable
+ALTER TABLE "conversations" ADD COLUMN     "declinedAt" TIMESTAMP(3),
+ADD COLUMN     "requestStatus" "ContactRequestStatus",
+ADD COLUMN     "requesterId" UUID,
+ADD COLUMN     "vendorProfileId" UUID;
+
+-- AddForeignKey
+ALTER TABLE "conversations" ADD CONSTRAINT "conversations_requesterId_fkey" FOREIGN KEY ("requesterId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "conversations" ADD CONSTRAINT "conversations_vendorProfileId_fkey" FOREIGN KEY ("vendorProfileId") REFERENCES "vendor_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+
+
+-- CHECK (no los modela Prisma). Una conversación PROFILE es la única con
+-- solicitante, ficha y estado, y ninguna otra los lleva ni tiene evento.
+ALTER TABLE "conversations" ADD CONSTRAINT "conversations_perfil_campos"
+  CHECK (("kind" = 'PROFILE') = ("eventId" IS NULL AND "requesterId" IS NOT NULL
+    AND "vendorProfileId" IS NOT NULL AND "requestStatus" IS NOT NULL));
+
+-- `declinedAt` existe exactamente cuando la solicitud está rechazada. Con
+-- `requestStatus` NULL la comparación da NULL, de ahí el COALESCE: ambos lados
+-- deben ser false, no NULL (un CHECK con NULL pasa).
+ALTER TABLE "conversations" ADD CONSTRAINT "conversations_perfil_rechazo"
+  CHECK (("declinedAt" IS NOT NULL) = COALESCE("requestStatus" = 'DECLINED', false));
+
+-- La clave de par de un PROFILE empieza por `profile:` (ver `claveDePerfil`).
+ALTER TABLE "conversations" ADD CONSTRAINT "conversations_perfil_clave"
+  CHECK ("kind" <> 'PROFILE' OR "pairKey" LIKE 'profile:%');

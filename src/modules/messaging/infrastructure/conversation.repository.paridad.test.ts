@@ -11,6 +11,7 @@ import { ParNoPermitidoError } from '../domain/messaging-errors'
 import type {
   ConversacionVista,
   ConversationRepository,
+  SalaVista,
 } from '../application/conversation.repository'
 import { ConversationRepositoryEnMemoria } from './conversation.repository.fake'
 import { PrismaConversationRepository } from './prisma-conversation.repository'
@@ -463,6 +464,328 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
       await expect(repo.abrir(eventId, parejaId, parejaId)).rejects.toBeInstanceOf(
         ParNoPermitidoError,
       )
+    }
+  })
+
+  // ── Sala del evento (parte 2) ──────────────────────────────────────────────
+
+  /** Lo comparable de una sala: sin ids ni instantes; el tope sólo por su cuerpo. */
+  function salaSinVolatiles(v: SalaVista | null, cuerpos: Map<string, string>): unknown {
+    if (v === null) return null
+    return {
+      event: v.event,
+      memberCount: v.memberCount,
+      lastMessage: v.lastMessage === null ? null : { body: v.lastMessage.body },
+      unreadCount: v.unreadCount,
+      readOnly: v.readOnly,
+      visibleHasta: v.visibleHasta === null ? null : cuerpos.get(v.visibleHasta.id),
+    }
+  }
+
+  /** Abre la sala como `userId` en los dos; null en los dos si no la crea. */
+  async function abrirSalaEnAmbos(eventId: string, userId: string): Promise<Par | null> {
+    const r = await real.abrirSala(eventId, userId)
+    const d = await doble.abrirSala(eventId, userId)
+    expect(r === null).toBe(d === null)
+    return r === null || d === null ? null : { real: r, doble: d }
+  }
+
+  /** Envía en la sala de los dos y devuelve los ids y los destinatarios (iguales). */
+  async function enviarEnSala(
+    sala: Par,
+    senderId: string,
+    body: string,
+    min: number,
+    cuerpos: Map<string, string>,
+  ): Promise<Par> {
+    const r = await real.agregarMensajeDeSala(sala.real, senderId, body, minuto(min))
+    const d = await doble.agregarMensajeDeSala(sala.doble, senderId, body, minuto(min))
+    expect([...r.destinatarios].sort()).toEqual([...d.destinatarios].sort())
+    cuerpos.set(r.mensaje.id, body)
+    cuerpos.set(d.mensaje.id, body)
+    return { real: r.mensaje.id, doble: d.mensaje.id }
+  }
+
+  async function salaEnAmbos(
+    sala: Par,
+    userId: string,
+    cuerpos: Map<string, string>,
+  ): Promise<unknown> {
+    const r = salaSinVolatiles(await real.buscarSala(sala.real, userId), cuerpos)
+    const d = salaSinVolatiles(await doble.buscarSala(sala.doble, userId), cuerpos)
+    expect(r).toEqual(d)
+    return r
+  }
+
+  it('abrirSala: una sola por evento; un proveedor o alguien sin membresía obtiene null si no existe', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    await proveedor(eventId, proveedorId, true)
+
+    expect(await abrirSalaEnAmbos(eventId, proveedorId)).toBeNull()
+    expect(await abrirSalaEnAmbos(eventId, invitadoId)).toBeNull()
+    const sala = await abrirSalaEnAmbos(eventId, parejaId)
+    expect(sala).not.toBeNull()
+    for (const [quien, repo] of implementaciones()) {
+      const id = sala === null ? '' : idDe(sala, quien)
+      expect(await repo.abrirSala(eventId, parejaId)).toBe(id)
+      // Ya existe: el proveedor obtiene su id, pero no la ve.
+      expect(await repo.abrirSala(eventId, proveedorId)).toBe(id)
+      expect(await repo.buscarSala(id, proveedorId)).toBeNull()
+      expect(await repo.buscarSala(id, invitadoId)).toBeNull()
+      // Una sala no es una conversación 1:1 ni sale en la bandeja.
+      expect(await repo.buscar(id, parejaId)).toBeNull()
+      expect((await repo.bandeja(parejaId)).items).toEqual([])
+    }
+  })
+
+  it('agregarMensajeDeSala: destinatarios = ACTIVE sin el remitente; nunca proveedores ni INVITED', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    await miembro(eventId, plannerId, 'PLANNER')
+    await miembro(eventId, invitadoId, 'PLANNER', 'INVITED')
+    await proveedor(eventId, proveedorId, true)
+    const cuerpos = new Map<string, string>()
+    const sala = await abrirSalaEnAmbos(eventId, parejaId)
+    if (sala === null) throw new Error('sin sala')
+
+    const m = await enviarEnSala(sala, parejaId, 'hola', 1, cuerpos)
+    for (const [quien, repo] of implementaciones()) {
+      const destinatarios = await repo.destinatariosDe([idDe(m, quien)])
+      expect(destinatarios.get(idDe(m, quien))).toEqual([plannerId])
+      expect((await repo.participantes(idDe(sala, quien))).sort()).toEqual(
+        [parejaId, plannerId].sort(),
+      )
+    }
+    expect(await salaEnAmbos(sala, plannerId, cuerpos)).toEqual({
+      event: { id: eventId, name: expect.any(String) as string },
+      memberCount: 2,
+      lastMessage: { body: 'hola' },
+      unreadCount: 1,
+      readOnly: false,
+      visibleHasta: null,
+    })
+  })
+
+  it('buscarSala: quien entra tarde ve el historial con 0 no leídos', async () => {
+    const eventId = await nuevoEvento(false)
+    await miembro(eventId, parejaId, 'COUPLE')
+    const cuerpos = new Map<string, string>()
+    const sala = await abrirSalaEnAmbos(eventId, parejaId)
+    if (sala === null) throw new Error('sin sala')
+    await enviarEnSala(sala, parejaId, 'antes', 1, cuerpos)
+
+    await miembro(eventId, plannerId, 'PLANNER')
+    expect(await salaEnAmbos(sala, plannerId, cuerpos)).toMatchObject({
+      lastMessage: { body: 'antes' },
+      unreadCount: 0,
+      readOnly: false,
+    })
+    for (const [quien, repo] of implementaciones()) {
+      const pagina = await repo.mensajes(idDe(sala, quien), { desde: null, limite: 10 })
+      expect(pagina.items.map((x) => x.body)).toEqual(['antes'])
+    }
+    await enviarEnSala(sala, parejaId, 'después', 2, cuerpos)
+    expect(await salaEnAmbos(sala, plannerId, cuerpos)).toMatchObject({ unreadCount: 1 })
+  })
+
+  it('buscarSala: un revocado la ve en solo lectura hasta su último mensaje; null si no recibió ninguno', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    await miembro(eventId, plannerId, 'PLANNER')
+    const cuerpos = new Map<string, string>()
+    const sala = await abrirSalaEnAmbos(eventId, parejaId)
+    if (sala === null) throw new Error('sin sala')
+    await enviarEnSala(sala, parejaId, 'uno', 1, cuerpos)
+    await enviarEnSala(sala, plannerId, 'dos', 2, cuerpos)
+
+    await miembro(eventId, plannerId, 'PLANNER', 'REVOKED')
+    await enviarEnSala(sala, parejaId, 'tres', 3, cuerpos)
+    expect(await salaEnAmbos(sala, plannerId, cuerpos)).toEqual({
+      event: { id: eventId, name: expect.any(String) as string },
+      memberCount: 1,
+      lastMessage: { body: 'dos' },
+      unreadCount: 1,
+      readOnly: true,
+      visibleHasta: 'dos',
+    })
+
+    // Un INVITED que entró a la sala (participante) sin recibir nada: nada visible.
+    await miembro(eventId, invitadoId, 'PLANNER')
+    await abrirSalaEnAmbos(eventId, invitadoId)
+    await miembro(eventId, invitadoId, 'PLANNER', 'REVOKED')
+    expect(await salaEnAmbos(sala, invitadoId, cuerpos)).toMatchObject({
+      lastMessage: null,
+      unreadCount: 0,
+      readOnly: true,
+      visibleHasta: null,
+    })
+  })
+
+  it('buscarSala: un readmitido vuelve a escribir y sin tope', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    await miembro(eventId, plannerId, 'PLANNER', 'REVOKED')
+    const cuerpos = new Map<string, string>()
+    const sala = await abrirSalaEnAmbos(eventId, parejaId)
+    if (sala === null) throw new Error('sin sala')
+    await enviarEnSala(sala, parejaId, 'mientras fuera', 1, cuerpos)
+    // Nunca participó: revocado sin fila de participante, no la ve.
+    expect(await salaEnAmbos(sala, plannerId, cuerpos)).toBeNull()
+
+    await miembro(eventId, plannerId, 'PLANNER')
+    expect(await salaEnAmbos(sala, plannerId, cuerpos)).toMatchObject({
+      lastMessage: { body: 'mientras fuera' },
+      readOnly: false,
+      visibleHasta: null,
+    })
+  })
+
+  it('buscarSala: proveedor y admin sin membresía → null', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    await proveedor(eventId, proveedorId, true)
+    const cuerpos = new Map<string, string>()
+    const sala = await abrirSalaEnAmbos(eventId, parejaId)
+    if (sala === null) throw new Error('sin sala')
+    await enviarEnSala(sala, parejaId, 'hola', 1, cuerpos)
+    expect(await salaEnAmbos(sala, proveedorId, cuerpos)).toBeNull()
+    expect(await salaEnAmbos(sala, invitadoId, cuerpos)).toBeNull()
+  })
+
+  it('salas: crea la de cada evento ACTIVE, incluye las de solo lectura y suma unreadTotal', async () => {
+    // Usuario propio: las membresías de otros casos siguen en Postgres.
+    const solo = await crearUsuario('salas@paridad.test', 'Planner Salas')
+    nombres.set(solo, 'Planner Salas')
+    const activo = await nuevoEvento(true)
+    const viejo = await nuevoEvento(true)
+    const ajeno = await nuevoEvento(true)
+    await miembro(activo, solo, 'PLANNER')
+    await miembro(viejo, parejaId, 'COUPLE')
+    await miembro(viejo, solo, 'PLANNER')
+    await miembro(ajeno, parejaId, 'COUPLE')
+    const cuerpos = new Map<string, string>()
+    const salaVieja = await abrirSalaEnAmbos(viejo, parejaId)
+    if (salaVieja === null) throw new Error('sin sala')
+    await enviarEnSala(salaVieja, parejaId, 'adiós', 1, cuerpos)
+    await miembro(viejo, solo, 'PLANNER', 'REVOKED')
+
+    const r = await real.salas(solo)
+    const d = await doble.salas(solo)
+    const comparable = (x: { items: SalaVista[]; unreadTotal: number }): unknown => ({
+      items: x.items.map((v) => salaSinVolatiles(v, cuerpos)),
+      unreadTotal: x.unreadTotal,
+    })
+    expect(comparable(r)).toEqual(comparable(d))
+    expect(r.unreadTotal).toBe(1)
+    expect(r.items.map((v) => [v.event.id, v.readOnly])).toEqual([
+      [viejo, true],
+      [activo, false],
+    ])
+    // La de `activo` quedó creada: abrirla otra vez da el mismo id.
+    expect(await real.abrirSala(activo, solo)).toBe(r.items[1]?.id)
+  })
+
+  it('mensajes con hasta: corta en el tope; con null, vacía', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    await miembro(eventId, plannerId, 'PLANNER')
+    const cuerpos = new Map<string, string>()
+    const sala = await abrirSalaEnAmbos(eventId, parejaId)
+    if (sala === null) throw new Error('sin sala')
+    await enviarEnSala(sala, parejaId, 'a', 1, cuerpos)
+    const b = await enviarEnSala(sala, parejaId, 'b', 2, cuerpos)
+    await enviarEnSala(sala, parejaId, 'c', 3, cuerpos)
+
+    for (const [quien, repo] of implementaciones()) {
+      const tope = await repo.mensaje(idDe(sala, quien), idDe(b, quien))
+      if (tope === null) throw new Error('sin mensaje')
+      const hasta = { at: tope.createdAt, id: tope.id }
+      const cortada = await repo.mensajes(idDe(sala, quien), { desde: null, limite: 1, hasta })
+      expect(cortada.items.map((x) => x.body)).toEqual(['b'])
+      expect(cortada.nextCursor).not.toBeNull()
+      const vacia = await repo.mensajes(idDe(sala, quien), { desde: null, limite: 5, hasta: null })
+      expect(vacia).toEqual({ items: [], nextCursor: null })
+    }
+  })
+
+  it('marcasDeSala y destinatariosDe devuelven lo mismo en los dos', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    await miembro(eventId, plannerId, 'PLANNER')
+    const cuerpos = new Map<string, string>()
+    const sala = await abrirSalaEnAmbos(eventId, parejaId)
+    if (sala === null) throw new Error('sin sala')
+    const m = await enviarEnSala(sala, parejaId, 'hola', 1, cuerpos)
+    await miembro(eventId, invitadoId, 'PLANNER')
+    await abrirSalaEnAmbos(eventId, invitadoId)
+
+    const resultados = []
+    for (const [quien, repo] of implementaciones()) {
+      expect(await repo.marcar(idDe(sala, quien), plannerId, 'read', idDe(m, quien))).not.toBe(
+        false,
+      )
+      expect(await repo.tipoDe(idDe(sala, quien))).toBe('EVENT_ROOM')
+      expect(await repo.tipoDe(randomUUID())).toBeNull()
+      const marcas = ordenados(await repo.marcasDeSala(idDe(sala, quien)))
+      const destinatarios = await repo.destinatariosDe([idDe(m, quien), randomUUID()])
+      resultados.push({
+        marcas: marcas.map((x) => ({
+          userId: x.userId,
+          displayName: x.displayName,
+          role: x.role,
+          deliveredUpTo: x.deliveredUpTo === null,
+          readUpTo: x.readUpTo?.id === idDe(m, quien),
+        })),
+        destinatarios: [...destinatarios.values()],
+        claves: destinatarios.size,
+      })
+    }
+    expect(resultados[0]).toEqual(resultados[1])
+    expect(resultados[0]).toMatchObject({ destinatarios: [[plannerId]], claves: 1 })
+    expect(resultados[0]?.marcas).toHaveLength(3)
+  })
+
+  it('miembrosDeSala lista los ACTIVE de hoy, con o sin fila de participante, y devuelve lo mismo en los dos', async () => {
+    const eventId = await nuevoEvento(true)
+    const revocado = await crearUsuario('revocado@paridad.test', 'Zeta Revocado')
+    const invitado = await crearUsuario('invitado2@paridad.test', 'Beta Invitado')
+    const tardio = await crearUsuario('tardio@paridad.test', 'Alfa Tardío')
+    for (const [id, nombre] of [
+      [revocado, 'Zeta Revocado'],
+      [invitado, 'Beta Invitado'],
+      [tardio, 'Alfa Tardío'],
+    ] as const) {
+      nombres.set(id, nombre)
+    }
+    await miembro(eventId, parejaId, 'COUPLE')
+    await miembro(eventId, plannerId, 'PLANNER')
+    await miembro(eventId, revocado, 'PLANNER')
+    await proveedor(eventId, proveedorId, true)
+    const cuerpos = new Map<string, string>()
+    const sala = await abrirSalaEnAmbos(eventId, parejaId)
+    if (sala === null) throw new Error('sin sala')
+    // El revocado llega a participar (recibe un mensaje) y luego sale.
+    await enviarEnSala(sala, parejaId, 'hola', 1, cuerpos)
+    await miembro(eventId, revocado, 'PLANNER', 'REVOKED')
+    await miembro(eventId, invitado, 'PLANNER', 'INVITED')
+    // ACTIVE desde ahora, pero nunca abrió la sala: no tiene fila de participante.
+    await miembro(eventId, tardio, 'PLANNER')
+
+    const esperado = [
+      { userId: tardio, displayName: 'Alfa Tardío', role: 'PLANNER' },
+      { userId: parejaId, displayName: 'Pareja', role: 'COUPLE' },
+      { userId: plannerId, displayName: 'Planner', role: 'PLANNER' },
+    ]
+    for (const [quien, repo] of implementaciones()) {
+      expect(await repo.miembrosDeSala(idDe(sala, quien))).toEqual(esperado)
+      expect(await repo.miembrosDeSala(randomUUID())).toEqual([])
+    }
+    // `marcasDeSala` no sirve para esto: trae al revocado y omite al tardío.
+    for (const [quien, repo] of implementaciones()) {
+      const ids = (await repo.marcasDeSala(idDe(sala, quien))).map((x) => x.userId)
+      expect(ids).toContain(revocado)
+      expect(ids).not.toContain(tardio)
     }
   })
 })

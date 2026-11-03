@@ -37,6 +37,36 @@ export interface MarcasDeParticipante {
 }
 
 /**
+ * La sala del evento vista por un usuario (parte 2). Está en ella quien es
+ * miembro ACTIVE hoy; un miembro que dejó de serlo y llegó a participar la ve
+ * en solo lectura y SÓLO hasta que salió (`visibleHasta`). Proveedores, admins
+ * sin membresía y quien nunca participó no la ven.
+ */
+export interface SalaVista {
+  id: string
+  event: { id: string; name: string }
+  /** Miembros ACTIVE del evento hoy. */
+  memberCount: number
+  lastMessage: MensajeVista | null
+  /** Mensajes en los que soy destinatario posteriores a MI marca de lectura. */
+  unreadCount: number
+  /** No soy miembro ACTIVE hoy: leo lo que había hasta que salí, no escribo. */
+  readOnly: boolean
+  /**
+   * Sólo con `readOnly`: el último mensaje que puedo ver (el último en el que
+   * fui remitente o destinatario); null = ninguno. Sin `readOnly`, null.
+   */
+  visibleHasta: Marca | null
+}
+
+/** Las marcas de un participante de la sala, con quién es, para "leído por". */
+export interface MarcaDeMiembro extends MarcasDeParticipante {
+  userId: string
+  displayName: string
+  role: 'COUPLE' | 'PLANNER'
+}
+
+/**
  * Puerto de las conversaciones 1:1 de un evento.
  *
  * "Acceso hoy" (spec §4): miembro ACTIVE (pareja o planner, el evento esté o
@@ -71,10 +101,14 @@ export interface ConversationRepository {
   /** Las visibles de `userId`, por `lastMessageAt` desc (sin mensajes al final). */
   bandeja(userId: string): Promise<{ items: ConversacionVista[]; unreadTotal: number }>
 
-  /** Más recientes primero, orden total (createdAt, id). */
+  /**
+   * Más recientes primero, orden total (createdAt, id). `hasta` es el tope de
+   * quien lee la sala en solo lectura: sin él (undefined) no hay tope; con
+   * null la página sale vacía (no puede ver ningún mensaje).
+   */
   mensajes(
     conversationId: string,
-    opciones: { desde: CursorValue | null; limite: number },
+    opciones: { desde: CursorValue | null; limite: number; hasta?: Marca | null | undefined },
   ): Promise<CursorPage<MensajeVista>>
 
   /** Guarda el mensaje y mueve `lastMessageAt` en la misma transacción. */
@@ -97,6 +131,58 @@ export interface ConversationRepository {
   ): Promise<MarcasDeParticipante | false>
 
   participantes(conversationId: string): Promise<string[]>
+
+  /**
+   * Sala del evento (parte 2). Si `userId` es miembro ACTIVE, la crea si falta
+   * y le asegura su fila de participante (idempotente y a prueba de choques,
+   * como `abrir`); devuelve su id. Si no lo es, devuelve el id de la sala si ya
+   * existe o null, sin crear nada. Decidir si la ve es cosa de `buscarSala`.
+   */
+  abrirSala(eventId: string, userId: string): Promise<string | null>
+
+  /** null si no es una sala o `userId` no puede verla (ver `SalaVista`). */
+  buscarSala(conversationId: string, userId: string): Promise<SalaVista | null>
+
+  /**
+   * Las salas de `userId`: la de cada evento donde es ACTIVE (creándola si
+   * falta) y las de solo lectura de eventos de los que salió. Mismo orden que
+   * `bandeja`. `unreadTotal` es sólo de las salas.
+   */
+  salas(userId: string): Promise<{ items: SalaVista[]; unreadTotal: number }>
+
+  /**
+   * Guarda un mensaje de sala y FIJA sus destinatarios (miembros ACTIVE del
+   * evento en ese instante, sin el remitente) en la misma transacción, junto a
+   * sus filas de participante y `lastMessageAt`.
+   */
+  agregarMensajeDeSala(
+    conversationId: string,
+    senderId: string,
+    body: string,
+    ahora: Date,
+  ): Promise<{ mensaje: MensajeVista; destinatarios: string[] }>
+
+  /** Las marcas de cada participante de la sala, con su nombre y su rol. */
+  marcasDeSala(conversationId: string): Promise<MarcaDeMiembro[]>
+
+  /**
+   * Los miembros de la sala HOY: las membresías ACTIVE de rol COUPLE/PLANNER
+   * del evento (el mismo conjunto que cuenta `memberCount`; los proveedores
+   * nunca), con o sin fila de participante, ordenados por nombre y luego id.
+   * Distinto de `marcasDeSala`, que lista filas de participante (incluye a
+   * quien salió y omite a quien aún no abrió la sala). [] si no es una sala.
+   */
+  miembrosDeSala(conversationId: string): Promise<Contacto[]>
+
+  /**
+   * El tipo de la conversación, sin mirar quién pregunta (null si no existe).
+   * Lo usa el worker, que debe distinguir sala de 1:1 aunque el remitente ya
+   * no la vea.
+   */
+  tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | null>
+
+  /** Destinatarios fijados de cada mensaje pedido (los que no tienen, ausentes). */
+  destinatariosDe(messageIds: readonly string[]): Promise<Map<string, string[]>>
 }
 
 export const CONVERSATION_REPOSITORY = Symbol('CONVERSATION_REPOSITORY')

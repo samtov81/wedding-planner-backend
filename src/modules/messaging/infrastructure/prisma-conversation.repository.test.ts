@@ -121,4 +121,31 @@ describe('PrismaConversationRepository', () => {
     expect(new Set(resultados.map((r) => r.id)).size).toBe(1)
     expect(resultados.filter((r) => r.creada)).toHaveLength(1)
   })
+
+  it('dos abrirSala concurrentes del mismo evento crean una sola sala', async () => {
+    const evento = await prisma.event.create({ data: { name: 'Sala', ownerId: aId } })
+    await prisma.eventMembership.createMany({
+      data: [
+        { eventId: evento.id, userId: aId, role: 'COUPLE', status: 'ACTIVE' },
+        { eventId: evento.id, userId: bId, role: 'PLANNER', status: 'ACTIVE' },
+      ],
+    })
+
+    const ids = await Promise.all(
+      Array.from({ length: 8 }, (_, i) => repo.abrirSala(evento.id, i % 2 === 0 ? aId : bId)),
+    )
+
+    expect(new Set(ids).size).toBe(1)
+    expect(await prisma.conversation.count({ where: { eventId: evento.id } })).toBe(1)
+    expect(
+      await prisma.conversationParticipant.count({ where: { conversationId: ids[0] ?? '' } }),
+    ).toBe(2)
+  })
+
+  it('el CHECK rechaza una sala con pairKey ajena', async () => {
+    await expect(
+      prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey")
+        VALUES (gen_random_uuid(), 'EVENT_ROOM'::"ConversationKind", ${eventId}::uuid, 'room:otra')`,
+    ).rejects.toThrow(/conversations_sala_clave/)
+  })
 })

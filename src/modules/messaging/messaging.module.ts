@@ -11,15 +11,18 @@ import { CONVERSATION_REPOSITORY } from './application/conversation.repository'
 import { ListContactsUseCase } from './application/list-contacts.use-case'
 import { ListConversationsUseCase } from './application/list-conversations.use-case'
 import { ListMessagesUseCase } from './application/list-messages.use-case'
+import { ListRoomReadersUseCase } from './application/list-room-readers.use-case'
+import { ListRoomsUseCase } from './application/list-rooms.use-case'
 import { MarkConversationUseCase } from './application/mark-conversation.use-case'
 import { OpenConversationUseCase } from './application/open-conversation.use-case'
+import { OpenRoomUseCase } from './application/open-room.use-case'
 import { SendMessageUseCase } from './application/send-message.use-case'
 import { PrismaConversationRepository } from './infrastructure/prisma-conversation.repository'
 import { ConversationsController } from './interfaces/conversations.controller'
 import { MessagingProcessor } from './interfaces/messaging.processor'
 
 /**
- * Mensajería 1:1 por evento (parte 1: REST). `AuthModule` + `UsersModule` se
+ * Mensajería por evento: 1:1 (parte 1) y sala del evento (parte 2). `AuthModule` + `UsersModule` se
  * importan para que `JwtAuthGuard` resuelva con el mismo `TokenService` que el
  * resto del REST. `NotificationsModule` aporta `REALTIME_PORT` (el emisor de
  * Socket.IO sobre Redis) y `registerQueue` monta `MessagingProcessor` sobre la
@@ -46,6 +49,9 @@ import { MessagingProcessor } from './interfaces/messaging.processor'
     ListMessagesUseCase,
     SendMessageUseCase,
     MarkConversationUseCase,
+    ListRoomsUseCase,
+    OpenRoomUseCase,
+    ListRoomReadersUseCase,
     MessagingProcessor,
   ],
 })

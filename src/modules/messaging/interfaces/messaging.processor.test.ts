@@ -19,6 +19,13 @@ const EVENTO = randomUUID()
 const PAREJA = randomUUID()
 const PROV = randomUUID()
 
+const clave = (d: { eventId: string } | { userId: string }): string =>
+  'userId' in d ? d.userId : d.eventId
+const porUsuario = (
+  x: { eventId: string } | { userId: string },
+  y: { eventId: string } | { userId: string },
+): number => (clave(x) < clave(y) ? -1 : 1)
+
 describe('MessagingProcessor', () => {
   let repo: ConversationRepositoryEnMemoria
   let realtime: RealtimePortEnMemoria
@@ -133,5 +140,66 @@ describe('MessagingProcessor', () => {
     await expect(
       procesador.process(job(EVENTO_MENSAJE_CREADO, { conversationId, messageId: m.id })),
     ).rejects.toThrow('redis caído')
+  })
+
+  describe('sala del evento', () => {
+    const PLANNER = randomUUID()
+    const TARDE = randomUUID()
+    let salaId: string
+
+    beforeEach(async () => {
+      repo.registrarMiembro(EVENTO, PLANNER, 'PLANNER', 'ACTIVE', 'Planner')
+      salaId = (await repo.abrirSala(EVENTO, PAREJA)) ?? ''
+    })
+
+    it('message.created va al remitente y a sus destinatarios, nunca al proveedor', async () => {
+      const { mensaje } = await repo.agregarMensajeDeSala(salaId, PAREJA, 'hola', new Date(1000))
+
+      await procesador.process(
+        job(EVENTO_MENSAJE_CREADO, { conversationId: salaId, messageId: mensaje.id }),
+      )
+
+      expect(realtime.emitidas.map((e) => e.destino).sort(porUsuario)).toEqual(
+        [{ userId: PAREJA }, { userId: PLANNER }].sort(porUsuario),
+      )
+    })
+
+    it('un participante revocado no recibe un mensaje posterior a su salida', async () => {
+      await repo.agregarMensajeDeSala(salaId, PAREJA, 'antes', new Date(1000))
+      repo.registrarMiembro(EVENTO, PLANNER, 'PLANNER', 'REVOKED', 'Planner')
+      repo.registrarMiembro(EVENTO, TARDE, 'PLANNER', 'ACTIVE', 'Tarde')
+      const { mensaje } = await repo.agregarMensajeDeSala(salaId, PAREJA, 'después', new Date(2000))
+
+      await procesador.process(
+        job(EVENTO_MENSAJE_CREADO, { conversationId: salaId, messageId: mensaje.id }),
+      )
+
+      expect(realtime.emitidas.map((e) => e.destino).sort(porUsuario)).toEqual(
+        [{ userId: PAREJA }, { userId: TARDE }].sort(porUsuario),
+      )
+    })
+
+    it('message.receipt lleva las marcas de quien marcó y no le llega a él', async () => {
+      const { mensaje } = await repo.agregarMensajeDeSala(salaId, PAREJA, 'hola', new Date(1000))
+      await repo.marcar(salaId, PLANNER, 'read', mensaje.id)
+
+      await procesador.process(
+        job(EVENTO_MENSAJE_RECIBO, { conversationId: salaId, userId: PLANNER }),
+      )
+
+      const marca = { at: mensaje.createdAt.toISOString(), id: mensaje.id }
+      expect(realtime.emitidas).toEqual([
+        {
+          destino: { userId: PAREJA },
+          tipo: 'message.receipt',
+          payload: {
+            conversationId: salaId,
+            userId: PLANNER,
+            deliveredUpTo: null,
+            readUpTo: marca,
+          },
+        },
+      ])
+    })
   })
 })

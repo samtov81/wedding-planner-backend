@@ -13,9 +13,13 @@ import {
   type ConversationRepository,
   type MensajeVista,
 } from './conversation.repository'
+import { localizarConversacion } from './localizar-conversacion'
 
 /**
- * Envía un mensaje. Escribir exige que AMBOS participantes tengan acceso hoy:
+ * Envía un mensaje a una 1:1 o a la sala del evento. En la sala escribe quien
+ * es miembro ACTIVE hoy (si no, `readOnly` → 403) y los destinatarios se fijan
+ * al guardar (`agregarMensajeDeSala`). En una 1:1, escribir exige que AMBOS
+ * participantes tengan acceso hoy:
  * si no (`readOnly`) es un 403. Quien no participa recibe el mismo 404 que con
  * un id inexistente. El cuerpo se normaliza aquí (segunda barrera tras Zod).
  *
@@ -42,11 +46,19 @@ export class SendMessageUseCase {
     conversationId: string,
     texto: string,
   ): Promise<{ mensaje: MensajeVista; destinatarios: string[] }> {
-    const vista = await this.repo.buscar(conversationId, userId)
-    if (vista === null) throw new ConversacionNoEncontradaError()
-    if (vista.readOnly) throw new ConversacionSoloLecturaError()
+    const localizada = await localizarConversacion(this.repo, conversationId, userId)
+    if (localizada === null) throw new ConversacionNoEncontradaError()
+    if (localizada.vista.readOnly) throw new ConversacionSoloLecturaError()
 
     const cuerpo = normalizarCuerpo(texto)
+    if (localizada.tipo === 'sala') {
+      const r = await this.repo.agregarMensajeDeSala(conversationId, userId, cuerpo, new Date())
+      await encolarAvisoMensaje(this.cola, this.registro, {
+        conversationId,
+        messageId: r.mensaje.id,
+      })
+      return r
+    }
     const mensaje = await this.repo.agregarMensaje(conversationId, userId, cuerpo, new Date())
     await encolarAvisoMensaje(this.cola, this.registro, { conversationId, messageId: mensaje.id })
     const participantes = await this.repo.participantes(conversationId)

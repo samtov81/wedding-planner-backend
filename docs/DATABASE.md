@@ -86,7 +86,12 @@ That `seatIndex < seatCount` of its table, and that the person fits the guest's 
 
 ### `conversations`
 
-A messaging conversation. `kind` is `ConversationKind` (`EVENT_DIRECT` | `EVENT_ROOM` | `PROFILE`); only `EVENT_DIRECT` (1:1 inside an event) is used so far, the other two are reserved. `eventId` is nullable (`onDelete: Cascade`: deleting the event deletes its conversations, participants and messages). `pairKey` is `unique` and holds `eventId:smaller:larger` (the two user ids ordered), so there is at most one direct conversation per event and pair, whoever opens it; it is null for kinds without a pair (nulls do not collide). `lastMessageAt` is null until the first message.
+A messaging conversation. `kind` is `ConversationKind` (`EVENT_DIRECT` | `EVENT_ROOM` | `PROFILE`): `EVENT_DIRECT` is 1:1 inside an event, `EVENT_ROOM` is the event's group room (couple and planners, never vendors), `PROFILE` is reserved. `eventId` is nullable (`onDelete: Cascade`: deleting the event deletes its conversations, participants and messages). `pairKey` is `unique` and holds `eventId:smaller:larger` (the two user ids ordered), so there is at most one direct conversation per event and pair, whoever opens it; it is null for kinds without a pair (nulls do not collide). `lastMessageAt` is null until the first message.
+
+An `EVENT_ROOM` has `pairKey = 'room:<eventId>'`, so the same `unique` allows one room per event; it is created lazily the first time someone opens or lists it.
+
+CHECK constraints:
+- `conversations_sala_clave` — an `EVENT_ROOM` has `eventId` and its `pairKey` is `'room:' || eventId`.
 
 Enforced by the use cases, not by the database: that a direct conversation has `eventId` and `pairKey`, that its two participants are allowed together (member↔member and member↔vendor, never vendor↔vendor) and that both have access to the event when it is opened.
 
@@ -108,6 +113,14 @@ CHECK constraints:
 - `messages_cuerpo_longitud` — `char_length(btrim(body))` is between 1 and 2000.
 
 That the sender is a participant of the conversation and still has access to the event is enforced by the use cases.
+
+### `message_recipients`
+
+Recipients of a message in an event room, fixed when the message is sent: the event's ACTIVE members at that instant, without the sender. Primary key `(messageId, userId)`, both `onDelete: Cascade`; indexed by `(userId, messageId)`. Direct conversations do not use it.
+
+It is the only record of who was in the room when (memberships keep no history: re-inviting reuses the row). It fixes the M of "read by N of M", how far a member who left can still read (their last message as sender or recipient) and the unread count of someone who joined late (only messages they are a recipient of).
+
+Enforced by the use cases, not by the database: that the recipients are exactly the ACTIVE members at send time and never the sender or a vendor.
 
 ## Development Workflow
 

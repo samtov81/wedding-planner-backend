@@ -16,6 +16,7 @@ import {
   CONVERSATION_REPOSITORY,
   type ConversationRepository,
 } from '../application/conversation.repository'
+import { alcanza } from '../domain/conversacion'
 import { mensajeJson, otherMarksJson } from './messaging.json'
 
 /**
@@ -57,6 +58,13 @@ function leer<T>(esquema: z.ZodType<T>, job: Job): T {
  * va sólo a los demás: las otras sesiones de quien marca aún no reciben sus
  * propios recibos (parte 4).
  *
+ * En la SALA del evento (parte 2), `message.created` va al remitente y a los
+ * destinatarios FIJADOS de ese mensaje, no a todos los participantes: un
+ * miembro que salió sigue siendo participante (lee en solo lectura) y no debe
+ * recibir lo escrito después de irse. Igualmente se re-comprueba cada uno
+ * (`buscarSala` y su `visibleHasta`). `message.receipt` va a cada participante
+ * que aún ve la sala, con las marcas de quien marcó (`marcasDeSala`).
+ *
  * Un nombre de job DESCONOCIDO falla con `UnrecoverableError` (en BullMQ,
  * retornar marca el job completado y ignorarlo lo borraría en silencio). Los
  * errores de emisión SALEN, para que BullMQ reintente con la política común.
@@ -87,6 +95,18 @@ export class MessagingProcessor extends WorkerHost {
     const mensaje = await this.repo.mensaje(conversationId, messageId)
     if (mensaje === null) return
     const cuerpo = { conversationId, message: mensajeJson(mensaje) }
+
+    if ((await this.repo.tipoDe(conversationId)) === 'EVENT_ROOM') {
+      const fijados = (await this.repo.destinatariosDe([messageId])).get(messageId) ?? []
+      const marca = { at: mensaje.createdAt, id: mensaje.id }
+      for (const destinatario of [mensaje.senderId, ...fijados]) {
+        const vista = await this.repo.buscarSala(conversationId, destinatario)
+        if (vista === null || (vista.readOnly && !alcanza(vista.visibleHasta, marca))) continue
+        await this.tiempoReal.emitirAUsuario(destinatario, EVENTO_MENSAJE_CREADO, cuerpo)
+      }
+      return
+    }
+
     for (const destinatario of await this.repo.participantes(conversationId)) {
       // También al emisor (sus otras sesiones), tras la misma comprobación.
       if ((await this.repo.buscar(conversationId, destinatario)) === null) continue
@@ -95,6 +115,22 @@ export class MessagingProcessor extends WorkerHost {
   }
 
   private async recibo({ conversationId, userId }: JobRecibo): Promise<void> {
+    if ((await this.repo.tipoDe(conversationId)) === 'EVENT_ROOM') {
+      const marcas = await this.repo.marcasDeSala(conversationId)
+      const deQuienMarco = marcas.find((m) => m.userId === userId)
+      if (deQuienMarco === undefined) return
+      for (const { userId: destinatario } of marcas) {
+        if (destinatario === userId) continue
+        if ((await this.repo.buscarSala(conversationId, destinatario)) === null) continue
+        await this.tiempoReal.emitirAUsuario(destinatario, EVENTO_MENSAJE_RECIBO, {
+          conversationId,
+          userId,
+          ...otherMarksJson(deQuienMarco),
+        })
+      }
+      return
+    }
+
     for (const destinatario of await this.repo.participantes(conversationId)) {
       if (destinatario === userId) continue
       const vista = await this.repo.buscar(conversationId, destinatario)

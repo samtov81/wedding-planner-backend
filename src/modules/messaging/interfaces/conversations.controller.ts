@@ -14,8 +14,11 @@ import type { Contacto, ConversacionVista } from '../application/conversation.re
 import { ListContactsUseCase } from '../application/list-contacts.use-case'
 import { ListConversationsUseCase } from '../application/list-conversations.use-case'
 import { ListMessagesUseCase } from '../application/list-messages.use-case'
+import { ListRoomReadersUseCase } from '../application/list-room-readers.use-case'
+import { ListRoomsUseCase } from '../application/list-rooms.use-case'
 import { MarkConversationUseCase } from '../application/mark-conversation.use-case'
 import { OpenConversationUseCase } from '../application/open-conversation.use-case'
+import { OpenRoomUseCase } from '../application/open-room.use-case'
 import { SendMessageUseCase } from '../application/send-message.use-case'
 import { ConversacionNoEncontradaError } from '../domain/messaging-errors'
 import {
@@ -26,10 +29,18 @@ import {
   marcarSchema,
 } from './messaging.dto'
 import {
+  marcaDeMiembroJson,
+  mensajeDeSalaJson,
   mensajeJson,
+  miembroDeSalaJson,
   otherMarksJson,
+  salaJson,
+  type MarcaDeMiembroJson,
+  type MensajeDeSalaJson,
   type MensajeJson,
+  type MiembroDeSalaJson,
   type OtherMarksJson,
+  type SalaJson,
 } from './messaging.json'
 
 interface ConversacionJson {
@@ -52,8 +63,20 @@ const conversacionJson = (c: ConversacionVista): ConversacionJson => ({
   otherMarks: otherMarksJson(c.otherMarks),
 })
 
+/** Página de mensajes: la 1:1 trae las marcas del otro; la sala, las de todos. */
+type PaginaJson =
+  | { items: MensajeJson[]; nextCursor: string | null; otherMarks: OtherMarksJson }
+  | {
+      items: MensajeDeSalaJson[]
+      nextCursor: string | null
+      marks: MarcaDeMiembroJson[]
+      members: MiembroDeSalaJson[]
+    }
+
 /**
- * Mensajería 1:1 dentro de un evento (parte 1: sólo REST).
+ * Mensajería dentro de un evento: conversaciones 1:1 (parte 1) y la sala de
+ * grupo del evento (parte 2). Las rutas `conversations/:id/...` sirven a las
+ * dos; quién es quién lo decide `localizarConversacion`.
  *
  * Sólo `JwtAuthGuard`, SIN `EventAccessGuard`, a propósito: la regla de acceso
  * de mensajería difiere de la del resto del evento. Un administrador del
@@ -79,7 +102,40 @@ export class ConversationsController {
     private readonly mensajes: ListMessagesUseCase,
     private readonly enviar: SendMessageUseCase,
     private readonly marcar: MarkConversationUseCase,
+    private readonly salas: ListRoomsUseCase,
+    private readonly abrirSala: OpenRoomUseCase,
+    private readonly lectores: ListRoomReadersUseCase,
   ) {}
+
+  /** Las salas van aparte de `me/conversations` (ver `ListRoomsUseCase`). */
+  @Get('me/rooms')
+  async misSalas(
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+  ): Promise<{ items: SalaJson[]; unreadTotal: number }> {
+    const r = await this.salas.ejecutar(exigirUsuario(usuario).id)
+    return { items: r.items.map(salaJson), unreadTotal: r.unreadTotal }
+  }
+
+  /** La sala del evento; la crea si falta. Proveedor, admin o ajeno: 403. */
+  @Get('events/:eventId/room')
+  async salaDelEvento(
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+    @Param('eventId') eventId: string,
+  ): Promise<SalaJson> {
+    const yo = exigirUsuario(usuario)
+    return salaJson(await this.abrirSala.ejecutar(yo.id, idDeEvento(eventId)))
+  }
+
+  /** Quién leyó uno de MIS mensajes de sala; a cualquier otro, 404. */
+  @Get('conversations/:id/messages/:messageId/readers')
+  async lectoresDeMensaje(
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+    @Param('id') id: string,
+    @Param('messageId') messageId: string,
+  ): Promise<{ read: Contacto[]; unread: Contacto[] }> {
+    const yo = exigirUsuario(usuario)
+    return await this.lectores.ejecutar(yo.id, idDeConversacion(id), idDeConversacion(messageId))
+  }
 
   @Get('me/conversations')
   async miBandeja(@CurrentUser() usuario: UsuarioAutenticado | undefined): Promise<{
@@ -119,13 +175,21 @@ export class ConversationsController {
     @CurrentUser() usuario: UsuarioAutenticado | undefined,
     @Param('id') id: string,
     @Query() query: unknown,
-  ): Promise<{ items: MensajeJson[]; nextCursor: string | null; otherMarks: OtherMarksJson }> {
+  ): Promise<PaginaJson> {
     const yo = exigirUsuario(usuario)
     const { cursor, limit } = validarCon(listarMensajesQuerySchema, query)
     const r = await this.mensajes.ejecutar(yo.id, idDeConversacion(id), {
       desde: cursor === undefined ? null : decodeCursor(cursor),
       limite: limit,
     })
+    if (r.tipo === 'sala') {
+      return {
+        items: r.pagina.items.map((m) => mensajeDeSalaJson(m, r.recibos.get(m.id))),
+        nextCursor: r.pagina.nextCursor,
+        marks: r.marks.map(marcaDeMiembroJson),
+        members: r.members.map(miembroDeSalaJson),
+      }
+    }
     return {
       items: r.pagina.items.map(mensajeJson),
       nextCursor: r.pagina.nextCursor,

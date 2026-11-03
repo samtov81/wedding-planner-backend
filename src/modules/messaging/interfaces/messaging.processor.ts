@@ -7,8 +7,10 @@ import { REALTIME_PORT, type RealtimePort } from '@/modules/notifications/applic
 
 import {
   COLA_MENSAJERIA,
+  EVENTO_CONTACTO_ACTUALIZADO,
   EVENTO_MENSAJE_CREADO,
   EVENTO_MENSAJE_RECIBO,
+  type JobContactoActualizado,
   type JobMensajeCreado,
   type JobRecibo,
 } from '../application/avisos-mensajeria'
@@ -33,6 +35,12 @@ const reciboSchema = z.object({
   conversationId: z.guid(),
   userId: z.guid(),
 }) satisfies z.ZodType<JobRecibo>
+
+const contactoActualizadoSchema = z.object({
+  conversationId: z.guid(),
+  estado: z.enum(['PENDING', 'ACCEPTED', 'DECLINED']),
+  mensajeId: z.guid().nullable(),
+}) satisfies z.ZodType<JobContactoActualizado>
 
 function leer<T>(esquema: z.ZodType<T>, job: Job): T {
   const leido = esquema.safeParse(job.data)
@@ -65,6 +73,14 @@ function leer<T>(esquema: z.ZodType<T>, job: Job): T {
  * (`buscarSala` y su `visibleHasta`). `message.receipt` va a cada participante
  * que aún ve la sala, con las marcas de quien marcó (`marcasDeSala`).
  *
+ * En una conversación `PROFILE` (contacto desde la ficha) cada destinatario se
+ * re-comprueba con `buscarPerfil`: el proveedor de una solicitud RECHAZADA ya no
+ * la ve y no recibe nada. `contact.updated` es la excepción deliberada: va a
+ * TODOS los participantes, sin contenido (`{ conversationId }`), porque quien
+ * rechazó necesita saber que la conversación desapareció en sus otras pestañas
+ * y el frontend vuelve a pedir la lista. Alternativa descartada: llevar el
+ * estado en el aviso, que filtraría al proveedor lo que ya no puede ver.
+ *
  * Un nombre de job DESCONOCIDO falla con `UnrecoverableError` (en BullMQ,
  * retornar marca el job completado y ignorarlo lo borraría en silencio). Los
  * errores de emisión SALEN, para que BullMQ reintente con la política común.
@@ -86,6 +102,9 @@ export class MessagingProcessor extends WorkerHost {
       case EVENTO_MENSAJE_RECIBO:
         await this.recibo(leer(reciboSchema, job))
         return
+      case EVENTO_CONTACTO_ACTUALIZADO:
+        await this.contactoActualizado(leer(contactoActualizadoSchema, job))
+        return
       default:
         throw new UnrecoverableError(`Job desconocido en la cola messaging: ${job.name}`)
     }
@@ -96,12 +115,21 @@ export class MessagingProcessor extends WorkerHost {
     if (mensaje === null) return
     const cuerpo = { conversationId, message: mensajeJson(mensaje) }
 
-    if ((await this.repo.tipoDe(conversationId)) === 'EVENT_ROOM') {
+    const tipo = await this.repo.tipoDe(conversationId)
+    if (tipo === 'EVENT_ROOM') {
       const fijados = (await this.repo.destinatariosDe([messageId])).get(messageId) ?? []
       const marca = { at: mensaje.createdAt, id: mensaje.id }
       for (const destinatario of [mensaje.senderId, ...fijados]) {
         const vista = await this.repo.buscarSala(conversationId, destinatario)
         if (vista === null || (vista.readOnly && !alcanza(vista.visibleHasta, marca))) continue
+        await this.tiempoReal.emitirAUsuario(destinatario, EVENTO_MENSAJE_CREADO, cuerpo)
+      }
+      return
+    }
+
+    if (tipo === 'PROFILE') {
+      for (const destinatario of await this.repo.participantes(conversationId)) {
+        if ((await this.repo.buscarPerfil(conversationId, destinatario)) === null) continue
         await this.tiempoReal.emitirAUsuario(destinatario, EVENTO_MENSAJE_CREADO, cuerpo)
       }
       return
@@ -115,7 +143,8 @@ export class MessagingProcessor extends WorkerHost {
   }
 
   private async recibo({ conversationId, userId }: JobRecibo): Promise<void> {
-    if ((await this.repo.tipoDe(conversationId)) === 'EVENT_ROOM') {
+    const tipo = await this.repo.tipoDe(conversationId)
+    if (tipo === 'EVENT_ROOM') {
       const marcas = await this.repo.marcasDeSala(conversationId)
       const deQuienMarco = marcas.find((m) => m.userId === userId)
       if (deQuienMarco === undefined) return
@@ -133,7 +162,10 @@ export class MessagingProcessor extends WorkerHost {
 
     for (const destinatario of await this.repo.participantes(conversationId)) {
       if (destinatario === userId) continue
-      const vista = await this.repo.buscar(conversationId, destinatario)
+      const vista =
+        tipo === 'PROFILE'
+          ? await this.repo.buscarPerfil(conversationId, destinatario)
+          : await this.repo.buscar(conversationId, destinatario)
       if (vista === null) continue
       // Desde la vista del destinatario, `otherMarks` son las marcas de quien
       // marcó: justo lo que hay que enseñarle, tal y como están ahora.
@@ -141,6 +173,15 @@ export class MessagingProcessor extends WorkerHost {
         conversationId,
         userId,
         ...otherMarksJson(vista.otherMarks),
+      })
+    }
+  }
+
+  private async contactoActualizado({ conversationId }: JobContactoActualizado): Promise<void> {
+    // Sin comprobar visibilidad ni llevar contenido: ver el docblock de la clase.
+    for (const destinatario of await this.repo.participantes(conversationId)) {
+      await this.tiempoReal.emitirAUsuario(destinatario, EVENTO_CONTACTO_ACTUALIZADO, {
+        conversationId,
       })
     }
   }

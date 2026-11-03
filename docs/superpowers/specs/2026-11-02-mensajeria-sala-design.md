@@ -74,6 +74,13 @@ grupo, el estado es "leído por N de M" y se puede ver quién lo leyó.
   `marks` = por participante `{ userId, displayName, role, deliveredUpTo,
   readUpTo }`; mis mensajes llevan `recipientIds` y `receipts { total,
   delivered, read }`. En solo lectura, sólo hasta que salí.
+  Además `members` = `{ userId, displayName, role: 'COUPLE' | 'PLANNER' }[]`:
+  las membresías ACTIVE de hoy (el conjunto que cuenta `memberCount`; nunca
+  proveedores), por nombre y luego id, con o sin fila de participante. Es
+  distinto de `marks`, que sale de filas de participante (incluye a quien ya
+  salió, omite a quien aún no abrió la sala) y se conserva para el "N de M" de
+  destinatarios pasados. Alternativa descartada: deducir los miembros de
+  `marks`. Las 1:1 no llevan `members`.
 - `POST /conversations/:id/messages`, `/delivered`, `/read`: como en la parte
   1, sobre la sala.
 - `GET /conversations/:id/messages/:messageId/readers` → `{ read: Contacto[],

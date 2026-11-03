@@ -49,6 +49,18 @@ interface SituacionEnEvento {
   contratado: boolean
 }
 
+/** Orden de `miembrosDeSala`: nombre y, a igualdad, id. El doble repite el mismo criterio. */
+const porNombreYId = (a: Contacto, b: Contacto): number =>
+  a.displayName < b.displayName
+    ? -1
+    : a.displayName > b.displayName
+      ? 1
+      : a.userId < b.userId
+        ? -1
+        : a.userId > b.userId
+          ? 1
+          : 0
+
 /**
  * Adaptador de Prisma de `ConversationRepository`.
  *
@@ -453,6 +465,24 @@ export class PrismaConversationRepository implements ConversationRepository {
         },
       ]
     })
+  }
+
+  async miembrosDeSala(conversationId: string): Promise<Contacto[]> {
+    const cliente = clienteDe(this.prisma)
+    const sala = await cliente.conversation.findUnique({
+      where: { id: conversationId },
+      select: { eventId: true, kind: true },
+    })
+    if (sala?.eventId == null || sala.kind !== 'EVENT_ROOM') return []
+    const filas = await cliente.eventMembership.findMany({
+      where: { eventId: sala.eventId, status: 'ACTIVE' },
+      select: { role: true, user: { select: { id: true, fullName: true } } },
+    })
+    // Se ordena aquí y no en SQL: el doble ordena con `<` y la intercalación de
+    // Postgres podría discrepar en mayúsculas o acentos. Un solo criterio.
+    return filas
+      .map((m) => ({ userId: m.user.id, displayName: m.user.fullName, role: m.role }))
+      .sort(porNombreYId)
   }
 
   async tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | null> {

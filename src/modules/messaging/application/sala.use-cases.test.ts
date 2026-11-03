@@ -118,6 +118,25 @@ describe('casos de uso de la sala del evento', () => {
     expect(r.marcas.readUpTo?.id).toBe(m.mensaje.id)
   })
 
+  it('la página de la sala trae los miembros de hoy: sin revocados ni proveedores, con quien no abrió la sala', async () => {
+    const { repo, abrirSala, enviar, mensajes } = escenario()
+    const { id } = await abrirSala.ejecutar(PAREJA, EVENTO)
+    repo.registrarMiembro(EVENTO, 'u-revocado', 'PLANNER', 'ACTIVE', 'Revocado')
+    await enviar.ejecutar(PAREJA, id, 'hola')
+    repo.registrarMiembro(EVENTO, 'u-revocado', 'PLANNER', 'REVOKED', 'Revocado')
+    repo.registrarMiembro(EVENTO, TARDE, 'PLANNER', 'ACTIVE', 'Tarde')
+
+    const r = await mensajes.ejecutar(PAREJA, id, { desde: null, limite: 10 })
+    if (r.tipo !== 'sala') throw new Error('debía ser sala')
+    expect(r.members).toEqual([
+      { userId: PAREJA, displayName: 'Pareja', role: 'COUPLE' },
+      { userId: PLANNER, displayName: 'Planner', role: 'PLANNER' },
+      { userId: TARDE, displayName: 'Tarde', role: 'PLANNER' },
+    ])
+    // `marks` conserva a quien ya salió (hace falta para el "N de M" pasado).
+    expect(r.marks.map((x) => x.userId)).toContain('u-revocado')
+  })
+
   it('mensajes de sala: N de M sólo en mis mensajes y sube al leer', async () => {
     const { abrirSala, enviar, marcar, mensajes } = escenario()
     const { id } = await abrirSala.ejecutar(PAREJA, EVENTO)

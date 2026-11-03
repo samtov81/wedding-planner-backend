@@ -745,4 +745,47 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
     expect(resultados[0]).toMatchObject({ destinatarios: [[plannerId]], claves: 1 })
     expect(resultados[0]?.marcas).toHaveLength(3)
   })
+
+  it('miembrosDeSala lista los ACTIVE de hoy, con o sin fila de participante, y devuelve lo mismo en los dos', async () => {
+    const eventId = await nuevoEvento(true)
+    const revocado = await crearUsuario('revocado@paridad.test', 'Zeta Revocado')
+    const invitado = await crearUsuario('invitado2@paridad.test', 'Beta Invitado')
+    const tardio = await crearUsuario('tardio@paridad.test', 'Alfa Tardío')
+    for (const [id, nombre] of [
+      [revocado, 'Zeta Revocado'],
+      [invitado, 'Beta Invitado'],
+      [tardio, 'Alfa Tardío'],
+    ] as const) {
+      nombres.set(id, nombre)
+    }
+    await miembro(eventId, parejaId, 'COUPLE')
+    await miembro(eventId, plannerId, 'PLANNER')
+    await miembro(eventId, revocado, 'PLANNER')
+    await proveedor(eventId, proveedorId, true)
+    const cuerpos = new Map<string, string>()
+    const sala = await abrirSalaEnAmbos(eventId, parejaId)
+    if (sala === null) throw new Error('sin sala')
+    // El revocado llega a participar (recibe un mensaje) y luego sale.
+    await enviarEnSala(sala, parejaId, 'hola', 1, cuerpos)
+    await miembro(eventId, revocado, 'PLANNER', 'REVOKED')
+    await miembro(eventId, invitado, 'PLANNER', 'INVITED')
+    // ACTIVE desde ahora, pero nunca abrió la sala: no tiene fila de participante.
+    await miembro(eventId, tardio, 'PLANNER')
+
+    const esperado = [
+      { userId: tardio, displayName: 'Alfa Tardío', role: 'PLANNER' },
+      { userId: parejaId, displayName: 'Pareja', role: 'COUPLE' },
+      { userId: plannerId, displayName: 'Planner', role: 'PLANNER' },
+    ]
+    for (const [quien, repo] of implementaciones()) {
+      expect(await repo.miembrosDeSala(idDe(sala, quien))).toEqual(esperado)
+      expect(await repo.miembrosDeSala(randomUUID())).toEqual([])
+    }
+    // `marcasDeSala` no sirve para esto: trae al revocado y omite al tardío.
+    for (const [quien, repo] of implementaciones()) {
+      const ids = (await repo.marcasDeSala(idDe(sala, quien))).map((x) => x.userId)
+      expect(ids).toContain(revocado)
+      expect(ids).not.toContain(tardio)
+    }
+  })
 })

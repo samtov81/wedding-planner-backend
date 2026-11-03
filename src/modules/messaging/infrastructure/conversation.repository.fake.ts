@@ -324,6 +324,27 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     )
   }
 
+  miembrosDeSala(conversationId: string): Promise<Contacto[]> {
+    const sala = this.conversaciones.find((c) => c.id === conversationId)
+    if (sala?.kind !== 'EVENT_ROOM') return Promise.resolve([])
+    return Promise.resolve(
+      this.miembros
+        .filter((m) => m.eventId === sala.eventId && m.status === 'ACTIVE')
+        .map((m) => ({ userId: m.userId, displayName: m.fullName, role: m.role }))
+        .sort((a, b) =>
+          a.displayName !== b.displayName
+            ? a.displayName < b.displayName
+              ? -1
+              : 1
+            : a.userId < b.userId
+              ? -1
+              : a.userId > b.userId
+                ? 1
+                : 0,
+        ),
+    )
+  }
+
   tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | null> {
     return Promise.resolve(this.conversaciones.find((c) => c.id === conversationId)?.kind ?? null)
   }

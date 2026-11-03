@@ -6,6 +6,7 @@ import { resumenDeLectura } from '../domain/sala'
 import { ConversacionNoEncontradaError } from '../domain/messaging-errors'
 import {
   CONVERSATION_REPOSITORY,
+  type Contacto,
   type ConversacionVista,
   type ConversationRepository,
   type MarcaDeMiembro,
@@ -31,6 +32,8 @@ export type PaginaDeMensajes =
       tipo: 'sala'
       pagina: CursorPage<MensajeVista>
       marks: MarcaDeMiembro[]
+      /** Los miembros de la sala HOY (ACTIVE COUPLE/PLANNER), no los de `marks`. */
+      members: Contacto[]
       /** Sólo de los mensajes de quien pide: de los ajenos no ve a quién iban. */
       recibos: Map<string, ReciboDeSala>
     }
@@ -39,7 +42,12 @@ export type PaginaDeMensajes =
  * Una página de mensajes (más recientes primero) más lo necesario para pintar
  * sus estados. En una 1:1, las marcas del otro. En una sala, las marcas de
  * todos los participantes y, en MIS mensajes, sus destinatarios y "N de M"
- * (que el cliente puede recalcular al llegar un `message.receipt`). Quien
+ * (que el cliente puede recalcular al llegar un `message.receipt`) y los
+ * miembros de HOY (`members`): `marks` sale de filas de participante, que
+ * incluyen a quien ya salió y omiten a quien aún no abrió la sala, así que
+ * no sirve para listar quién está; se mantiene para el "N de M" de los
+ * destinatarios pasados. Alternativa descartada: derivar `members` de `marks`
+ * en el cliente, que no puede saber quién fue revocado. Quien
  * salió de la sala sólo ve hasta su `visibleHasta`. Una conversación ajena o
  * invisible es un 404 idéntico al de un id inexistente.
  */
@@ -65,8 +73,9 @@ export class ListMessagesUseCase {
       ...(sala.readOnly ? { hasta: sala.visibleHasta } : {}),
     })
     const mios = pagina.items.filter((m) => m.senderId === userId)
-    const [marks, destinatarios] = await Promise.all([
+    const [marks, members, destinatarios] = await Promise.all([
       this.repo.marcasDeSala(conversationId),
+      this.repo.miembrosDeSala(conversationId),
       mios.length === 0
         ? new Map<string, string[]>()
         : this.repo.destinatariosDe(mios.map((m) => m.id)),
@@ -78,6 +87,6 @@ export class ListMessagesUseCase {
       const resumen = resumenDeLectura(recipientIds, porId, { at: m.createdAt, id: m.id })
       recibos.set(m.id, { recipientIds, ...resumen })
     }
-    return { tipo: 'sala', pagina, marks, recibos }
+    return { tipo: 'sala', pagina, marks, members, recibos }
   }
 }

@@ -36,6 +36,7 @@ interface PaginaSalaCuerpo {
   items: MensajeCuerpo[]
   nextCursor: string | null
   marks: Array<{ userId: string; displayName: string; role: string }>
+  members: Array<{ userId: string; displayName: string; role: string }>
 }
 
 type Quien = 'pareja' | 'planner' | 'tarde' | 'prov' | 'admin'
@@ -281,6 +282,24 @@ describe('sala del evento e2e', () => {
     await membresia(id.planner, 'ACTIVE')
     expect((await pagina(t.planner, salaId)).items.map((m) => m.body)).toEqual(['después', 'antes'])
     await enviar(t.planner, salaId, 'he vuelto')
+  })
+
+  it('members lista los ACTIVE de hoy: sin revocados ni proveedores, con quien nunca abrió la sala', async () => {
+    const { id: salaId } = await sala(t.pareja)
+    await enviar(t.pareja, salaId, 'hola')
+    // El planner participa y luego sale; `tarde` es ACTIVE pero nunca abre la sala.
+    await membresia(id.planner, 'REVOKED')
+    await membresia(id.tarde, 'ACTIVE')
+
+    const r = await pagina(t.pareja, salaId)
+    expect(r.members).toEqual([
+      { userId: id.pareja, displayName: 'pareja', role: 'COUPLE' },
+      { userId: id.tarde, displayName: 'tarde', role: 'PLANNER' },
+    ])
+    expect(r.members.map((m) => m.userId)).not.toContain(id.prov)
+    // `marks` sigue listando filas de participante: incluye al revocado.
+    expect(r.marks.map((m) => m.userId)).toContain(id.planner)
+    expect((await sala(t.pareja)).memberCount).toBe(r.members.length)
   })
 
   it('las salas no salen en la bandeja 1:1', async () => {

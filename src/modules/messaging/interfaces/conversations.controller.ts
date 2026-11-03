@@ -32,11 +32,13 @@ import {
   marcaDeMiembroJson,
   mensajeDeSalaJson,
   mensajeJson,
+  miembroDeSalaJson,
   otherMarksJson,
   salaJson,
   type MarcaDeMiembroJson,
   type MensajeDeSalaJson,
   type MensajeJson,
+  type MiembroDeSalaJson,
   type OtherMarksJson,
   type SalaJson,
 } from './messaging.json'
@@ -64,7 +66,12 @@ const conversacionJson = (c: ConversacionVista): ConversacionJson => ({
 /** Página de mensajes: la 1:1 trae las marcas del otro; la sala, las de todos. */
 type PaginaJson =
   | { items: MensajeJson[]; nextCursor: string | null; otherMarks: OtherMarksJson }
-  | { items: MensajeDeSalaJson[]; nextCursor: string | null; marks: MarcaDeMiembroJson[] }
+  | {
+      items: MensajeDeSalaJson[]
+      nextCursor: string | null
+      marks: MarcaDeMiembroJson[]
+      members: MiembroDeSalaJson[]
+    }
 
 /**
  * Mensajería dentro de un evento: conversaciones 1:1 (parte 1) y la sala de
@@ -180,6 +187,7 @@ export class ConversationsController {
         items: r.pagina.items.map((m) => mensajeDeSalaJson(m, r.recibos.get(m.id))),
         nextCursor: r.pagina.nextCursor,
         marks: r.marks.map(marcaDeMiembroJson),
+        members: r.members.map(miembroDeSalaJson),
       }
     }
     return {

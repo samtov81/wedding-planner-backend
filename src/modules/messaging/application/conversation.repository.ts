@@ -166,6 +166,15 @@ export interface ConversationRepository {
   marcasDeSala(conversationId: string): Promise<MarcaDeMiembro[]>
 
   /**
+   * Los miembros de la sala HOY: las membresías ACTIVE de rol COUPLE/PLANNER
+   * del evento (el mismo conjunto que cuenta `memberCount`; los proveedores
+   * nunca), con o sin fila de participante, ordenados por nombre y luego id.
+   * Distinto de `marcasDeSala`, que lista filas de participante (incluye a
+   * quien salió y omite a quien aún no abrió la sala). [] si no es una sala.
+   */
+  miembrosDeSala(conversationId: string): Promise<Contacto[]>
+
+  /**
    * El tipo de la conversación, sin mirar quién pregunta (null si no existe).
    * Lo usa el worker, que debe distinguir sala de 1:1 aunque el remitente ya
    * no la vea.

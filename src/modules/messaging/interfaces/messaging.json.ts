@@ -1,4 +1,5 @@
 import type {
+  Contacto,
   MarcaDeMiembro,
   MarcasDeParticipante,
   MensajeVista,
@@ -78,6 +79,23 @@ export const marcaDeMiembroJson = (m: MarcaDeMiembro): MarcaDeMiembroJson => ({
   displayName: m.displayName,
   role: m.role,
   ...otherMarksJson(m),
+})
+
+/**
+ * Un miembro de la sala HOY, para la lista de participantes. Sin marcas: eso
+ * es `MarcaDeMiembroJson`, que sale de filas de participante.
+ */
+export interface MiembroDeSalaJson {
+  userId: string
+  displayName: string
+  role: 'COUPLE' | 'PLANNER'
+}
+
+export const miembroDeSalaJson = (c: Contacto): MiembroDeSalaJson => ({
+  userId: c.userId,
+  displayName: c.displayName,
+  // Las membresías sólo son COUPLE/PLANNER; un VENDOR no puede llegar aquí.
+  role: c.role === 'COUPLE' ? 'COUPLE' : 'PLANNER',
 })
 
 /** Un mensaje de sala; los MÍOS llevan a quién iba y "leído por N de M". */

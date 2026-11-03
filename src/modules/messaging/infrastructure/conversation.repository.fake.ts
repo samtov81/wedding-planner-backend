@@ -4,8 +4,10 @@ import { encodeCursor, type CursorPage, type CursorValue } from '@/shared/domain
 
 import type {
   Contacto,
+  ConversacionDePerfilVista,
   ConversacionVista,
   ConversationRepository,
+  FichaParaContacto,
   MarcaDeMiembro,
   MarcasDeParticipante,
   MensajeVista,
@@ -13,6 +15,14 @@ import type {
 } from '../application/conversation.repository'
 import { alcanza, avanzar, claveDePar, type Marca, type RolEnEvento } from '../domain/conversacion'
 import { ParNoPermitidoError } from '../domain/messaging-errors'
+import {
+  claveDePerfil,
+  evaluarSolicitud,
+  reintentoEn,
+  veConversacionDePerfil,
+  type EstadoDeSolicitud,
+  type ParDePerfil,
+} from '../domain/perfil'
 import { claveDeSala } from '../domain/sala'
 
 interface MiembroEnMemoria {
@@ -36,14 +46,24 @@ interface ParticipanteEnMemoria {
   read: Marca | null
 }
 
+/** Lo que sólo tiene una conversación `PROFILE` (como las columnas que ata el CHECK). */
+interface SolicitudEnMemoria {
+  requesterId: string
+  vendorProfileId: string
+  status: EstadoDeSolicitud
+  declinedAt: Date | null
+}
+
 interface ConversacionEnMemoria {
   id: string
-  kind: 'EVENT_DIRECT' | 'EVENT_ROOM'
-  eventId: string
+  kind: 'EVENT_DIRECT' | 'EVENT_ROOM' | 'PROFILE'
+  /** null sólo en `PROFILE`, como `conversations_perfil_campos`. */
+  eventId: string | null
   pairKey: string
   createdAt: Date
   lastMessageAt: Date | null
   participantes: ParticipanteEnMemoria[]
+  solicitud: SolicitudEnMemoria | null
 }
 
 /** Orden total (createdAt, id), más reciente primero. */
@@ -75,6 +95,28 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
   private readonly proveedores: ProveedorEnMemoria[] = []
   private readonly eventos = new Map<string, string>()
   private readonly publicados = new Set<string>()
+  private readonly fichas = new Map<string, FichaParaContacto>()
+  private readonly nombresDeUsuario = new Map<string, string>()
+
+  /** El `fullName` de alguien que no es miembro de ningún evento (p. ej. quien pide contacto). */
+  registrarUsuario(userId: string, fullName: string): void {
+    this.nombresDeUsuario.set(userId, fullName)
+  }
+
+  /**
+   * Alta o cambio de la ficha de `userId` (una por proveedor, como el UNIQUE de
+   * `vendor_profiles.userId`). `id` deja a la paridad usar el de Postgres.
+   */
+  sembrarFicha(
+    userId: string,
+    { businessName, publicada }: { businessName: string; publicada: boolean },
+    id: string = this.fichaDeUsuario(userId)?.id ?? randomUUID(),
+  ): string {
+    const previa = this.fichaDeUsuario(userId)
+    if (previa !== undefined) this.fichas.delete(previa.id)
+    this.fichas.set(id, { id, userId, businessName, publicada })
+    return id
+  }
 
   /** Alta o cambio de la membresía de `userId` (un solo registro por evento y persona). */
   registrarMiembro(
@@ -144,6 +186,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
       createdAt: new Date(),
       lastMessageAt: null,
       participantes: [a, b].map((userId) => ({ userId, delivered: null, read: null })),
+      solicitud: null,
     }
     this.conversaciones.push(nueva)
     return Promise.resolve({ id: nueva.id, creada: true })
@@ -345,7 +388,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     )
   }
 
-  tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | null> {
+  tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | 'PROFILE' | null> {
     return Promise.resolve(this.conversaciones.find((c) => c.id === conversationId)?.kind ?? null)
   }
 
@@ -356,6 +399,190 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
       if (d !== undefined) r.set(id, [...d])
     }
     return Promise.resolve(r)
+  }
+
+  fichaParaContacto(vendorProfileId: string): Promise<FichaParaContacto | null> {
+    const ficha = this.fichas.get(vendorProfileId)
+    return Promise.resolve(ficha === undefined ? null : { ...ficha })
+  }
+
+  parDePerfil(a: string, b: string): Promise<ParDePerfil | null> {
+    const conv = this.conversaciones.find((c) => c.pairKey === claveDePerfil(a, b))
+    return Promise.resolve(conv === undefined ? null : this.parDe(conv))
+  }
+
+  /** Como Prisma: algún evento donde los dos tienen acceso hoy y no son ambos proveedores. */
+  tienenRelacion(a: string, b: string): Promise<boolean> {
+    const eventos = new Set([
+      ...this.miembros.map((m) => m.eventId),
+      ...this.proveedores.map((p) => p.eventId),
+    ])
+    for (const eventId of eventos) {
+      const rolA = this.rolHoy(eventId, a)
+      const rolB = this.rolHoy(eventId, b)
+      if (rolA === null || rolB === null) continue
+      if (rolA === 'VENDOR' && rolB === 'VENDOR') continue
+      return Promise.resolve(true)
+    }
+    return Promise.resolve(false)
+  }
+
+  async solicitar(e: {
+    solicitante: string
+    ficha: FichaParaContacto
+    cuerpo: string
+    relacionados: boolean
+    ahora: Date
+  }): Promise<{ conversationId: string; mensaje: MensajeVista }> {
+    const pairKey = claveDePerfil(e.solicitante, e.ficha.userId)
+    const existente = this.conversaciones.find((c) => c.pairKey === pairKey)
+    const { accion, estado } = evaluarSolicitud({
+      solicitante: e.solicitante,
+      duenoDeFicha: e.ficha.userId,
+      par: existente === undefined ? null : this.parDe(existente),
+      relacionados: e.relacionados,
+      ahora: e.ahora,
+    })
+    let conv: ConversacionEnMemoria
+    if (accion === 'crear' || existente === undefined) {
+      conv = {
+        id: randomUUID(),
+        kind: 'PROFILE',
+        eventId: null,
+        pairKey,
+        createdAt: new Date(),
+        lastMessageAt: null,
+        participantes: [e.solicitante, e.ficha.userId].map((userId) => ({
+          userId,
+          delivered: null,
+          read: null,
+        })),
+        solicitud: {
+          requesterId: e.solicitante,
+          vendorProfileId: e.ficha.id,
+          status: estado,
+          declinedAt: null,
+        },
+      }
+      this.conversaciones.push(conv)
+    } else {
+      conv = existente
+      // Reintento: solicitante y ficha no cambian nunca (spec §3.6).
+      if (conv.solicitud !== null) {
+        conv.solicitud.status = estado
+        conv.solicitud.declinedAt = null
+      }
+    }
+    const mensaje = await this.agregarMensaje(conv.id, e.solicitante, e.cuerpo, e.ahora)
+    return { conversationId: conv.id, mensaje }
+  }
+
+  responder(
+    conversationId: string,
+    userId: string,
+    decision: 'ACCEPTED' | 'DECLINED',
+    ahora: Date,
+  ): Promise<'ok' | 'no-encontrada' | 'no-pendiente'> {
+    const conv = this.conversaciones.find((c) => c.id === conversationId)
+    const par = conv === undefined ? null : this.parDe(conv)
+    if (conv?.solicitud == null || par === null || par.vendorUserId !== userId) {
+      return Promise.resolve('no-encontrada')
+    }
+    if (par.status !== 'PENDING') return Promise.resolve('no-pendiente')
+    conv.solicitud.status = decision
+    conv.solicitud.declinedAt = decision === 'DECLINED' ? ahora : null
+    return Promise.resolve('ok')
+  }
+
+  buscarPerfil(conversationId: string, userId: string): Promise<ConversacionDePerfilVista | null> {
+    const conv = this.conversaciones.find((c) => c.id === conversationId)
+    return Promise.resolve(conv === undefined ? null : this.vistaDePerfil(conv, userId))
+  }
+
+  perfiles(userId: string): Promise<{
+    items: ConversacionDePerfilVista[]
+    requestsPending: number
+    unreadTotal: number
+  }> {
+    const items = this.conversaciones
+      .filter((c) => c.kind === 'PROFILE')
+      .sort(ordenDeBandeja)
+      .flatMap((c) => {
+        const v = this.vistaDePerfil(c, userId)
+        return v === null ? [] : [v]
+      })
+    return Promise.resolve({
+      items,
+      requestsPending: items.filter((v) => v.direction === 'RECEIVED' && v.status === 'PENDING')
+        .length,
+      unreadTotal: items
+        .filter((v) => v.status === 'ACCEPTED')
+        .reduce((s, v) => s + v.unreadCount, 0),
+    })
+  }
+
+  private fichaDeUsuario(userId: string): FichaParaContacto | undefined {
+    return [...this.fichas.values()].find((f) => f.userId === userId)
+  }
+
+  /** null si no es `PROFILE`. Una ficha sin sembrar es un escenario mal montado. */
+  private parDe(conv: ConversacionEnMemoria): ParDePerfil | null {
+    if (conv.solicitud === null) return null
+    const ficha = this.fichas.get(conv.solicitud.vendorProfileId)
+    if (ficha === undefined) throw new Error('ficha sin sembrarFicha en el doble')
+    return {
+      conversationId: conv.id,
+      requesterId: conv.solicitud.requesterId,
+      vendorUserId: ficha.userId,
+      status: conv.solicitud.status,
+      declinedAt: conv.solicitud.declinedAt,
+    }
+  }
+
+  /** Como `PrismaConversationRepository.vistasDePerfil`: mismas reglas de visibilidad y nombres. */
+  private vistaDePerfil(
+    conv: ConversacionEnMemoria,
+    userId: string,
+  ): ConversacionDePerfilVista | null {
+    const par = this.parDe(conv)
+    if (par === null || !veConversacionDePerfil(par, userId)) return null
+    const ficha = this.fichas.get(conv.solicitud?.vendorProfileId ?? '')
+    const yo = conv.participantes.find((p) => p.userId === userId)
+    const otro = conv.participantes.find((p) => p.userId !== userId)
+    if (ficha === undefined || yo === undefined || otro === undefined) return null
+
+    const soySolicitante = userId === par.requesterId
+    const nombreSolicitante =
+      this.nombresDeUsuario.get(par.requesterId) ??
+      this.miembros.find((m) => m.userId === par.requesterId)?.fullName
+    if (nombreSolicitante === undefined) {
+      throw new Error(`usuario ${par.requesterId} sin registrarUsuario en el doble`)
+    }
+    const delChat = this.mensajesGuardados
+      .filter((m) => m.conversationId === conv.id)
+      .sort(masReciente)
+    const noLeidos = delChat.filter(
+      (m) => m.senderId !== userId && !alcanza(yo.read, marcaDeMensaje(m)),
+    ).length
+    const ultimo = delChat[0]
+
+    return {
+      id: conv.id,
+      status: par.status,
+      direction: soySolicitante ? 'SENT' : 'RECEIVED',
+      other: soySolicitante
+        ? { userId: ficha.userId, displayName: ficha.businessName, role: 'VENDOR' }
+        : { userId: par.requesterId, displayName: nombreSolicitante, role: 'CONTACT' },
+      vendor: { id: ficha.id, businessName: ficha.businessName },
+      lastMessage: ultimo === undefined ? null : { ...ultimo },
+      unreadCount: noLeidos,
+      readOnly: par.status !== 'ACCEPTED',
+      retryAt:
+        soySolicitante && par.status === 'DECLINED' && par.declinedAt !== null
+          ? reintentoEn(par.declinedAt)
+          : null,
+      otherMarks: { deliveredUpTo: otro.delivered, readUpTo: otro.read },
+    }
   }
 
   private esMiembroActivo(eventId: string, userId: string): boolean {
@@ -373,6 +600,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
       createdAt: new Date(),
       lastMessageAt: null,
       participantes: [],
+      solicitud: null,
     }
     this.conversaciones.push(sala)
     return sala
@@ -385,6 +613,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
 
   /** Como `PrismaConversationRepository.vistasDeSala`: mismas reglas, mismo tope. */
   private vistaDeSala(sala: ConversacionEnMemoria, userId: string): SalaVista | null {
+    if (sala.eventId === null) return null
     const activo = this.esMiembroActivo(sala.eventId, userId)
     const yo = sala.participantes.find((p) => p.userId === userId)
     const fueMiembro = this.miembros.some((m) => m.eventId === sala.eventId && m.userId === userId)
@@ -432,6 +661,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
   }
 
   private vista(conv: ConversacionEnMemoria, userId: string): ConversacionVista | null {
+    if (conv.eventId === null) return null
     const yo = conv.participantes.find((p) => p.userId === userId)
     const otro = conv.participantes.find((p) => p.userId !== userId)
     if (yo === undefined || otro === undefined) return null

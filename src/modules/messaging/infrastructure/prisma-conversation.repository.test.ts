@@ -3,7 +3,11 @@ import { PrismaClient } from '@prisma/client'
 import type { PrismaService } from '@/modules/database/prisma.service'
 import { PrismaUnidadDeTrabajo } from '@/modules/database/transaccion'
 
+import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
+import { SolicitudPendienteError } from '../domain/messaging-errors'
+import { claveDePerfil } from '../domain/perfil'
+import type { FichaParaContacto } from '../application/conversation.repository'
 import { PrismaConversationRepository } from './prisma-conversation.repository'
 
 describe('PrismaConversationRepository', () => {
@@ -147,5 +151,123 @@ describe('PrismaConversationRepository', () => {
       prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey")
         VALUES (gen_random_uuid(), 'EVENT_ROOM'::"ConversationKind", ${eventId}::uuid, 'room:otra')`,
     ).rejects.toThrow(/conversations_sala_clave/)
+  })
+
+  // ── Contacto desde la ficha (parte 3) ──────────────────────────────────────
+
+  describe('PROFILE', () => {
+    let v1: FichaParaContacto
+    let v2: FichaParaContacto
+
+    beforeAll(async () => {
+      const proveedor = async (email: string, businessName: string): Promise<FichaParaContacto> => {
+        const userId = (
+          await prisma.user.create({ data: { email, passwordHash: 'x', fullName: email } })
+        ).id
+        const ficha = await prisma.vendorProfile.create({
+          data: {
+            userId,
+            businessName,
+            categoryId: await categoriaId(prisma),
+            status: 'PUBLISHED',
+          },
+        })
+        return { id: ficha.id, userId, businessName, publicada: true }
+      }
+      v1 = await proveedor('v1@perfil.test', 'Uno')
+      v2 = await proveedor('v2@perfil.test', 'Dos')
+    })
+
+    it('A→B y B→A concurrentes crean una sola conversación y la otra recibe SolicitudPendienteError', async () => {
+      const ahora = new Date('2026-03-01T00:00:00Z')
+      const resultados = await Promise.allSettled(
+        Array.from({ length: 6 }, (_, i) =>
+          i % 2 === 0
+            ? repo.solicitar({
+                solicitante: v1.userId,
+                ficha: v2,
+                cuerpo: 'de uno',
+                relacionados: false,
+                ahora,
+              })
+            : repo.solicitar({
+                solicitante: v2.userId,
+                ficha: v1,
+                cuerpo: 'de dos',
+                relacionados: false,
+                ahora,
+              }),
+        ),
+      )
+
+      const ganadoras = resultados.filter((r) => r.status === 'fulfilled')
+      const perdedoras = resultados.flatMap((r) =>
+        r.status === 'rejected' ? [r.reason as unknown] : [],
+      )
+      expect(ganadoras).toHaveLength(1)
+      expect(perdedoras).toHaveLength(5)
+      for (const error of perdedoras) expect(error).toBeInstanceOf(SolicitudPendienteError)
+      const pairKey = claveDePerfil(v1.userId, v2.userId)
+      expect(await prisma.conversation.count({ where: { pairKey } })).toBe(1)
+      const conv = await prisma.conversation.findUniqueOrThrow({ where: { pairKey } })
+      expect(await prisma.message.count({ where: { conversationId: conv.id } })).toBe(1)
+      expect(
+        await prisma.conversationParticipant.count({ where: { conversationId: conv.id } }),
+      ).toBe(2)
+    })
+
+    it('el CHECK conversations_perfil_campos rechaza un PROFILE sin estado o con evento', async () => {
+      const clave = `profile:campos:${v1.userId}`
+      await expect(
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "pairKey", "requesterId", "vendorProfileId")
+          VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${clave},
+            ${v1.userId}::uuid, ${v2.id}::uuid)`,
+      ).rejects.toThrow(/conversations_perfil_campos/)
+      await expect(
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "eventId", "pairKey", "requesterId", "vendorProfileId", "requestStatus")
+          VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${eventId}::uuid, ${clave},
+            ${v1.userId}::uuid, ${v2.id}::uuid, 'PENDING'::"ContactRequestStatus")`,
+      ).rejects.toThrow(/conversations_perfil_campos/)
+    })
+
+    it('el CHECK conversations_perfil_rechazo ata declinedAt a DECLINED', async () => {
+      const clave = `profile:rechazo:${v1.userId}`
+      await expect(
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "pairKey", "requesterId", "vendorProfileId", "requestStatus")
+          VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${clave},
+            ${v1.userId}::uuid, ${v2.id}::uuid, 'DECLINED'::"ContactRequestStatus")`,
+      ).rejects.toThrow(/conversations_perfil_rechazo/)
+      await expect(
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "pairKey", "requesterId", "vendorProfileId", "requestStatus", "declinedAt")
+          VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${clave},
+            ${v1.userId}::uuid, ${v2.id}::uuid, 'PENDING'::"ContactRequestStatus", now())`,
+      ).rejects.toThrow(/conversations_perfil_rechazo/)
+    })
+
+    it('el CHECK conversations_perfil_clave exige una pairKey profile: no nula', async () => {
+      for (const clave of [`otra:${v1.userId}`, null]) {
+        await expect(
+          prisma.$executeRaw`INSERT INTO "conversations"
+            ("id", "kind", "pairKey", "requesterId", "vendorProfileId", "requestStatus")
+            VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${clave},
+              ${v1.userId}::uuid, ${v2.id}::uuid, 'PENDING'::"ContactRequestStatus")`,
+        ).rejects.toThrow(/conversations_perfil_clave/)
+      }
+    })
+
+    it('dos profile: con la misma clave chocan en el UNIQUE de pairKey', async () => {
+      const clave = `profile:unica:${v1.userId}`
+      const insertar = () =>
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "pairKey", "requesterId", "vendorProfileId", "requestStatus")
+          VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${clave},
+            ${v1.userId}::uuid, ${v2.id}::uuid, 'PENDING'::"ContactRequestStatus")`
+      await expect(insertar()).resolves.toBe(1)
+      await expect(insertar()).rejects.toThrow(/23505.*"pairKey"/s)
+    })
   })
 })

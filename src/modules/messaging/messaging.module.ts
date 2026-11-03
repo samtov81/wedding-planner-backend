@@ -8,16 +8,21 @@ import { UsersModule } from '@/modules/users/users.module'
 
 import { COLA_MENSAJERIA } from './application/avisos-mensajeria'
 import { CONVERSATION_REPOSITORY } from './application/conversation.repository'
+import { GetContactStateUseCase } from './application/get-contact-state.use-case'
 import { ListContactsUseCase } from './application/list-contacts.use-case'
 import { ListConversationsUseCase } from './application/list-conversations.use-case'
 import { ListMessagesUseCase } from './application/list-messages.use-case'
+import { ListProfileConversationsUseCase } from './application/list-profile-conversations.use-case'
 import { ListRoomReadersUseCase } from './application/list-room-readers.use-case'
 import { ListRoomsUseCase } from './application/list-rooms.use-case'
 import { MarkConversationUseCase } from './application/mark-conversation.use-case'
 import { OpenConversationUseCase } from './application/open-conversation.use-case'
 import { OpenRoomUseCase } from './application/open-room.use-case'
+import { RequestContactUseCase } from './application/request-contact.use-case'
+import { RespondContactUseCase } from './application/respond-contact.use-case'
 import { SendMessageUseCase } from './application/send-message.use-case'
 import { PrismaConversationRepository } from './infrastructure/prisma-conversation.repository'
+import { ContactRequestsController } from './interfaces/contact-requests.controller'
 import { ConversationsController } from './interfaces/conversations.controller'
 import { MessagingProcessor } from './interfaces/messaging.processor'
 
@@ -36,7 +41,7 @@ import { MessagingProcessor } from './interfaces/messaging.processor'
     NotificationsModule,
     BullModule.registerQueue({ name: COLA_MENSAJERIA }),
   ],
-  controllers: [ConversationsController],
+  controllers: [ConversationsController, ContactRequestsController],
   providers: [
     {
       provide: CONVERSATION_REPOSITORY,
@@ -52,6 +57,10 @@ import { MessagingProcessor } from './interfaces/messaging.processor'
     ListRoomsUseCase,
     OpenRoomUseCase,
     ListRoomReadersUseCase,
+    RequestContactUseCase,
+    RespondContactUseCase,
+    GetContactStateUseCase,
+    ListProfileConversationsUseCase,
     MessagingProcessor,
   ],
 })

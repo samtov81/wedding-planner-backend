@@ -28,6 +28,8 @@ ALTER TABLE "conversations" ADD CONSTRAINT "conversations_perfil_campos"
 ALTER TABLE "conversations" ADD CONSTRAINT "conversations_perfil_rechazo"
   CHECK (("declinedAt" IS NOT NULL) = COALESCE("requestStatus" = 'DECLINED', false));
 
--- La clave de par de un PROFILE empieza por `profile:` (ver `claveDePerfil`).
+-- La clave de par de un PROFILE existe y empieza por `profile:` (ver
+-- `claveDePerfil`). El IS NOT NULL es necesario: con `pairKey` NULL el LIKE da
+-- NULL, el CHECK pasa y la fila esquivaría el UNIQUE de `pairKey`.
 ALTER TABLE "conversations" ADD CONSTRAINT "conversations_perfil_clave"
-  CHECK ("kind" <> 'PROFILE' OR "pairKey" LIKE 'profile:%');
+  CHECK ("kind" <> 'PROFILE' OR ("pairKey" IS NOT NULL AND "pairKey" LIKE 'profile:%'));

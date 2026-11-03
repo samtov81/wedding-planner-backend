@@ -96,7 +96,7 @@ CHECK constraints:
 - `conversations_sala_clave` — an `EVENT_ROOM` has `eventId` and its `pairKey` is `'room:' || eventId`.
 - `conversations_perfil_campos` — `kind = 'PROFILE'` if and only if `eventId` is null and `requesterId`, `vendorProfileId` and `requestStatus` are all set.
 - `conversations_perfil_rechazo` — `declinedAt` is set if and only if `requestStatus = 'DECLINED'` (a null status counts as not declined).
-- `conversations_perfil_clave` — a `PROFILE` has a `pairKey` starting with `profile:`.
+- `conversations_perfil_clave` — a `PROFILE` has a non-null `pairKey` starting with `profile:` (a null key would dodge the `unique`).
 
 Enforced by the use cases, not by the database: that a direct conversation has `eventId` and `pairKey`, that its two participants are allowed together (member↔member and member↔vendor, never vendor↔vendor) and that both have access to the event when it is opened.
 

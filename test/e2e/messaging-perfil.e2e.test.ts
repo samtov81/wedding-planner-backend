@@ -424,6 +424,13 @@ describe('contacto desde la ficha e2e', () => {
       }
       expect(global.status).toBe(429)
       expect(quitarRequestId(cortado.body)).toEqual(quitarRequestId(global.body))
+      // Y las dos dicen cuándo reintentar, en segundos, con el nombre de su límite
+      // (la de `ThrottlerGuard` la corta aquí `vendor-profile`, antes que `global`).
+      const segundos = (v: unknown): number => Number(v)
+      expect(segundos(global.headers['retry-after-vendor-profile'])).toBeGreaterThan(0)
+      expect(segundos(cortado.headers['retry-after-contact-requests'])).toBeGreaterThan(0)
+      expect(segundos(cortado.headers['retry-after-contact-requests'])).toBeLessThanOrEqual(3600)
+      expect(cortado.headers['retry-after']).toBe(cortado.headers['retry-after-contact-requests'])
     })
 
     it('un bearer con firma inválida es 401 y no gasta el cupo de nadie', async () => {

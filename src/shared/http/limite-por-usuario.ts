@@ -32,6 +32,19 @@ import { UnauthorizedError } from '@/shared/domain'
  * Cuenta toda petición que llega, también las que luego fallan con 404/409/422
  * (decisión de la spec: el cupo es de intentos, no de éxitos).
  *
+ * Sin metadatos (el guard puesto con `@UseGuards` a mano, sin
+ * `@LimitePorUsuario`) también falla CERRADO, con un `Error` de programación
+ * (500): una ruta que alguien quiso limitar no debe quedar sin límite por un
+ * cableado a medias. Alternativa descartada: dejar pasar y documentarlo, que
+ * convierte el olvido en una ruta abierta que ningún test señala.
+ *
+ * Al cortar pone `Retry-After` como `ThrottlerGuard`: segundos que faltan
+ * (`timeToBlockExpire`, o `timeToExpire` si el almacén no da bloqueo; los dos
+ * ya en segundos en `ThrottlerStorageRedisService`). Con el nombre del límite
+ * como sufijo (`Retry-After-contact-requests`, como `Retry-After-global` del
+ * global) Y sin él: el sufijo es la convención de esta API para saber QUÉ
+ * límite cortó, y la cabecera estándar es la que entiende cualquier cliente HTTP.
+ *
  * `shared/` no importa módulos: el tipo del usuario es local.
  *
  * Quien quiera migrar `messages`/`invite` a por-usuario: pasar de
@@ -51,6 +64,11 @@ interface PeticionConUsuario {
   user?: { id: string }
 }
 
+/** Lo único que el guard usa de la respuesta de Express (lo mismo que `ThrottlerGuard`). */
+interface RespuestaConCabeceras {
+  header(nombre: string, valor: number): unknown
+}
+
 @Injectable()
 export class LimitePorUsuarioGuard implements CanActivate {
   constructor(
@@ -59,16 +77,16 @@ export class LimitePorUsuarioGuard implements CanActivate {
   ) {}
 
   async canActivate(contexto: ExecutionContext): Promise<boolean> {
-    const peticion = contexto.switchToHttp().getRequest<PeticionConUsuario>()
-    const id = peticion.user?.id
-    if (id === undefined) throw new UnauthorizedError('Falta el token de acceso')
-
     const config = this.reflector.get<ConfiguracionDeLimite | undefined>(
       CLAVE,
       contexto.getHandler(),
     )
-    // Sin configuración no hay nada que limitar (guard puesto a mano sin decorador).
-    if (config === undefined) return true
+    if (config === undefined) {
+      throw new Error('LimitePorUsuarioGuard sin @LimitePorUsuario: usa el decorador, no el guard')
+    }
+    const http = contexto.switchToHttp()
+    const id = http.getRequest<PeticionConUsuario>().user?.id
+    if (id === undefined) throw new UnauthorizedError('Falta el token de acceso')
 
     const registro = await this.almacen.increment(
       `usuario:${id}`,
@@ -77,7 +95,14 @@ export class LimitePorUsuarioGuard implements CanActivate {
       config.ttl,
       config.nombre,
     )
-    if (registro.isBlocked) throw new ThrottlerException()
+    if (registro.isBlocked) {
+      const segundos =
+        registro.timeToBlockExpire > 0 ? registro.timeToBlockExpire : registro.timeToExpire
+      const respuesta = http.getResponse<RespuestaConCabeceras>()
+      respuesta.header('Retry-After', segundos)
+      respuesta.header(`Retry-After-${config.nombre}`, segundos)
+      throw new ThrottlerException()
+    }
     return true
   }
 }

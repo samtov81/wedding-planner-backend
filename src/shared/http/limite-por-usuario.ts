@@ -38,12 +38,15 @@ import { UnauthorizedError } from '@/shared/domain'
  * cableado a medias. Alternativa descartada: dejar pasar y documentarlo, que
  * convierte el olvido en una ruta abierta que ningún test señala.
  *
- * Al cortar pone `Retry-After` como `ThrottlerGuard`: segundos que faltan
+ * Al cortar envía DOS cabeceras con los segundos que faltan
  * (`timeToBlockExpire`, o `timeToExpire` si el almacén no da bloqueo; los dos
- * ya en segundos en `ThrottlerStorageRedisService`). Con el nombre del límite
- * como sufijo (`Retry-After-contact-requests`, como `Retry-After-global` del
- * global) Y sin él: el sufijo es la convención de esta API para saber QUÉ
- * límite cortó, y la cabecera estándar es la que entiende cualquier cliente HTTP.
+ * ya en segundos en `ThrottlerStorageRedisService`): `Retry-After` y
+ * `Retry-After-<nombre>` (aquí `Retry-After-contact-requests`). `ThrottlerGuard`
+ * envía SÓLO `Retry-After-<nombre>` para un limitador con nombre (p. ej.
+ * `Retry-After-global`, `Retry-After-vendor-profile`) y `Retry-After` a secas
+ * sólo para el `default`, que aquí no existe. La de sufijo mantiene la
+ * convención de esta API para saber QUÉ límite cortó; la estándar es la que
+ * entiende cualquier cliente HTTP.
  *
  * `shared/` no importa módulos: el tipo del usuario es local.
  *

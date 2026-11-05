@@ -497,7 +497,10 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     conv.solicitud.declinedAt = decision === 'DECLINED' ? ahora : null
     // Como Prisma: la vista del proveedor tras la transición, aunque ya no la vea.
     const vista = this.vistaDePerfil(conv, userId, { aunqueNoLaVea: true })
-    if (vista === null) throw new Error(`conversación ${conv.id} sin vista tras responder`)
+    if (vista === null) {
+      // Rechaza, no lanza: quien llama recibe siempre una promesa, como con Prisma.
+      return Promise.reject(new Error(`conversación ${conv.id} sin vista tras responder`))
+    }
     return Promise.resolve(vista)
   }
 

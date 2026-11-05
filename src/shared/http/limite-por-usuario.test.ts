@@ -17,20 +17,20 @@ class AlmacenEnMemoria implements ThrottlerStorage {
     key: string,
     ttl: number,
     limit: number,
-    _bloqueo: number,
+    bloqueo: number,
     nombre: string,
   ): Promise<Registro> {
     const clave = `${key}:${nombre}`
     this.claves.push(clave)
     const totalHits = (this.golpes.get(clave) ?? 0) + 1
     this.golpes.set(clave, totalHits)
-    // En segundos, como `ThrottlerStorageRedisService`; el bloqueo dura `_bloqueo` ms.
+    // En segundos, como `ThrottlerStorageRedisService`; el bloqueo dura `bloqueo` ms.
     const isBlocked = totalHits > limit
     return Promise.resolve({
       totalHits,
       timeToExpire: Math.ceil(ttl / 1000),
       isBlocked,
-      timeToBlockExpire: isBlocked ? Math.ceil(_bloqueo / 1000) : 0,
+      timeToBlockExpire: isBlocked ? Math.ceil(bloqueo / 1000) : 0,
     })
   }
 }

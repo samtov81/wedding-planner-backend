@@ -369,17 +369,27 @@ describe('PrismaConversationRepository', () => {
         ['EVENT_DIRECT', 'direct:solo:rechazo-sin-estado'],
         ['EVENT_ROOM', `room:${eventId}`],
       ] as const
+      // Si el INSERT dejara de fallar, el centinela deshace igualmente la
+      // transacción (y con ella el DROP) y el test falla diciendo por qué.
+      const CENTINELA = 'centinela: el INSERT no falló'
       // Uno tras otro: cada transacción toma el bloqueo exclusivo del ALTER TABLE.
       for (const [kind, pairKey] of casos) {
         const intento = prisma.$transaction(async (tx) => {
           await tx.$executeRaw`
             ALTER TABLE "conversations" DROP CONSTRAINT "conversations_perfil_rechazo"`
-          return await tx.$executeRaw`
+          await tx.$executeRaw`
             INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "declinedAt")
             VALUES (gen_random_uuid(), ${kind}::"ConversationKind", ${eventId}::uuid,
               ${pairKey}, now())`
+          throw new Error(CENTINELA)
         })
-        await expect(intento).rejects.toThrow(/conversations_perfil_solo_en_perfil/)
+        const error = await intento.then(
+          () => null,
+          (e: unknown) => e,
+        )
+        expect(String(error)).not.toContain(CENTINELA)
+        expect(error).toBeInstanceOf(Error)
+        expect((error as Error).message).toMatch(/conversations_perfil_solo_en_perfil/)
       }
       // Con los dos CHECK puestos (el estado real) también se rechaza.
       await expect(

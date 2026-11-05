@@ -693,8 +693,9 @@ export class PrismaConversationRepository implements ConversationRepository {
         include: INCLUIR_PERFIL,
       })
       const [vista] = await this.vistasDePerfil(userId, [actualizada], { aunqueNoLaVea: true })
-      if (vista === undefined)
+      if (vista === undefined) {
         throw new Error(`conversación ${fila.id} PROFILE sin vista tras responder`)
+      }
       return vista
     })
   }

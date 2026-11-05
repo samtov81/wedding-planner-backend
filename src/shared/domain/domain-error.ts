@@ -46,8 +46,8 @@ export class UnauthorizedError extends DomainError {
 
 export class ConflictError extends DomainError {
   readonly httpStatus = 409
-  constructor(message: string, code = 'CONFLICT') {
-    super(message, code)
+  constructor(message: string, code = 'CONFLICT', details?: unknown) {
+    super(message, code, details)
   }
 }
 

@@ -7,8 +7,10 @@ import { encodeCursor, type CursorPage, type CursorValue } from '@/shared/domain
 
 import type {
   Contacto,
+  ConversacionDePerfilVista,
   ConversacionVista,
   ConversationRepository,
+  FichaParaContacto,
   MarcaDeMiembro,
   MarcasDeParticipante,
   MensajeVista,
@@ -16,6 +18,13 @@ import type {
 } from '../application/conversation.repository'
 import { avanzar, claveDePar, type Marca, type RolEnEvento } from '../domain/conversacion'
 import { ParNoPermitidoError } from '../domain/messaging-errors'
+import {
+  claveDePerfil,
+  evaluarSolicitud,
+  reintentoEn,
+  veConversacionDePerfil,
+  type ParDePerfil,
+} from '../domain/perfil'
 import { claveDeSala } from '../domain/sala'
 
 /** Más recientes primero; (`createdAt`, `id`) es un orden total y estable. */
@@ -41,12 +50,50 @@ const INCLUIR_SALA = {
 
 type FilaSala = Prisma.ConversationGetPayload<{ include: typeof INCLUIR_SALA }>
 
+const INCLUIR_PERFIL = {
+  vendorProfile: { select: { id: true, userId: true, businessName: true } },
+  participants: { include: { user: { select: { fullName: true } } } },
+} satisfies Prisma.ConversationInclude
+
+type FilaPerfil = Prisma.ConversationGetPayload<{ include: typeof INCLUIR_PERFIL }>
+
+/** La fila del par tal como la lee `SELECT … FOR UPDATE` (`parBloqueado`). */
+interface FilaParBloqueado {
+  id: string
+  requesterId: string | null
+  requestStatus: 'PENDING' | 'ACCEPTED' | 'DECLINED' | null
+  declinedAt: Date | null
+  vendorUserId: string
+}
+
 type Cliente = ReturnType<typeof clienteDe>
 
 /** Lo que una consulta de membresía / contratación dice de alguien en un evento. */
 interface SituacionEnEvento {
   membresia: { role: 'COUPLE' | 'PLANNER'; status: string } | null
   contratado: boolean
+}
+
+/**
+ * Orden de las bandejas (1:1, salas y perfiles): `lastMessageAt` desc (sin
+ * mensajes al final), luego `createdAt` desc y el id. Se ordena en memoria tras
+ * construir las vistas, que descartan las que `userId` no ve.
+ */
+function ordenarComoBandeja<T extends { id: string }>(
+  items: T[],
+  filas: Array<{ id: string; lastMessageAt: Date | null; createdAt: Date }>,
+): T[] {
+  const orden = new Map(filas.map((f) => [f.id, f]))
+  return items.sort((x, y) => {
+    const fx = orden.get(x.id)
+    const fy = orden.get(y.id)
+    const tx = fx?.lastMessageAt?.getTime() ?? Number.NEGATIVE_INFINITY
+    const ty = fy?.lastMessageAt?.getTime() ?? Number.NEGATIVE_INFINITY
+    if (tx !== ty) return ty - tx
+    const cx = fx?.createdAt.getTime() ?? 0
+    const cy = fy?.createdAt.getTime() ?? 0
+    return cy - cx || (x.id < y.id ? 1 : -1)
+  })
 }
 
 /** Orden de `miembrosDeSala`: nombre y, a igualdad, id. El doble repite el mismo criterio. */
@@ -178,17 +225,7 @@ export class PrismaConversationRepository implements ConversationRepository {
       include: INCLUIR,
     })
     const items = await this.vistas(userId, filas)
-    const orden = new Map(filas.map((f) => [f.id, f]))
-    items.sort((x, y) => {
-      const fx = orden.get(x.id)
-      const fy = orden.get(y.id)
-      const tx = fx?.lastMessageAt?.getTime() ?? Number.NEGATIVE_INFINITY
-      const ty = fy?.lastMessageAt?.getTime() ?? Number.NEGATIVE_INFINITY
-      if (tx !== ty) return ty - tx
-      const cx = fx?.createdAt.getTime() ?? 0
-      const cy = fy?.createdAt.getTime() ?? 0
-      return cy - cx || (x.id < y.id ? 1 : -1)
-    })
+    ordenarComoBandeja(items, filas)
     return { items, unreadTotal: items.reduce((suma, v) => suma + v.unreadCount, 0) }
   }
 
@@ -376,17 +413,7 @@ export class PrismaConversationRepository implements ConversationRepository {
       include: INCLUIR_SALA,
     })
     const items = await this.vistasDeSala(userId, filas)
-    const orden = new Map(filas.map((f) => [f.id, f]))
-    items.sort((x, y) => {
-      const fx = orden.get(x.id)
-      const fy = orden.get(y.id)
-      const tx = fx?.lastMessageAt?.getTime() ?? Number.NEGATIVE_INFINITY
-      const ty = fy?.lastMessageAt?.getTime() ?? Number.NEGATIVE_INFINITY
-      if (tx !== ty) return ty - tx
-      const cx = fx?.createdAt.getTime() ?? 0
-      const cy = fy?.createdAt.getTime() ?? 0
-      return cy - cx || (x.id < y.id ? 1 : -1)
-    })
+    ordenarComoBandeja(items, filas)
     return { items, unreadTotal: items.reduce((suma, v) => suma + v.unreadCount, 0) }
   }
 
@@ -485,12 +512,12 @@ export class PrismaConversationRepository implements ConversationRepository {
       .sort(porNombreYId)
   }
 
-  async tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | null> {
+  async tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | 'PROFILE' | null> {
     const fila = await clienteDe(this.prisma).conversation.findUnique({
       where: { id: conversationId },
       select: { kind: true },
     })
-    return fila === null || fila.kind === 'PROFILE' ? null : fila.kind
+    return fila?.kind ?? null
   }
 
   async destinatariosDe(messageIds: readonly string[]): Promise<Map<string, string[]>> {
@@ -501,6 +528,270 @@ export class PrismaConversationRepository implements ConversationRepository {
     const r = new Map<string, string[]>()
     for (const f of filas) r.set(f.messageId, [...(r.get(f.messageId) ?? []), f.userId])
     return r
+  }
+
+  // ── Contacto desde la ficha (parte 3) ─────────────────────────────────────
+
+  async fichaParaContacto(vendorProfileId: string): Promise<FichaParaContacto | null> {
+    const fila = await clienteDe(this.prisma).vendorProfile.findUnique({
+      where: { id: vendorProfileId },
+      select: { id: true, userId: true, businessName: true, status: true },
+    })
+    if (fila === null) return null
+    const { status, ...ficha } = fila
+    return { ...ficha, publicada: status === 'PUBLISHED' }
+  }
+
+  async parDePerfil(a: string, b: string): Promise<ParDePerfil | null> {
+    const fila = await clienteDe(this.prisma).conversation.findFirst({
+      where: { pairKey: claveDePerfil(a, b), kind: 'PROFILE' },
+      select: {
+        id: true,
+        requesterId: true,
+        requestStatus: true,
+        declinedAt: true,
+        vendorProfile: { select: { userId: true } },
+      },
+    })
+    if (fila?.vendorProfile == null) return null
+    return aPar({ ...fila, vendorUserId: fila.vendorProfile.userId })
+  }
+
+  /**
+   * Relación = algún evento donde los dos tienen acceso de mensajería HOY (la
+   * regla de `rolEnEvento`: miembro ACTIVE, o proveedor BOOKED de un evento
+   * publicado; si es las dos cosas, gana miembro) y no son los dos proveedores.
+   * Dos consultas para el par, no una por evento; el cruce se hace en memoria.
+   * Alternativa descartada: una sola consulta SQL con el cruce, que duplicaría
+   * en SQL la regla que aquí ya está escrita una vez con Prisma.
+   */
+  async tienenRelacion(a: string, b: string): Promise<boolean> {
+    // Nadie tiene relación consigo mismo: sin esto, un miembro ACTIVE de
+    // cualquier evento la tendría (los dos lados serían él).
+    if (a === b) return false
+    const cliente = clienteDe(this.prisma)
+    const [membresias, contrataciones] = await Promise.all([
+      cliente.eventMembership.findMany({
+        where: { userId: { in: [a, b] }, status: 'ACTIVE' },
+        select: { eventId: true, userId: true },
+      }),
+      cliente.eventVendor.findMany({
+        where: {
+          status: 'BOOKED',
+          event: { status: 'ACTIVE' },
+          vendorProfile: { userId: { in: [a, b] } },
+        },
+        select: { eventId: true, vendorProfile: { select: { userId: true } } },
+      }),
+    ])
+    const rol = (eventId: string, userId: string): 'MIEMBRO' | 'VENDOR' | null =>
+      membresias.some((m) => m.eventId === eventId && m.userId === userId)
+        ? 'MIEMBRO'
+        : contrataciones.some((c) => c.eventId === eventId && c.vendorProfile?.userId === userId)
+          ? 'VENDOR'
+          : null
+    const eventos = new Set([...membresias, ...contrataciones].map((x) => x.eventId))
+    for (const eventId of eventos) {
+      const rolA = rol(eventId, a)
+      const rolB = rol(eventId, b)
+      if (rolA !== null && rolB !== null && !(rolA === 'VENDOR' && rolB === 'VENDOR')) return true
+    }
+    return false
+  }
+
+  /**
+   * Todo en una transacción (`enTransaccion`, que se une a la unidad de
+   * trabajo si la hay): bloquear la fila del par (`FOR UPDATE`), evaluar con
+   * `evaluarSolicitud`, crear o reintentar y añadir el mensaje con su
+   * `lastMessageAt`. Crear es `INSERT … ON CONFLICT ("pairKey") DO NOTHING`
+   * como `abrir`: si no inserta, otra petición del mismo par (A→B y B→A a la
+   * vez) ganó; se espera a que confirme, se bloquea su fila y se vuelve a
+   * evaluar con ella, que da el 409 que toque en vez de un 500 por el UNIQUE.
+   * Los errores de dominio salen antes de cualquier escritura de esta petición
+   * y deshacen la transacción. Alternativa descartada: bloqueo consultivo por
+   * clave (`pg_advisory_xact_lock`), que serializa igual pero deja la carrera
+   * fuera de lo que el UNIQUE ya garantiza.
+   */
+  async solicitar(e: {
+    solicitante: string
+    ficha: FichaParaContacto
+    cuerpo: string
+    relacionados: boolean
+    ahora: Date
+  }): Promise<{ conversationId: string; mensaje: MensajeVista; estado: 'PENDING' | 'ACCEPTED' }> {
+    const pairKey = claveDePerfil(e.solicitante, e.ficha.userId)
+    const evaluar = (fila: FilaParBloqueado | null): ReturnType<typeof evaluarSolicitud> =>
+      evaluarSolicitud({
+        solicitante: e.solicitante,
+        duenoDeFicha: e.ficha.userId,
+        par: fila === null ? null : aPar(fila),
+        relacionados: e.relacionados,
+        ahora: e.ahora,
+      })
+
+    return await enTransaccion(this.prisma, async (tx) => {
+      let fila = await parBloqueado(tx, { pairKey })
+      let decision = evaluar(fila)
+      let conversationId: string | null = null
+      if (decision.accion === 'crear') {
+        const filas = await tx.$queryRaw<Array<{ id: string }>>`
+          INSERT INTO "conversations"
+            ("id", "kind", "pairKey", "requesterId", "vendorProfileId", "requestStatus")
+          VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${pairKey},
+            ${e.solicitante}::uuid, ${e.ficha.id}::uuid,
+            ${decision.estado}::"ContactRequestStatus")
+          ON CONFLICT ("pairKey") DO NOTHING
+          RETURNING "id"`
+        const nueva = filas[0]
+        if (nueva !== undefined) {
+          await tx.conversationParticipant.createMany({
+            data: [
+              { conversationId: nueva.id, userId: e.solicitante },
+              { conversationId: nueva.id, userId: e.ficha.userId },
+            ],
+          })
+          conversationId = nueva.id
+        } else {
+          fila = await parBloqueado(tx, { pairKey })
+          decision = evaluar(fila)
+        }
+      }
+      if (conversationId === null) {
+        if (fila === null) throw new Error(`par ${pairKey} sin fila tras el choque`)
+        // Reintento: `requesterId` y `vendorProfileId` no cambian nunca (spec §3.6).
+        await tx.conversation.update({
+          where: { id: fila.id },
+          data: { requestStatus: decision.estado, declinedAt: null },
+        })
+        conversationId = fila.id
+      }
+      const mensaje = await this.agregarMensaje(conversationId, e.solicitante, e.cuerpo, e.ahora)
+      return { conversationId, mensaje, estado: decision.estado }
+    })
+  }
+
+  /**
+   * `FOR UPDATE` de la fila: un aceptar y un rechazar simultáneos serializan.
+   * La vista se lee con la fila aún bloqueada (`vistasDePerfil` usa `clienteDe`,
+   * que dentro de `enTransaccion` es la transacción), sin el filtro de
+   * visibilidad: tras un rechazo el proveedor ya no la ve, pero es la respuesta
+   * a lo que acaba de hacer.
+   */
+  async responder(
+    conversationId: string,
+    userId: string,
+    decision: 'ACCEPTED' | 'DECLINED',
+    ahora: Date,
+  ): Promise<ConversacionDePerfilVista | 'no-encontrada' | 'no-pendiente'> {
+    return await enTransaccion(this.prisma, async (tx) => {
+      const fila = await parBloqueado(tx, { conversationId })
+      if (fila === null || fila.vendorUserId !== userId) return 'no-encontrada'
+      if (fila.requestStatus !== 'PENDING') return 'no-pendiente'
+      const actualizada = await tx.conversation.update({
+        where: { id: fila.id },
+        data: { requestStatus: decision, declinedAt: decision === 'DECLINED' ? ahora : null },
+        include: INCLUIR_PERFIL,
+      })
+      const [vista] = await this.vistasDePerfil(userId, [actualizada], { aunqueNoLaVea: true })
+      if (vista === undefined) {
+        throw new Error(`conversación ${fila.id} PROFILE sin vista tras responder`)
+      }
+      return vista
+    })
+  }
+
+  async buscarPerfil(
+    conversationId: string,
+    userId: string,
+  ): Promise<ConversacionDePerfilVista | null> {
+    const fila = await clienteDe(this.prisma).conversation.findFirst({
+      where: { id: conversationId, kind: 'PROFILE' },
+      include: INCLUIR_PERFIL,
+    })
+    if (fila === null) return null
+    return (await this.vistasDePerfil(userId, [fila]))[0] ?? null
+  }
+
+  async perfiles(userId: string): Promise<{
+    items: ConversacionDePerfilVista[]
+    requestsPending: number
+    unreadTotal: number
+  }> {
+    // Las DECLINED que `userId` rechazó como proveedor se descartan en SQL: los
+    // participantes son exactamente solicitante y proveedor, así que "no soy el
+    // solicitante" es "soy el proveedor". `vistasDePerfil` vuelve a aplicar
+    // `veConversacionDePerfil`, que es la regla; esto sólo evita traerlas.
+    const filas = await clienteDe(this.prisma).conversation.findMany({
+      where: {
+        kind: 'PROFILE',
+        participants: { some: { userId } },
+        OR: [{ requesterId: userId }, { requestStatus: { not: 'DECLINED' } }],
+      },
+      include: INCLUIR_PERFIL,
+    })
+    const items = ordenarComoBandeja(await this.vistasDePerfil(userId, filas), filas)
+    return {
+      items,
+      requestsPending: items.filter((v) => v.direction === 'RECEIVED' && v.status === 'PENDING')
+        .length,
+      unreadTotal: items
+        .filter((v) => v.status === 'ACCEPTED')
+        .reduce((suma, v) => suma + v.unreadCount, 0),
+    }
+  }
+
+  /**
+   * Vistas `PROFILE` de `userId` por lotes (no leídos y último mensaje: dos
+   * consultas en total, las mismas que la 1:1). Descarta las que no ve según
+   * `veConversacionDePerfil`, salvo con `aunqueNoLaVea` (sólo `responder`,
+   * para devolver al proveedor la que acaba de rechazar). Nombres (spec §3.7):
+   * el proveedor con el `businessName` de la ficha de la conversación; el
+   * solicitante con su `fullName`, aunque tenga ficha propia.
+   */
+  private async vistasDePerfil(
+    userId: string,
+    filas: FilaPerfil[],
+    { aunqueNoLaVea = false }: { aunqueNoLaVea?: boolean } = {},
+  ): Promise<ConversacionDePerfilVista[]> {
+    if (filas.length === 0) return []
+    const ids = filas.map((f) => f.id)
+    const [noLeidos, ultimos] = await Promise.all([
+      this.contarNoLeidos(userId, ids),
+      this.ultimosMensajes(ids),
+    ])
+    return filas.flatMap((fila): ConversacionDePerfilVista[] => {
+      const ficha = fila.vendorProfile
+      if (ficha === null) return []
+      const par = aPar({ ...fila, vendorUserId: ficha.userId })
+      if (!aunqueNoLaVea && !veConversacionDePerfil(par, userId)) return []
+      const otro = fila.participants.find((p) => p.userId !== userId)
+      if (otro === undefined) return []
+
+      const soySolicitante = userId === par.requesterId
+      const ultimo = ultimos.get(fila.id)
+      return [
+        {
+          id: fila.id,
+          status: par.status,
+          direction: soySolicitante ? 'SENT' : 'RECEIVED',
+          other: soySolicitante
+            ? { userId: ficha.userId, displayName: ficha.businessName, role: 'VENDOR' }
+            : { userId: otro.userId, displayName: otro.user.fullName, role: 'CONTACT' },
+          vendor: { id: ficha.id, businessName: ficha.businessName },
+          lastMessage: ultimo === undefined ? null : aMensaje(ultimo),
+          unreadCount: noLeidos.get(fila.id) ?? 0,
+          readOnly: par.status !== 'ACCEPTED',
+          retryAt:
+            soySolicitante && par.status === 'DECLINED' && par.declinedAt !== null
+              ? reintentoEn(par.declinedAt)
+              : null,
+          otherMarks: {
+            deliveredUpTo: marcaDe(otro.deliveredUpToAt, otro.deliveredUpToId),
+            readUpTo: marcaDe(otro.readUpToAt, otro.readUpToId),
+          },
+        },
+      ]
+    })
   }
 
   /**
@@ -773,6 +1064,55 @@ async function asegurarSala(tx: Prisma.TransactionClient, eventId: string): Prom
     select: { id: true },
   })
   return existente.id
+}
+
+/**
+ * Lee y BLOQUEA (`FOR UPDATE OF c`, sólo la conversación, no la ficha) la fila
+ * `PROFILE` del par o de la conversación; null si no hay. Va dentro de la
+ * transacción del llamante. SQL con plantilla etiquetada (parametrizada); el
+ * enum se lee como texto para no depender de cómo Prisma deserializa enums en
+ * consultas crudas.
+ */
+async function parBloqueado(
+  tx: Prisma.TransactionClient,
+  por: { pairKey: string } | { conversationId: string },
+): Promise<FilaParBloqueado | null> {
+  const filtro =
+    'pairKey' in por
+      ? Prisma.sql`c."pairKey" = ${por.pairKey}`
+      : Prisma.sql`c."id" = ${por.conversationId}::uuid`
+  const filas = await tx.$queryRaw<FilaParBloqueado[]>`
+    SELECT c."id", c."requesterId", c."requestStatus"::text AS "requestStatus",
+      c."declinedAt", v."userId" AS "vendorUserId"
+    FROM "conversations" c
+    JOIN "vendor_profiles" v ON v."id" = c."vendorProfileId"
+    WHERE ${filtro} AND c."kind" = 'PROFILE'
+    FOR UPDATE OF c`
+  return filas[0] ?? null
+}
+
+/**
+ * Fila `PROFILE` → `ParDePerfil`. `requesterId` y `requestStatus` no son null
+ * en una `PROFILE` (CHECK `conversations_perfil_campos`); si lo fueran, la
+ * base está rota y se falla en vez de inventar un estado.
+ */
+function aPar(fila: {
+  id: string
+  requesterId: string | null
+  requestStatus: 'PENDING' | 'ACCEPTED' | 'DECLINED' | null
+  declinedAt: Date | null
+  vendorUserId: string
+}): ParDePerfil {
+  if (fila.requesterId === null || fila.requestStatus === null) {
+    throw new Error(`conversación ${fila.id} PROFILE sin solicitante o sin estado`)
+  }
+  return {
+    conversationId: fila.id,
+    requesterId: fila.requesterId,
+    vendorUserId: fila.vendorUserId,
+    status: fila.requestStatus,
+    declinedAt: fila.declinedAt,
+  }
 }
 
 function marcaDe(at: Date | null, id: string | null): Marca | null {

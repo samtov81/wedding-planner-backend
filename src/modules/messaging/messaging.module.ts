@@ -8,21 +8,27 @@ import { UsersModule } from '@/modules/users/users.module'
 
 import { COLA_MENSAJERIA } from './application/avisos-mensajeria'
 import { CONVERSATION_REPOSITORY } from './application/conversation.repository'
+import { GetContactStateUseCase } from './application/get-contact-state.use-case'
 import { ListContactsUseCase } from './application/list-contacts.use-case'
 import { ListConversationsUseCase } from './application/list-conversations.use-case'
 import { ListMessagesUseCase } from './application/list-messages.use-case'
+import { ListProfileConversationsUseCase } from './application/list-profile-conversations.use-case'
 import { ListRoomReadersUseCase } from './application/list-room-readers.use-case'
 import { ListRoomsUseCase } from './application/list-rooms.use-case'
 import { MarkConversationUseCase } from './application/mark-conversation.use-case'
 import { OpenConversationUseCase } from './application/open-conversation.use-case'
 import { OpenRoomUseCase } from './application/open-room.use-case'
+import { RequestContactUseCase } from './application/request-contact.use-case'
+import { RespondContactUseCase } from './application/respond-contact.use-case'
 import { SendMessageUseCase } from './application/send-message.use-case'
 import { PrismaConversationRepository } from './infrastructure/prisma-conversation.repository'
+import { ContactRequestsController } from './interfaces/contact-requests.controller'
 import { ConversationsController } from './interfaces/conversations.controller'
 import { MessagingProcessor } from './interfaces/messaging.processor'
 
 /**
- * Mensajería por evento: 1:1 (parte 1) y sala del evento (parte 2). `AuthModule` + `UsersModule` se
+ * Mensajería: 1:1 y sala por evento (partes 1 y 2) y contacto desde la ficha de un
+ * proveedor, conversaciones `PROFILE` sin evento (parte 3). `AuthModule` + `UsersModule` se
  * importan para que `JwtAuthGuard` resuelva con el mismo `TokenService` que el
  * resto del REST. `NotificationsModule` aporta `REALTIME_PORT` (el emisor de
  * Socket.IO sobre Redis) y `registerQueue` monta `MessagingProcessor` sobre la
@@ -36,7 +42,7 @@ import { MessagingProcessor } from './interfaces/messaging.processor'
     NotificationsModule,
     BullModule.registerQueue({ name: COLA_MENSAJERIA }),
   ],
-  controllers: [ConversationsController],
+  controllers: [ConversationsController, ContactRequestsController],
   providers: [
     {
       provide: CONVERSATION_REPOSITORY,
@@ -52,6 +58,10 @@ import { MessagingProcessor } from './interfaces/messaging.processor'
     ListRoomsUseCase,
     OpenRoomUseCase,
     ListRoomReadersUseCase,
+    RequestContactUseCase,
+    RespondContactUseCase,
+    GetContactStateUseCase,
+    ListProfileConversationsUseCase,
     MessagingProcessor,
   ],
 })

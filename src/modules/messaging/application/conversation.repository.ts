@@ -1,6 +1,7 @@
 import type { CursorPage, CursorValue } from '@/shared/domain'
 
 import type { Marca, RolEnEvento } from '../domain/conversacion'
+import type { EstadoDeSolicitud, ParDePerfil } from '../domain/perfil'
 
 /** Alguien con quien se puede hablar en un evento. */
 export interface Contacto {
@@ -67,7 +68,42 @@ export interface MarcaDeMiembro extends MarcasDeParticipante {
 }
 
 /**
- * Puerto de las conversaciones 1:1 de un evento.
+ * Lo que el contacto desde la ficha necesita de una ficha de proveedor (parte 3).
+ * `publicada` = `status: 'PUBLISHED'`; `DRAFT` y `SUSPENDED` se tratan igual.
+ */
+export interface FichaParaContacto {
+  id: string
+  userId: string
+  businessName: string
+  publicada: boolean
+}
+
+/**
+ * Una conversación `PROFILE` vista por uno de sus dos participantes (spec
+ * 2026-11-03 §4.2). Nombres (§3.7): el proveedor es el `businessName` de la
+ * ficha de la conversación con rol `VENDOR`; el solicitante, su `fullName` con
+ * rol `CONTACT`, aunque él también tenga ficha.
+ */
+export interface ConversacionDePerfilVista {
+  id: string
+  status: EstadoDeSolicitud
+  /** `SENT` si quien mira es el solicitante; `RECEIVED` si es el proveedor. */
+  direction: 'SENT' | 'RECEIVED'
+  other: { userId: string; displayName: string; role: 'VENDOR' | 'CONTACT' }
+  vendor: { id: string; businessName: string }
+  lastMessage: MensajeVista | null
+  /** Mensajes del otro posteriores a MI marca de lectura (la regla de la 1:1). */
+  unreadCount: number
+  /** `status !== 'ACCEPTED'`: pendiente para los dos, rechazada para el solicitante. */
+  readOnly: boolean
+  /** Sólo una DECLINED vista por el solicitante: cuándo puede volver a pedir. */
+  retryAt: Date | null
+  otherMarks: MarcasDeParticipante
+}
+
+/**
+ * Puerto de las conversaciones 1:1 de un evento, de la sala del evento (parte
+ * 2) y de las conversaciones `PROFILE` del contacto desde la ficha (parte 3).
  *
  * "Acceso hoy" (spec §4): miembro ACTIVE (pareja o planner, el evento esté o
  * no publicado) o proveedor BOOKED —por `VendorProfile.userId`— de un evento
@@ -179,10 +215,73 @@ export interface ConversationRepository {
    * Lo usa el worker, que debe distinguir sala de 1:1 aunque el remitente ya
    * no la vea.
    */
-  tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | null>
+  tipoDe(conversationId: string): Promise<'EVENT_DIRECT' | 'EVENT_ROOM' | 'PROFILE' | null>
 
   /** Destinatarios fijados de cada mensaje pedido (los que no tienen, ausentes). */
   destinatariosDe(messageIds: readonly string[]): Promise<Map<string, string[]>>
+
+  // ── Contacto desde la ficha (parte 3) ─────────────────────────────────────
+
+  /** La ficha, publicada o no; null si no existe. */
+  fichaParaContacto(vendorProfileId: string): Promise<FichaParaContacto | null>
+
+  /** La conversación `PROFILE` del par (sin orden), o null si no hay. */
+  parDePerfil(a: string, b: string): Promise<ParDePerfil | null>
+
+  /**
+   * Podrían abrir hoy una `EVENT_DIRECT` entre sí en algún evento (reglas de la
+   * parte 1 §4.1, las de `rolEnEvento`): los dos con acceso hoy al mismo
+   * evento y no los dos como proveedores. Nunca VENDOR↔VENDOR, y nunca
+   * consigo mismo: con `a === b` es false sin consultar.
+   */
+  tienenRelacion(a: string, b: string): Promise<boolean>
+
+  /**
+   * En una transacción, bloqueando la fila del par: evalúa con
+   * `evaluarSolicitud` (lanza sus errores de dominio), crea la conversación o
+   * la reintenta y añade el mensaje, que es la solicitud. `estado` es el que
+   * quedó guardado: con él se encola `contact.updated` sin releer la vista.
+   */
+  solicitar(e: {
+    solicitante: string
+    ficha: FichaParaContacto
+    cuerpo: string
+    relacionados: boolean
+    ahora: Date
+  }): Promise<{ conversationId: string; mensaje: MensajeVista; estado: 'PENDING' | 'ACCEPTED' }>
+
+  /**
+   * Acepta o rechaza. Sólo el proveedor (si no, o si no es `PROFILE`:
+   * `no-encontrada`) y sólo en `PENDING` (si no: `no-pendiente`). Si responde,
+   * devuelve la vista del PROVEEDOR leída en la MISMA transacción, tras la
+   * transición. Tras un rechazo el proveedor ya no la ve
+   * (`veConversacionDePerfil`), así que se le devuelve igualmente su vista,
+   * `DECLINED` y en solo lectura: es la respuesta a lo que acaba de hacer, no
+   * un permiso para volver a leerla. Alternativa descartada: devolver sólo
+   * `'ok'` y que el caso de uso lea la vista antes o después; cualquiera de las
+   * dos lecturas queda fuera de la transacción y un reintento del solicitante
+   * entre medias la deja vieja o vacía.
+   */
+  responder(
+    conversationId: string,
+    userId: string,
+    decision: 'ACCEPTED' | 'DECLINED',
+    ahora: Date,
+  ): Promise<ConversacionDePerfilVista | 'no-encontrada' | 'no-pendiente'>
+
+  /** null si no es `PROFILE` o `userId` no la ve (`veConversacionDePerfil`). */
+  buscarPerfil(conversationId: string, userId: string): Promise<ConversacionDePerfilVista | null>
+
+  /**
+   * Las que ve `userId`, en el orden de `bandeja`. `requestsPending` = las
+   * RECEIVED en PENDING; `unreadTotal` = suma de `unreadCount` de las ACCEPTED
+   * (las pendientes ya cuentan en `requestsPending`).
+   */
+  perfiles(userId: string): Promise<{
+    items: ConversacionDePerfilVista[]
+    requestsPending: number
+    unreadTotal: number
+  }>
 }
 
 export const CONVERSATION_REPOSITORY = Symbol('CONVERSATION_REPOSITORY')

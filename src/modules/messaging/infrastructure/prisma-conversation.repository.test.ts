@@ -3,7 +3,11 @@ import { PrismaClient } from '@prisma/client'
 import type { PrismaService } from '@/modules/database/prisma.service'
 import { PrismaUnidadDeTrabajo } from '@/modules/database/transaccion'
 
+import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
+import { SolicitudPendienteError } from '../domain/messaging-errors'
+import { claveDePerfil, ESPERA_TRAS_RECHAZO_MS } from '../domain/perfil'
+import type { FichaParaContacto } from '../application/conversation.repository'
 import { PrismaConversationRepository } from './prisma-conversation.repository'
 
 describe('PrismaConversationRepository', () => {
@@ -147,5 +151,293 @@ describe('PrismaConversationRepository', () => {
       prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey")
         VALUES (gen_random_uuid(), 'EVENT_ROOM'::"ConversationKind", ${eventId}::uuid, 'room:otra')`,
     ).rejects.toThrow(/conversations_sala_clave/)
+  })
+
+  // ── Contacto desde la ficha (parte 3) ──────────────────────────────────────
+
+  describe('PROFILE', () => {
+    let v1: FichaParaContacto
+    let v2: FichaParaContacto
+
+    const proveedor = async (email: string, businessName: string): Promise<FichaParaContacto> => {
+      const userId = (
+        await prisma.user.create({ data: { email, passwordHash: 'x', fullName: email } })
+      ).id
+      const ficha = await prisma.vendorProfile.create({
+        data: {
+          userId,
+          businessName,
+          categoryId: await categoriaId(prisma),
+          status: 'PUBLISHED',
+        },
+      })
+      return { id: ficha.id, userId, businessName, publicada: true }
+    }
+
+    /** Un par nuevo (solicitante sin ficha → proveedor) con su solicitud PENDING. */
+    const solicitudPendiente = async (
+      n: string,
+      ahora: Date,
+    ): Promise<{ ficha: FichaParaContacto; solicitante: string; conversationId: string }> => {
+      const ficha = await proveedor(`prov-${n}@perfil.test`, `Prov ${n}`)
+      const solicitante = (
+        await prisma.user.create({
+          data: { email: `pide-${n}@perfil.test`, passwordHash: 'x', fullName: `Pide ${n}` },
+        })
+      ).id
+      const { conversationId } = await repo.solicitar({
+        solicitante,
+        ficha,
+        cuerpo: 'hola',
+        relacionados: false,
+        ahora,
+      })
+      return { ficha, solicitante, conversationId }
+    }
+
+    beforeAll(async () => {
+      v1 = await proveedor('v1@perfil.test', 'Uno')
+      v2 = await proveedor('v2@perfil.test', 'Dos')
+    })
+
+    it('aceptar y rechazar concurrentes: uno gana y el otro es no-pendiente', async () => {
+      const ahora = new Date('2026-03-01T00:00:00Z')
+      const { ficha, conversationId } = await solicitudPendiente('carrera-responder', ahora)
+
+      const resultados = await Promise.all([
+        repo.responder(conversationId, ficha.userId, 'ACCEPTED', ahora),
+        repo.responder(conversationId, ficha.userId, 'DECLINED', ahora),
+      ])
+
+      const ganadoras = resultados.filter((r) => typeof r !== 'string')
+      expect(ganadoras).toHaveLength(1)
+      expect(resultados.filter((r) => r === 'no-pendiente')).toHaveLength(1)
+      const ganadora = ganadoras[0]
+      const fila = await prisma.conversation.findUniqueOrThrow({ where: { id: conversationId } })
+      // La fila guarda la decisión de la ganadora y su vista la refleja.
+      expect(fila.requestStatus).toBe(ganadora?.status)
+      expect(fila.declinedAt === null).toBe(ganadora?.status === 'ACCEPTED')
+    })
+
+    it('dos reintentos concurrentes tras 24 h: uno gana y el otro es SolicitudPendienteError', async () => {
+      const ahora = new Date('2026-03-01T00:00:00Z')
+      const { ficha, solicitante, conversationId } = await solicitudPendiente(
+        'carrera-reintento',
+        ahora,
+      )
+      expect(await repo.responder(conversationId, ficha.userId, 'DECLINED', ahora)).toMatchObject({
+        status: 'DECLINED',
+      })
+      const despues = new Date(ahora.getTime() + ESPERA_TRAS_RECHAZO_MS + 60_000)
+
+      const resultados = await Promise.allSettled(
+        [1, 2].map((i) =>
+          repo.solicitar({
+            solicitante,
+            ficha,
+            cuerpo: `reintento ${i}`,
+            relacionados: false,
+            ahora: despues,
+          }),
+        ),
+      )
+
+      const ganadoras = resultados.filter((r) => r.status === 'fulfilled')
+      const perdedoras = resultados.flatMap((r) =>
+        r.status === 'rejected' ? [r.reason as unknown] : [],
+      )
+      expect(ganadoras).toHaveLength(1)
+      expect(ganadoras[0]?.value).toMatchObject({ conversationId, estado: 'PENDING' })
+      expect(perdedoras).toHaveLength(1)
+      expect(perdedoras[0]).toBeInstanceOf(SolicitudPendienteError)
+      const fila = await prisma.conversation.findUniqueOrThrow({ where: { id: conversationId } })
+      expect([fila.requestStatus, fila.declinedAt]).toEqual(['PENDING', null])
+      // La solicitud original y UN reintento: la perdedora no dejó mensaje.
+      expect(await prisma.message.count({ where: { conversationId } })).toBe(2)
+    })
+
+    it('A→B y B→A concurrentes crean una sola conversación y la otra recibe SolicitudPendienteError', async () => {
+      const ahora = new Date('2026-03-01T00:00:00Z')
+      const resultados = await Promise.allSettled(
+        Array.from({ length: 6 }, (_, i) =>
+          i % 2 === 0
+            ? repo.solicitar({
+                solicitante: v1.userId,
+                ficha: v2,
+                cuerpo: 'de uno',
+                relacionados: false,
+                ahora,
+              })
+            : repo.solicitar({
+                solicitante: v2.userId,
+                ficha: v1,
+                cuerpo: 'de dos',
+                relacionados: false,
+                ahora,
+              }),
+        ),
+      )
+
+      const ganadoras = resultados.filter((r) => r.status === 'fulfilled')
+      const perdedoras = resultados.flatMap((r) =>
+        r.status === 'rejected' ? [r.reason as unknown] : [],
+      )
+      expect(ganadoras).toHaveLength(1)
+      expect(perdedoras).toHaveLength(5)
+      for (const error of perdedoras) expect(error).toBeInstanceOf(SolicitudPendienteError)
+      const pairKey = claveDePerfil(v1.userId, v2.userId)
+      expect(await prisma.conversation.count({ where: { pairKey } })).toBe(1)
+      const conv = await prisma.conversation.findUniqueOrThrow({ where: { pairKey } })
+      expect(await prisma.message.count({ where: { conversationId: conv.id } })).toBe(1)
+      expect(
+        await prisma.conversationParticipant.count({ where: { conversationId: conv.id } }),
+      ).toBe(2)
+    })
+
+    it('el CHECK conversations_perfil_campos rechaza un PROFILE sin estado o con evento', async () => {
+      const clave = `profile:campos:${v1.userId}`
+      await expect(
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "pairKey", "requesterId", "vendorProfileId")
+          VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${clave},
+            ${v1.userId}::uuid, ${v2.id}::uuid)`,
+      ).rejects.toThrow(/conversations_perfil_campos/)
+      await expect(
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "eventId", "pairKey", "requesterId", "vendorProfileId", "requestStatus")
+          VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${eventId}::uuid, ${clave},
+            ${v1.userId}::uuid, ${v2.id}::uuid, 'PENDING'::"ContactRequestStatus")`,
+      ).rejects.toThrow(/conversations_perfil_campos/)
+    })
+
+    it('el CHECK conversations_perfil_solo_en_perfil rechaza columnas de perfil en una 1:1 o una sala', async () => {
+      const directa = (n: string): string => `direct:solo:${n}`
+      const rechazos = [
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "requestStatus")
+          VALUES (gen_random_uuid(), 'EVENT_DIRECT'::"ConversationKind", ${eventId}::uuid,
+            ${directa('estado')}, 'PENDING'::"ContactRequestStatus")`,
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "requesterId")
+          VALUES (gen_random_uuid(), 'EVENT_DIRECT'::"ConversationKind", ${eventId}::uuid,
+            ${directa('solicitante')}, ${v1.userId}::uuid)`,
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "vendorProfileId")
+          VALUES (gen_random_uuid(), 'EVENT_DIRECT'::"ConversationKind", ${eventId}::uuid,
+            ${directa('ficha')}, ${v2.id}::uuid)`,
+        // DECLINED + declinedAt: `conversations_perfil_rechazo` se cumple, sólo falla éste.
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "eventId", "pairKey", "requestStatus", "declinedAt")
+          VALUES (gen_random_uuid(), 'EVENT_DIRECT'::"ConversationKind", ${eventId}::uuid,
+            ${directa('rechazo')}, 'DECLINED'::"ContactRequestStatus", now())`,
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "requesterId")
+          VALUES (gen_random_uuid(), 'EVENT_ROOM'::"ConversationKind", ${eventId}::uuid,
+            ${`room:${eventId}`}, ${v1.userId}::uuid)`,
+      ]
+      for (const intento of rechazos) {
+        await expect(intento).rejects.toThrow(/conversations_perfil_solo_en_perfil/)
+      }
+    })
+
+    it('el CHECK conversations_perfil_solo_en_perfil rechaza en una sala cada columna de perfil por separado', async () => {
+      const sala = `room:${eventId}`
+      const rechazos = [
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "requesterId")
+          VALUES (gen_random_uuid(), 'EVENT_ROOM'::"ConversationKind", ${eventId}::uuid,
+            ${sala}, ${v1.userId}::uuid)`,
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "vendorProfileId")
+          VALUES (gen_random_uuid(), 'EVENT_ROOM'::"ConversationKind", ${eventId}::uuid,
+            ${sala}, ${v2.id}::uuid)`,
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "requestStatus")
+          VALUES (gen_random_uuid(), 'EVENT_ROOM'::"ConversationKind", ${eventId}::uuid,
+            ${sala}, 'PENDING'::"ContactRequestStatus")`,
+        // DECLINED + declinedAt: `conversations_perfil_rechazo` se cumple, sólo falla éste.
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "eventId", "pairKey", "requestStatus", "declinedAt")
+          VALUES (gen_random_uuid(), 'EVENT_ROOM'::"ConversationKind", ${eventId}::uuid,
+            ${sala}, 'DECLINED'::"ContactRequestStatus", now())`,
+      ]
+      for (const intento of rechazos) {
+        await expect(intento).rejects.toThrow(/conversations_perfil_solo_en_perfil/)
+      }
+    })
+
+    it('el CHECK conversations_perfil_solo_en_perfil rechaza por sí solo un declinedAt sin estado en una 1:1 o una sala', async () => {
+      // Un `declinedAt` con `requestStatus` NULL lo caza ANTES
+      // `conversations_perfil_rechazo` (Postgres evalúa los CHECK por nombre).
+      // Para probar que este CHECK también lo rechaza por sí solo, se quita el
+      // otro DENTRO de una transacción que se deshace: el DDL de Postgres es
+      // transaccional y la tabla vuelve a quedar como estaba.
+      const casos = [
+        ['EVENT_DIRECT', 'direct:solo:rechazo-sin-estado'],
+        ['EVENT_ROOM', `room:${eventId}`],
+      ] as const
+      // Si el INSERT dejara de fallar, el centinela deshace igualmente la
+      // transacción (y con ella el DROP) y el test falla diciendo por qué.
+      const CENTINELA = 'centinela: el INSERT no falló'
+      // Uno tras otro: cada transacción toma el bloqueo exclusivo del ALTER TABLE.
+      for (const [kind, pairKey] of casos) {
+        const intento = prisma.$transaction(async (tx) => {
+          await tx.$executeRaw`
+            ALTER TABLE "conversations" DROP CONSTRAINT "conversations_perfil_rechazo"`
+          await tx.$executeRaw`
+            INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "declinedAt")
+            VALUES (gen_random_uuid(), ${kind}::"ConversationKind", ${eventId}::uuid,
+              ${pairKey}, now())`
+          throw new Error(CENTINELA)
+        })
+        const error = await intento.then(
+          () => null,
+          (e: unknown) => e,
+        )
+        expect(String(error)).not.toContain(CENTINELA)
+        expect(error).toBeInstanceOf(Error)
+        expect((error as Error).message).toMatch(/conversations_perfil_solo_en_perfil/)
+      }
+      // Con los dos CHECK puestos (el estado real) también se rechaza.
+      await expect(
+        prisma.$executeRaw`INSERT INTO "conversations" ("id", "kind", "eventId", "pairKey", "declinedAt")
+          VALUES (gen_random_uuid(), 'EVENT_DIRECT'::"ConversationKind", ${eventId}::uuid,
+            ${'direct:solo:rechazo-sin-estado'}, now())`,
+      ).rejects.toThrow(/conversations_perfil_(rechazo|solo_en_perfil)/)
+      const checks = await prisma.$queryRaw<Array<{ conname: string }>>`
+        SELECT conname FROM pg_constraint WHERE conname = 'conversations_perfil_rechazo'`
+      expect(checks).toHaveLength(1)
+    })
+
+    it('el CHECK conversations_perfil_rechazo ata declinedAt a DECLINED', async () => {
+      const clave = `profile:rechazo:${v1.userId}`
+      await expect(
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "pairKey", "requesterId", "vendorProfileId", "requestStatus")
+          VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${clave},
+            ${v1.userId}::uuid, ${v2.id}::uuid, 'DECLINED'::"ContactRequestStatus")`,
+      ).rejects.toThrow(/conversations_perfil_rechazo/)
+      await expect(
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "pairKey", "requesterId", "vendorProfileId", "requestStatus", "declinedAt")
+          VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${clave},
+            ${v1.userId}::uuid, ${v2.id}::uuid, 'PENDING'::"ContactRequestStatus", now())`,
+      ).rejects.toThrow(/conversations_perfil_rechazo/)
+    })
+
+    it('el CHECK conversations_perfil_clave exige una pairKey profile: no nula', async () => {
+      for (const clave of [`otra:${v1.userId}`, null]) {
+        await expect(
+          prisma.$executeRaw`INSERT INTO "conversations"
+            ("id", "kind", "pairKey", "requesterId", "vendorProfileId", "requestStatus")
+            VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${clave},
+              ${v1.userId}::uuid, ${v2.id}::uuid, 'PENDING'::"ContactRequestStatus")`,
+        ).rejects.toThrow(/conversations_perfil_clave/)
+      }
+    })
+
+    it('dos profile: con la misma clave chocan en el UNIQUE de pairKey', async () => {
+      const clave = `profile:unica:${v1.userId}`
+      const insertar = () =>
+        prisma.$executeRaw`INSERT INTO "conversations"
+          ("id", "kind", "pairKey", "requesterId", "vendorProfileId", "requestStatus")
+          VALUES (gen_random_uuid(), 'PROFILE'::"ConversationKind", ${clave},
+            ${v1.userId}::uuid, ${v2.id}::uuid, 'PENDING'::"ContactRequestStatus")`
+      await expect(insertar()).resolves.toBe(1)
+      await expect(insertar()).rejects.toThrow(/23505.*"pairKey"/s)
+    })
   })
 })

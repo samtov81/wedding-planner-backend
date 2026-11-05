@@ -7,10 +7,18 @@ import type { CursorValue } from '@/shared/domain'
 
 import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
-import { ParNoPermitidoError } from '../domain/messaging-errors'
+import {
+  AutocontactoError,
+  EsperaTrasRechazoError,
+  ParNoPermitidoError,
+  SolicitudPendienteError,
+} from '../domain/messaging-errors'
+import { ESPERA_TRAS_RECHAZO_MS } from '../domain/perfil'
 import type {
+  ConversacionDePerfilVista,
   ConversacionVista,
   ConversationRepository,
+  FichaParaContacto,
   SalaVista,
 } from '../application/conversation.repository'
 import { ConversationRepositoryEnMemoria } from './conversation.repository.fake'
@@ -70,6 +78,8 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
   }
 
   const nombres = new Map<string, string>()
+  /** Fichas por `userId`; el doble se siembra con el MISMO id que Postgres. */
+  const fichas = new Map<string, FichaParaContacto>()
 
   async function miembro(
     eventId: string,
@@ -162,13 +172,16 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
     nombres.set(parejaId, 'Pareja')
     nombres.set(plannerId, 'Planner')
     nombres.set(invitadoId, 'Invitado')
+    nombres.set(proveedorId, 'Dueño Catering')
+    nombres.set(otroProveedorId, 'Dueño Flores')
     for (const [userId, businessName, slug] of [
       [proveedorId, 'Catering Sol', 'catering'],
       [otroProveedorId, 'Flores Luna', 'photography'],
     ] as const) {
-      await prisma.vendorProfile.create({
+      const ficha = await prisma.vendorProfile.create({
         data: { userId, businessName, categoryId: await categoriaId(prisma, slug) },
       })
+      fichas.set(userId, { id: ficha.id, userId, businessName, publicada: false })
     }
   }, 240_000)
 
@@ -176,6 +189,10 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
     await prisma.message.deleteMany()
     await prisma.conversation.deleteMany()
     doble = new ConversationRepositoryEnMemoria()
+    for (const [userId, fullName] of nombres) doble.registrarUsuario(userId, fullName)
+    for (const f of fichas.values()) {
+      doble.sembrarFicha(f.userId, { businessName: f.businessName, publicada: f.publicada }, f.id)
+    }
   })
 
   afterAll(async () => {
@@ -786,6 +803,443 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
       const ids = (await repo.marcasDeSala(idDe(sala, quien))).map((x) => x.userId)
       expect(ids).toContain(revocado)
       expect(ids).not.toContain(tardio)
+    }
+  })
+
+  // ── Contacto desde la ficha (parte 3) ──────────────────────────────────────
+
+  const DIA_EN_MIN = ESPERA_TRAS_RECHAZO_MS / 60_000
+  let numProveedor = 0
+
+  /** Usuario nuevo con ficha en el estado pedido, sembrada en los dos con el mismo id. */
+  async function nuevoProveedor(
+    businessName: string,
+    status: 'DRAFT' | 'PUBLISHED' | 'SUSPENDED' = 'PUBLISHED',
+  ): Promise<FichaParaContacto> {
+    numProveedor += 1
+    const fullName = `Dueño ${numProveedor}`
+    const userId = await crearUsuario(`proveedor-${numProveedor}@perfil.test`, fullName)
+    const fila = await prisma.vendorProfile.create({
+      data: { userId, businessName, categoryId: await categoriaId(prisma), status },
+    })
+    const ficha = { id: fila.id, userId, businessName, publicada: status === 'PUBLISHED' }
+    nombres.set(userId, fullName)
+    fichas.set(userId, ficha)
+    doble.registrarUsuario(userId, fullName)
+    doble.sembrarFicha(userId, { businessName, publicada: ficha.publicada }, ficha.id)
+    return ficha
+  }
+
+  function fichaDe(userId: string): FichaParaContacto {
+    const ficha = fichas.get(userId)
+    if (ficha === undefined) throw new Error(`sin ficha para ${userId}`)
+    return ficha
+  }
+
+  async function solicitarEnAmbos(
+    solicitante: string,
+    dueno: string,
+    cuerpo: string,
+    min: number,
+    relacionados = false,
+  ): Promise<Par> {
+    const e = { solicitante, ficha: fichaDe(dueno), cuerpo, relacionados, ahora: minuto(min) }
+    const r = await real.solicitar(e)
+    const d = await doble.solicitar(e)
+    expect(r.mensaje.body).toBe(d.mensaje.body)
+    expect(d.estado).toBe(r.estado)
+    return { real: r.conversationId, doble: d.conversationId }
+  }
+
+  /** El resultado de `responder` cuando responde; si no, el test falla diciendo por qué. */
+  function comoVista(
+    r: ConversacionDePerfilVista | 'no-encontrada' | 'no-pendiente',
+  ): ConversacionDePerfilVista {
+    if (typeof r === 'string') throw new Error(`responder devolvió ${r}`)
+    return r
+  }
+
+  /** Lo comparable de una vista de perfil: sin ids de conversación ni de mensajes. */
+  function perfilSinVolatiles(v: ConversacionDePerfilVista | null): unknown {
+    if (v === null) return null
+    return {
+      status: v.status,
+      direction: v.direction,
+      other: v.other,
+      vendor: v.vendor,
+      lastMessage: v.lastMessage === null ? null : { body: v.lastMessage.body },
+      unreadCount: v.unreadCount,
+      readOnly: v.readOnly,
+      retryAt: v.retryAt,
+      otherMarks: {
+        deliveredUpTo: v.otherMarks.deliveredUpTo !== null,
+        readUpTo: v.otherMarks.readUpTo !== null,
+      },
+    }
+  }
+
+  async function perfilEnAmbos(conv: Par, userId: string): Promise<unknown> {
+    const r = perfilSinVolatiles(await real.buscarPerfil(conv.real, userId))
+    const d = perfilSinVolatiles(await doble.buscarPerfil(conv.doble, userId))
+    expect(d).toEqual(r)
+    return r
+  }
+
+  it('solicitar: crea PENDING con dos participantes y el primer mensaje; la vista del proveedor es RECEIVED con el nombre del solicitante y rol CONTACT', async () => {
+    const conv = await solicitarEnAmbos(parejaId, proveedorId, '¿Tenéis fecha libre?', 1)
+
+    for (const [quien, repo] of implementaciones()) {
+      const id = idDe(conv, quien)
+      expect((await repo.participantes(id)).sort()).toEqual([parejaId, proveedorId].sort())
+      expect(await repo.tipoDe(id)).toBe('PROFILE')
+      const pagina = await repo.mensajes(id, { desde: null, limite: 10 })
+      expect(pagina.items.map((m) => [m.senderId, m.body])).toEqual([
+        [parejaId, '¿Tenéis fecha libre?'],
+      ])
+      // El par es simétrico: da igual el orden de los dos ids.
+      for (const [a, b] of [
+        [parejaId, proveedorId],
+        [proveedorId, parejaId],
+      ] as const) {
+        expect(await repo.parDePerfil(a, b)).toEqual({
+          conversationId: id,
+          requesterId: parejaId,
+          vendorUserId: proveedorId,
+          status: 'PENDING',
+          declinedAt: null,
+        })
+      }
+      expect(await repo.parDePerfil(parejaId, plannerId)).toBeNull()
+    }
+
+    expect(await perfilEnAmbos(conv, proveedorId)).toEqual({
+      status: 'PENDING',
+      direction: 'RECEIVED',
+      other: { userId: parejaId, displayName: 'Pareja', role: 'CONTACT' },
+      vendor: { id: fichaDe(proveedorId).id, businessName: 'Catering Sol' },
+      lastMessage: { body: '¿Tenéis fecha libre?' },
+      unreadCount: 1,
+      readOnly: true,
+      retryAt: null,
+      otherMarks: { deliveredUpTo: false, readUpTo: false },
+    })
+    expect(await perfilEnAmbos(conv, parejaId)).toEqual({
+      status: 'PENDING',
+      direction: 'SENT',
+      other: { userId: proveedorId, displayName: 'Catering Sol', role: 'VENDOR' },
+      vendor: { id: fichaDe(proveedorId).id, businessName: 'Catering Sol' },
+      lastMessage: { body: '¿Tenéis fecha libre?' },
+      unreadCount: 0,
+      readOnly: true,
+      retryAt: null,
+      otherMarks: { deliveredUpTo: false, readUpTo: false },
+    })
+    // Un tercero no la ve.
+    expect(await perfilEnAmbos(conv, invitadoId)).toBeNull()
+  })
+
+  it('solicitar: devuelve el estado guardado, PENDING o ACCEPTED', async () => {
+    for (const [, repo] of implementaciones()) {
+      const e = { cuerpo: 'hola', ahora: minuto(1) }
+      expect(
+        (
+          await repo.solicitar({
+            ...e,
+            solicitante: parejaId,
+            ficha: fichaDe(proveedorId),
+            relacionados: false,
+          })
+        ).estado,
+      ).toBe('PENDING')
+      expect(
+        (
+          await repo.solicitar({
+            ...e,
+            solicitante: plannerId,
+            ficha: fichaDe(proveedorId),
+            relacionados: true,
+          })
+        ).estado,
+      ).toBe('ACCEPTED')
+    }
+  })
+
+  it('solicitar: relacionados → ACCEPTED', async () => {
+    const conv = await solicitarEnAmbos(plannerId, proveedorId, 'hola', 1, true)
+    expect(await perfilEnAmbos(conv, proveedorId)).toMatchObject({
+      status: 'ACCEPTED',
+      direction: 'RECEIVED',
+      readOnly: false,
+      unreadCount: 1,
+    })
+    expect(await perfilEnAmbos(conv, plannerId)).toMatchObject({
+      status: 'ACCEPTED',
+      readOnly: false,
+    })
+  })
+
+  it('solicitar: segunda petición con PENDING → SolicitudPendienteError, también en sentido contrario', async () => {
+    // Los dos tienen ficha: cada uno podría pedir al otro.
+    await solicitarEnAmbos(proveedorId, otroProveedorId, 'primera', 1)
+
+    for (const [, repo] of implementaciones()) {
+      await expect(
+        repo.solicitar({
+          solicitante: proveedorId,
+          ficha: fichaDe(otroProveedorId),
+          cuerpo: 'otra vez',
+          relacionados: false,
+          ahora: minuto(2),
+        }),
+      ).rejects.toBeInstanceOf(SolicitudPendienteError)
+      await expect(
+        repo.solicitar({
+          solicitante: otroProveedorId,
+          ficha: fichaDe(proveedorId),
+          cuerpo: 'al revés',
+          relacionados: false,
+          ahora: minuto(2),
+        }),
+      ).rejects.toBeInstanceOf(SolicitudPendienteError)
+      await expect(
+        repo.solicitar({
+          solicitante: proveedorId,
+          ficha: fichaDe(proveedorId),
+          cuerpo: 'a mí mismo',
+          relacionados: false,
+          ahora: minuto(2),
+        }),
+      ).rejects.toBeInstanceOf(AutocontactoError)
+      // Ni el rechazo ni el autocontacto dejan rastro: un solo mensaje.
+      const par = await repo.parDePerfil(proveedorId, otroProveedorId)
+      const pagina = await repo.mensajes(par?.conversationId ?? '', { desde: null, limite: 10 })
+      expect(pagina.items.map((m) => m.body)).toEqual(['primera'])
+    }
+  })
+
+  it('responder: DECLINED oculta la conversación al proveedor y da retryAt al solicitante; un segundo responder → no-pendiente; el solicitante → no-encontrada', async () => {
+    const conv = await solicitarEnAmbos(parejaId, proveedorId, 'hola', 1)
+    const vistas: unknown[] = []
+
+    for (const [quien, repo] of implementaciones()) {
+      const id = idDe(conv, quien)
+      expect(await repo.responder(id, parejaId, 'DECLINED', minuto(2))).toBe('no-encontrada')
+      expect(await repo.responder(id, invitadoId, 'ACCEPTED', minuto(2))).toBe('no-encontrada')
+      expect(await repo.responder(randomUUID(), proveedorId, 'ACCEPTED', minuto(2))).toBe(
+        'no-encontrada',
+      )
+      vistas.push(
+        perfilSinVolatiles(comoVista(await repo.responder(id, proveedorId, 'DECLINED', minuto(2)))),
+      )
+      expect(await repo.responder(id, proveedorId, 'ACCEPTED', minuto(3))).toBe('no-pendiente')
+      expect(await repo.parDePerfil(parejaId, proveedorId)).toMatchObject({
+        status: 'DECLINED',
+        declinedAt: minuto(2),
+      })
+    }
+
+    // Lo que devuelve `responder` al rechazar: la vista del proveedor, aunque ya no la vea.
+    expect(vistas[1]).toEqual(vistas[0])
+    expect(vistas[0]).toEqual({
+      status: 'DECLINED',
+      direction: 'RECEIVED',
+      other: { userId: parejaId, displayName: 'Pareja', role: 'CONTACT' },
+      vendor: { id: fichaDe(proveedorId).id, businessName: 'Catering Sol' },
+      lastMessage: { body: 'hola' },
+      unreadCount: 1,
+      readOnly: true,
+      retryAt: null,
+      otherMarks: { deliveredUpTo: false, readUpTo: false },
+    })
+    expect(await perfilEnAmbos(conv, proveedorId)).toBeNull()
+    expect(await perfilEnAmbos(conv, parejaId)).toMatchObject({
+      status: 'DECLINED',
+      direction: 'SENT',
+      readOnly: true,
+      retryAt: new Date(minuto(2).getTime() + ESPERA_TRAS_RECHAZO_MS),
+    })
+  })
+
+  it('responder: ACCEPTED devuelve la vista del proveedor tras la transición, igual que buscarPerfil', async () => {
+    const conv = await solicitarEnAmbos(parejaId, proveedorId, 'hola', 1)
+    const vistas: unknown[] = []
+    for (const [quien, repo] of implementaciones()) {
+      const vista = comoVista(
+        await repo.responder(idDe(conv, quien), proveedorId, 'ACCEPTED', minuto(2)),
+      )
+      expect(vista.id).toBe(idDe(conv, quien))
+      vistas.push(perfilSinVolatiles(vista))
+    }
+    expect(vistas[1]).toEqual(vistas[0])
+    expect(vistas[0]).toEqual(await perfilEnAmbos(conv, proveedorId))
+    expect(vistas[0]).toMatchObject({ status: 'ACCEPTED', direction: 'RECEIVED', readOnly: false })
+  })
+
+  it('responder: una conversación de evento no es una solicitud → no-encontrada', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    await proveedor(eventId, proveedorId, true)
+    const conv = await abrirEnAmbos(eventId, parejaId, proveedorId)
+    for (const [quien, repo] of implementaciones()) {
+      const id = idDe(conv, quien)
+      expect(await repo.responder(id, proveedorId, 'ACCEPTED', minuto(1))).toBe('no-encontrada')
+      expect(await repo.buscarPerfil(id, proveedorId)).toBeNull()
+    }
+  })
+
+  it('solicitar tras rechazo: antes de 24 h espera; después vuelve a PENDING con el historial anterior', async () => {
+    const conv = await solicitarEnAmbos(parejaId, proveedorId, 'primera', 1)
+    for (const [quien, repo] of implementaciones()) {
+      expect(
+        await repo.responder(idDe(conv, quien), proveedorId, 'DECLINED', minuto(2)),
+      ).toMatchObject({ status: 'DECLINED' })
+    }
+
+    const retryAt = minuto(2 + DIA_EN_MIN)
+    for (const [, repo] of implementaciones()) {
+      const intento = repo.solicitar({
+        solicitante: parejaId,
+        ficha: fichaDe(proveedorId),
+        cuerpo: 'demasiado pronto',
+        relacionados: false,
+        ahora: minuto(1 + DIA_EN_MIN),
+      })
+      await expect(intento).rejects.toBeInstanceOf(EsperaTrasRechazoError)
+      await expect(intento).rejects.toMatchObject({ details: { retryAt: retryAt.toISOString() } })
+    }
+
+    const otra = await solicitarEnAmbos(parejaId, proveedorId, 'segunda', 2 + DIA_EN_MIN)
+    expect(otra).toEqual(conv) // la misma conversación, en los dos
+    for (const [quien, repo] of implementaciones()) {
+      const pagina = await repo.mensajes(idDe(conv, quien), { desde: null, limite: 10 })
+      expect(pagina.items.map((m) => m.body)).toEqual(['segunda', 'primera'])
+      expect(await repo.parDePerfil(proveedorId, parejaId)).toMatchObject({
+        status: 'PENDING',
+        declinedAt: null,
+      })
+    }
+    expect(await perfilEnAmbos(conv, proveedorId)).toMatchObject({
+      status: 'PENDING',
+      direction: 'RECEIVED',
+      lastMessage: { body: 'segunda' },
+      unreadCount: 2,
+      retryAt: null,
+    })
+  })
+
+  it('perfiles: requestsPending cuenta las recibidas pendientes; unreadTotal sólo las aceptadas', async () => {
+    const pendiente = await solicitarEnAmbos(parejaId, proveedorId, 'pendiente', 1)
+    const aceptada = await solicitarEnAmbos(plannerId, proveedorId, 'aceptada', 2, true)
+    const rechazada = await solicitarEnAmbos(invitadoId, proveedorId, 'rechazada', 3)
+    for (const [quien, repo] of implementaciones()) {
+      expect(
+        await repo.responder(idDe(rechazada, quien), proveedorId, 'DECLINED', minuto(4)),
+      ).toMatchObject({ status: 'DECLINED' })
+    }
+    const enviada = await solicitarEnAmbos(proveedorId, otroProveedorId, 'enviada', 5)
+
+    const resultados: unknown[] = []
+    for (const [quien, repo] of implementaciones()) {
+      const { items, requestsPending, unreadTotal } = await repo.perfiles(proveedorId)
+      // La rechazada no está; orden por último mensaje, más reciente primero.
+      expect(items.map((v) => v.id)).toEqual([
+        idDe(enviada, quien),
+        idDe(aceptada, quien),
+        idDe(pendiente, quien),
+      ])
+      expect(requestsPending).toBe(1)
+      expect(unreadTotal).toBe(1)
+      const solicitante = await repo.perfiles(invitadoId)
+      expect(solicitante.items.map((v) => [v.status, v.retryAt])).toEqual([
+        ['DECLINED', new Date(minuto(4).getTime() + ESPERA_TRAS_RECHAZO_MS)],
+      ])
+      expect([solicitante.requestsPending, solicitante.unreadTotal]).toEqual([0, 0])
+      resultados.push({
+        items: items.map(perfilSinVolatiles),
+        solicitante: solicitante.items.map(perfilSinVolatiles),
+      })
+    }
+    expect(resultados[1]).toEqual(resultados[0])
+  })
+
+  it('tienenRelacion: miembro ACTIVE ↔ proveedor BOOKED de evento publicado sí; dos proveedores del mismo evento no; evento sin publicar con proveedor no', async () => {
+    const v1 = (await nuevoProveedor('Relación Uno')).userId
+    const v2 = (await nuevoProveedor('Relación Dos')).userId
+    const v3 = (await nuevoProveedor('Relación Tres')).userId
+    const m1 = await crearUsuario('relacion-m1@perfil.test', 'Miembro Uno')
+    const m2 = await crearUsuario('relacion-m2@perfil.test', 'Miembro Dos')
+    const m3 = await crearUsuario('relacion-m3@perfil.test', 'Miembro Tres')
+    const invitado = await crearUsuario('relacion-inv@perfil.test', 'Invitado Rel')
+    const publicado = await nuevoEvento(true)
+    await miembro(publicado, m1, 'COUPLE')
+    await miembro(publicado, m3, 'PLANNER')
+    await miembro(publicado, invitado, 'PLANNER', 'INVITED')
+    await proveedor(publicado, v1, true)
+    await proveedor(publicado, v2, true)
+    const borrador = await nuevoEvento(false)
+    await miembro(borrador, m2, 'COUPLE')
+    await proveedor(borrador, v3, true)
+
+    const casos: Array<[string, string, boolean]> = [
+      [m1, v1, true],
+      [v1, m1, true],
+      [m1, m3, true],
+      [v1, v2, false],
+      [m2, v3, false],
+      [m1, m2, false],
+      [m1, invitado, false],
+      [invitado, v1, false],
+      // Nadie tiene relación consigo mismo, aunque sea ACTIVE o BOOKED.
+      [m1, m1, false],
+      [v1, v1, false],
+    ]
+    for (const [, repo] of implementaciones()) {
+      for (const [a, b, esperado] of casos) {
+        expect([a, b, await repo.tienenRelacion(a, b)]).toEqual([a, b, esperado])
+      }
+    }
+
+    // Al publicar el borrador, su miembro y su proveedor ya tienen relación.
+    await publicar(borrador, true)
+    for (const [, repo] of implementaciones()) {
+      expect(await repo.tienenRelacion(m2, v3)).toBe(true)
+    }
+  })
+
+  it('fichaParaContacto: DRAFT/SUSPENDED → publicada false; id inexistente → null', async () => {
+    const publicada = await nuevoProveedor('Ficha Publicada', 'PUBLISHED')
+    const borrador = await nuevoProveedor('Ficha Borrador', 'DRAFT')
+    const suspendida = await nuevoProveedor('Ficha Suspendida', 'SUSPENDED')
+    for (const [, repo] of implementaciones()) {
+      expect(await repo.fichaParaContacto(publicada.id)).toEqual(publicada)
+      expect(await repo.fichaParaContacto(borrador.id)).toEqual({ ...borrador, publicada: false })
+      expect(await repo.fichaParaContacto(suspendida.id)).toEqual({
+        ...suspendida,
+        publicada: false,
+      })
+      expect(await repo.fichaParaContacto(randomUUID())).toBeNull()
+    }
+  })
+
+  it('bandeja y salas no incluyen PROFILE', async () => {
+    const eventId = await nuevoEvento(true)
+    await miembro(eventId, parejaId, 'COUPLE')
+    await proveedor(eventId, proveedorId, true)
+    const conv = await solicitarEnAmbos(parejaId, proveedorId, 'por la ficha', 1, true)
+
+    for (const [quien, repo] of implementaciones()) {
+      const id = idDe(conv, quien)
+      for (const userId of [parejaId, proveedorId]) {
+        expect((await repo.bandeja(userId)).items.map((v) => v.id)).not.toContain(id)
+        expect((await repo.salas(userId)).items.map((v) => v.id)).not.toContain(id)
+        expect(await repo.buscar(id, userId)).toBeNull()
+        expect(await repo.buscarSala(id, userId)).toBeNull()
+      }
+      expect((await repo.bandeja(proveedorId)).unreadTotal).toBe(0)
+      // Y al revés: una 1:1 de evento no sale entre los perfiles.
+      const directa = await repo.abrir(eventId, parejaId, proveedorId)
+      expect((await repo.perfiles(parejaId)).items.map((v) => v.id)).toEqual([id])
+      expect(await repo.buscarPerfil(directa.id, parejaId)).toBeNull()
     }
   })
 })

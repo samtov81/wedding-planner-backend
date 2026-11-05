@@ -1,5 +1,6 @@
 import type {
   Contacto,
+  ConversacionDePerfilVista,
   MarcaDeMiembro,
   MarcasDeParticipante,
   MensajeVista,
@@ -115,3 +116,38 @@ export const mensajeDeSalaJson = (
         recipientIds: recibo.recipientIds,
         receipts: { total: recibo.total, delivered: recibo.delivered, read: recibo.read },
       }
+
+/**
+ * Una conversación de contacto desde la ficha (`PROFILE`) en el cable. Va aparte
+ * de `GET /me/conversations`: el cliente la pide en `GET /me/profile-conversations`.
+ * `retryAt` sólo viene en una rechazada vista por el solicitante.
+ */
+export interface ConversacionDePerfilJson {
+  id: string
+  kind: 'PROFILE'
+  status: ConversacionDePerfilVista['status']
+  direction: 'SENT' | 'RECEIVED'
+  other: ConversacionDePerfilVista['other']
+  vendor: ConversacionDePerfilVista['vendor']
+  lastMessage: MensajeJson | null
+  unreadCount: number
+  readOnly: boolean
+  retryAt: string | null
+  otherMarks: OtherMarksJson
+}
+
+export const conversacionDePerfilJson = (
+  v: ConversacionDePerfilVista,
+): ConversacionDePerfilJson => ({
+  id: v.id,
+  kind: 'PROFILE',
+  status: v.status,
+  direction: v.direction,
+  other: v.other,
+  vendor: v.vendor,
+  lastMessage: v.lastMessage === null ? null : mensajeJson(v.lastMessage),
+  unreadCount: v.unreadCount,
+  readOnly: v.readOnly,
+  retryAt: v.retryAt === null ? null : v.retryAt.toISOString(),
+  otherMarks: otherMarksJson(v.otherMarks),
+})

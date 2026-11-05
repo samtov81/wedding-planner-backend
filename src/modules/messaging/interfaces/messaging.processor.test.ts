@@ -6,6 +6,7 @@ import { RealtimePortEnMemoria } from '@/modules/notifications/infrastructure/re
 
 import {
   COLA_MENSAJERIA,
+  EVENTO_CONTACTO_ACTUALIZADO,
   EVENTO_MENSAJE_CREADO,
   EVENTO_MENSAJE_RECIBO,
 } from '../application/avisos-mensajeria'
@@ -200,6 +201,130 @@ describe('MessagingProcessor', () => {
           },
         },
       ])
+    })
+  })
+
+  describe('contacto desde la ficha', () => {
+    const SOLICITANTE = randomUUID()
+    const DUENO = randomUUID()
+    let perfilId: string
+    let mensajeId: string
+
+    beforeEach(async () => {
+      repo.registrarUsuario(SOLICITANTE, 'Ana')
+      repo.registrarUsuario(DUENO, 'Foto Pepe')
+      const fichaId = repo.sembrarFicha(DUENO, { businessName: 'Foto', publicada: true })
+      const r = await repo.solicitar({
+        solicitante: SOLICITANTE,
+        ficha: { id: fichaId, userId: DUENO, businessName: 'Foto', publicada: true },
+        cuerpo: 'hola, ¿tenéis fecha?',
+        relacionados: false,
+        ahora: new Date(1000),
+      })
+      perfilId = r.conversationId
+      mensajeId = r.mensaje.id
+    })
+
+    const destinos = (): unknown[] => realtime.emitidas.map((e) => e.destino).sort(porUsuario)
+
+    it('message.created de una solicitud pendiente llega a los dos', async () => {
+      await procesador.process(
+        job(EVENTO_MENSAJE_CREADO, { conversationId: perfilId, messageId: mensajeId }),
+      )
+
+      expect(destinos()).toEqual([{ userId: SOLICITANTE }, { userId: DUENO }].sort(porUsuario))
+    })
+
+    it('message.created de una rechazada no llega al proveedor, sí al solicitante', async () => {
+      await repo.responder(perfilId, DUENO, 'DECLINED', new Date(2000))
+
+      await procesador.process(
+        job(EVENTO_MENSAJE_CREADO, { conversationId: perfilId, messageId: mensajeId }),
+      )
+
+      expect(destinos()).toEqual([{ userId: SOLICITANTE }])
+    })
+
+    it('contact.updated llega a los dos, también tras rechazar, y sólo con el id', async () => {
+      await repo.responder(perfilId, DUENO, 'DECLINED', new Date(2000))
+
+      await procesador.process(
+        job(EVENTO_CONTACTO_ACTUALIZADO, {
+          conversationId: perfilId,
+          estado: 'DECLINED',
+          mensajeId: null,
+        }),
+      )
+
+      expect(realtime.emitidas).toHaveLength(2)
+      expect(destinos()).toEqual([{ userId: SOLICITANTE }, { userId: DUENO }].sort(porUsuario))
+      for (const e of realtime.emitidas) {
+        expect(e.tipo).toBe('contact.updated')
+        expect(e.payload).toEqual({ conversationId: perfilId })
+      }
+    })
+
+    it('un contact.updated roto es irrecuperable', async () => {
+      await expect(
+        procesador.process(job(EVENTO_CONTACTO_ACTUALIZADO, { conversationId: 'no-uuid' })),
+      ).rejects.toBeInstanceOf(UnrecoverableError)
+    })
+
+    it('message.receipt en una aceptada llega al otro con las marcas de quien marcó', async () => {
+      await repo.responder(perfilId, DUENO, 'ACCEPTED', new Date(2000))
+      await repo.marcar(perfilId, DUENO, 'read', mensajeId)
+
+      await procesador.process(
+        job(EVENTO_MENSAJE_RECIBO, { conversationId: perfilId, userId: DUENO }),
+      )
+
+      const marca = { at: new Date(1000).toISOString(), id: mensajeId }
+      expect(realtime.emitidas).toEqual([
+        {
+          destino: { userId: SOLICITANTE },
+          tipo: 'message.receipt',
+          payload: {
+            conversationId: perfilId,
+            userId: DUENO,
+            deliveredUpTo: null,
+            readUpTo: marca,
+          },
+        },
+      ])
+    })
+
+    it('message.receipt en el otro sentido: marca el solicitante y lo recibe el proveedor', async () => {
+      await repo.responder(perfilId, DUENO, 'ACCEPTED', new Date(2000))
+      await repo.marcar(perfilId, SOLICITANTE, 'read', mensajeId)
+
+      await procesador.process(
+        job(EVENTO_MENSAJE_RECIBO, { conversationId: perfilId, userId: SOLICITANTE }),
+      )
+
+      const marca = { at: new Date(1000).toISOString(), id: mensajeId }
+      expect(realtime.emitidas).toEqual([
+        {
+          destino: { userId: DUENO },
+          tipo: 'message.receipt',
+          payload: {
+            conversationId: perfilId,
+            userId: SOLICITANTE,
+            deliveredUpTo: null,
+            readUpTo: marca,
+          },
+        },
+      ])
+    })
+
+    it('message.receipt no llega a un proveedor que rechazó', async () => {
+      await repo.responder(perfilId, DUENO, 'DECLINED', new Date(2000))
+      await repo.marcar(perfilId, SOLICITANTE, 'read', mensajeId)
+
+      await procesador.process(
+        job(EVENTO_MENSAJE_RECIBO, { conversationId: perfilId, userId: SOLICITANTE }),
+      )
+
+      expect(realtime.emitidas).toEqual([])
     })
   })
 })

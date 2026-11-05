@@ -25,6 +25,11 @@ import { Throttle, type ThrottlerOptions } from '@nestjs/throttler'
  * ni leer sus claves internas de metadatos. El olvido posible queda del lado
  * seguro: una ruta sin `@LimiteDeRuta` tiene sólo el global, nunca un límite
  * ajeno.
+ *
+ * Los límites de abajo que dicen "por IP" (`vendor-catalog`, `invite`,
+ * `messages`) cuentan así por el DESIGN-GAP de que este guard corre antes que
+ * `JwtAuthGuard`. Para contar por usuario existe `limite-por-usuario.ts`
+ * (`@LimitePorUsuario`, usado por `contact-requests`); migrarlos es cosa aparte.
  */
 export const LIMITADOR_GLOBAL = 'global'
 export const LIMITADOR_RSVP = 'rsvp'

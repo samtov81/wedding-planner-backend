@@ -97,6 +97,7 @@ model User {
   conversationParticipations ConversationParticipant[]
   messagesSent               Message[]
   messagesReceived           MessageRecipient[]
+  contactRequests            Conversation[]            @relation("ContactRequester")
   emailVerificationTokens    EmailVerificationToken[]
   passwordResetTokens        PasswordResetToken[]
   expensesCreated            Expense[]                 @relation("ExpenseCreatedBy")
@@ -160,6 +161,7 @@ model VendorProfile {
   eventVendors    EventVendor[]
   packages        VendorPackage[]
   portfolioImages VendorPortfolioImage[]
+  conversations   Conversation[]
 
   @@index([categoryId, status])
   @@map("vendor_profiles")
@@ -551,11 +553,18 @@ model SeatAssignment {
 }
 
 /// Tipo de conversación: `EVENT_DIRECT` (1:1, parte 1) y `EVENT_ROOM` (sala del
-/// evento, parte 2). `PROFILE` está reservado para la parte 3.
+/// evento, parte 2) y `PROFILE` (contacto desde la ficha de un proveedor, parte 3).
 enum ConversationKind {
   EVENT_DIRECT
   EVENT_ROOM
   PROFILE
+}
+
+/// Estado de la solicitud de contacto de una conversación `PROFILE`.
+enum ContactRequestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
 }
 
 /// Conversación de mensajería. `EVENT_DIRECT` es 1:1 dentro de un evento y se
@@ -563,18 +572,28 @@ enum ConversationKind {
 /// UNIQUE garantiza una por evento y pareja sin importar quién la abra.
 /// `eventId` es nulo para tipos sin evento (PROFILE); NULL no choca en UNIQUE.
 model Conversation {
-  id            String           @id @default(uuid()) @db.Uuid
-  kind          ConversationKind
-  eventId       String?          @db.Uuid
-  pairKey       String?          @unique
-  createdAt     DateTime         @default(now())
-  lastMessageAt DateTime?
+  id              String                @id @default(uuid()) @db.Uuid
+  kind            ConversationKind
+  eventId         String?               @db.Uuid
+  pairKey         String?               @unique
+  createdAt       DateTime              @default(now())
+  lastMessageAt   DateTime?
+  /// Sólo `PROFILE` (parte 3): quien pidió el contacto, la ficha y el estado de
+  /// la solicitud. Cuatro CHECK a mano en la migración las atan a `kind`.
+  requesterId     String?               @db.Uuid
+  vendorProfileId String?               @db.Uuid
+  requestStatus   ContactRequestStatus?
+  declinedAt      DateTime?
 
-  event        Event?                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  participants ConversationParticipant[]
-  messages     Message[]
+  event         Event?                    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  requester     User?                     @relation("ContactRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  vendorProfile VendorProfile?            @relation(fields: [vendorProfileId], references: [id], onDelete: Cascade)
+  participants  ConversationParticipant[]
+  messages      Message[]
 
   @@index([eventId])
+  @@index([requesterId])
+  @@index([vendorProfileId])
   @@map("conversations")
 }
 

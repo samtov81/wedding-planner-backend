@@ -566,6 +566,9 @@ export class PrismaConversationRepository implements ConversationRepository {
    * en SQL la regla que aquí ya está escrita una vez con Prisma.
    */
   async tienenRelacion(a: string, b: string): Promise<boolean> {
+    // Nadie tiene relación consigo mismo: sin esto, un miembro ACTIVE de
+    // cualquier evento la tendría (los dos lados serían él).
+    if (a === b) return false
     const cliente = clienteDe(this.prisma)
     const [membresias, contrataciones] = await Promise.all([
       cliente.eventMembership.findMany({
@@ -615,7 +618,7 @@ export class PrismaConversationRepository implements ConversationRepository {
     cuerpo: string
     relacionados: boolean
     ahora: Date
-  }): Promise<{ conversationId: string; mensaje: MensajeVista }> {
+  }): Promise<{ conversationId: string; mensaje: MensajeVista; estado: 'PENDING' | 'ACCEPTED' }> {
     const pairKey = claveDePerfil(e.solicitante, e.ficha.userId)
     const evaluar = (fila: FilaParBloqueado | null): ReturnType<typeof evaluarSolicitud> =>
       evaluarSolicitud({
@@ -663,26 +666,36 @@ export class PrismaConversationRepository implements ConversationRepository {
         conversationId = fila.id
       }
       const mensaje = await this.agregarMensaje(conversationId, e.solicitante, e.cuerpo, e.ahora)
-      return { conversationId, mensaje }
+      return { conversationId, mensaje, estado: decision.estado }
     })
   }
 
-  /** `FOR UPDATE` de la fila: un aceptar y un rechazar simultáneos serializan. */
+  /**
+   * `FOR UPDATE` de la fila: un aceptar y un rechazar simultáneos serializan.
+   * La vista se lee con la fila aún bloqueada (`vistasDePerfil` usa `clienteDe`,
+   * que dentro de `enTransaccion` es la transacción), sin el filtro de
+   * visibilidad: tras un rechazo el proveedor ya no la ve, pero es la respuesta
+   * a lo que acaba de hacer.
+   */
   async responder(
     conversationId: string,
     userId: string,
     decision: 'ACCEPTED' | 'DECLINED',
     ahora: Date,
-  ): Promise<'ok' | 'no-encontrada' | 'no-pendiente'> {
+  ): Promise<ConversacionDePerfilVista | 'no-encontrada' | 'no-pendiente'> {
     return await enTransaccion(this.prisma, async (tx) => {
       const fila = await parBloqueado(tx, { conversationId })
       if (fila === null || fila.vendorUserId !== userId) return 'no-encontrada'
       if (fila.requestStatus !== 'PENDING') return 'no-pendiente'
-      await tx.conversation.update({
+      const actualizada = await tx.conversation.update({
         where: { id: fila.id },
         data: { requestStatus: decision, declinedAt: decision === 'DECLINED' ? ahora : null },
+        include: INCLUIR_PERFIL,
       })
-      return 'ok'
+      const [vista] = await this.vistasDePerfil(userId, [actualizada], { aunqueNoLaVea: true })
+      if (vista === undefined)
+        throw new Error(`conversación ${fila.id} PROFILE sin vista tras responder`)
+      return vista
     })
   }
 
@@ -703,8 +716,16 @@ export class PrismaConversationRepository implements ConversationRepository {
     requestsPending: number
     unreadTotal: number
   }> {
+    // Las DECLINED que `userId` rechazó como proveedor se descartan en SQL: los
+    // participantes son exactamente solicitante y proveedor, así que "no soy el
+    // solicitante" es "soy el proveedor". `vistasDePerfil` vuelve a aplicar
+    // `veConversacionDePerfil`, que es la regla; esto sólo evita traerlas.
     const filas = await clienteDe(this.prisma).conversation.findMany({
-      where: { kind: 'PROFILE', participants: { some: { userId } } },
+      where: {
+        kind: 'PROFILE',
+        participants: { some: { userId } },
+        OR: [{ requesterId: userId }, { requestStatus: { not: 'DECLINED' } }],
+      },
       include: INCLUIR_PERFIL,
     })
     const items = ordenarComoBandeja(await this.vistasDePerfil(userId, filas), filas)
@@ -721,13 +742,15 @@ export class PrismaConversationRepository implements ConversationRepository {
   /**
    * Vistas `PROFILE` de `userId` por lotes (no leídos y último mensaje: dos
    * consultas en total, las mismas que la 1:1). Descarta las que no ve según
-   * `veConversacionDePerfil`. Nombres (spec §3.7): el proveedor con el
-   * `businessName` de la ficha de la conversación; el solicitante con su
-   * `fullName`, aunque tenga ficha propia.
+   * `veConversacionDePerfil`, salvo con `aunqueNoLaVea` (sólo `responder`,
+   * para devolver al proveedor la que acaba de rechazar). Nombres (spec §3.7):
+   * el proveedor con el `businessName` de la ficha de la conversación; el
+   * solicitante con su `fullName`, aunque tenga ficha propia.
    */
   private async vistasDePerfil(
     userId: string,
     filas: FilaPerfil[],
+    { aunqueNoLaVea = false }: { aunqueNoLaVea?: boolean } = {},
   ): Promise<ConversacionDePerfilVista[]> {
     if (filas.length === 0) return []
     const ids = filas.map((f) => f.id)
@@ -739,7 +762,7 @@ export class PrismaConversationRepository implements ConversationRepository {
       const ficha = fila.vendorProfile
       if (ficha === null) return []
       const par = aPar({ ...fila, vendorUserId: ficha.userId })
-      if (!veConversacionDePerfil(par, userId)) return []
+      if (!aunqueNoLaVea && !veConversacionDePerfil(par, userId)) return []
       const otro = fila.participants.find((p) => p.userId !== userId)
       if (otro === undefined) return []
 

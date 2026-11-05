@@ -17,15 +17,19 @@ import {
  * El proveedor acepta o rechaza una solicitud (spec 2026-11-03 §4.2). El
  * repositorio decide en una transacción: `no-encontrada` (no es `PROFILE` o
  * quien responde no es el proveedor, mismo 404 que un id ajeno) y
- * `no-pendiente` (409: ya se respondió). Se llama SIEMPRE al repositorio, aunque
- * la lectura previa sea null: un proveedor que ya rechazó no ve la conversación
- * y aun así debe recibir 409, no 404 (spec §4.2); alternativa descartada: cortar
- * con 404 cuando `buscarPerfil` no la devuelve. Si responde, devuelve la vista del
- * proveedor y encola `contact.updated`; sin mensaje nuevo, `mensajeId` es null.
- * Un fallo de Redis se registra pero no deshace la decisión. Al RECHAZAR el
- * proveedor deja de ver la conversación, así que la respuesta es la vista
- * previa con el estado nuevo; alternativa descartada: devolver 404 tras un
- * rechazo que sí se guardó.
+ * `no-pendiente` (409: ya se respondió). Un proveedor que ya rechazó no ve la
+ * conversación y aun así recibe 409, no 404 (spec §4.2), porque el repositorio
+ * mira la fila, no la visibilidad.
+ *
+ * Si responde, `responder` devuelve la vista del proveedor leída DENTRO de la
+ * transacción, tras la transición (en un rechazo, `DECLINED` y en solo
+ * lectura), y se encola `contact.updated` SIEMPRE; sin mensaje nuevo,
+ * `mensajeId` es null. Un fallo de Redis se registra pero no deshace la
+ * decisión. Alternativa descartada (la versión anterior): leer la vista con
+ * `buscarPerfil` ANTES de responder. Esa lectura quedaba fuera de la
+ * transacción: si el proveedor que ya había rechazado respondía mientras el
+ * solicitante reintentaba pasadas las 24 h, la lectura previa era null, la
+ * respuesta salía `ok` y el caso de uso fallaba con un 500 sin encolar el aviso.
  */
 @Injectable()
 export class RespondContactUseCase {
@@ -41,29 +45,15 @@ export class RespondContactUseCase {
     conversationId: string,
     decision: 'ACCEPTED' | 'DECLINED',
   ): Promise<ConversacionDePerfilVista> {
-    // Se lee ANTES: tras rechazar, el proveedor ya no la ve y `buscarPerfil`
-    // devolvería null (`veConversacionDePerfil`).
-    const antes = await this.repo.buscarPerfil(conversationId, userId)
-    const r = await this.repo.responder(conversationId, userId, decision, new Date())
-    if (r === 'no-encontrada') throw new ConversacionNoEncontradaError()
-    if (r === 'no-pendiente') throw new SolicitudNoPendienteError()
-    // Sin lectura previa el repositorio sólo puede decir 404 o 409: un `ok`
-    // significaría que la fila cambió entre las dos lecturas, y sin la vista
-    // no hay qué devolver.
-    if (antes === null) throw new Error('responder aceptó una solicitud que el proveedor no veía')
+    const vista = await this.repo.responder(conversationId, userId, decision, new Date())
+    if (vista === 'no-encontrada') throw new ConversacionNoEncontradaError()
+    if (vista === 'no-pendiente') throw new SolicitudNoPendienteError()
 
     await encolarAvisoContacto(this.cola, this.registro, {
       conversationId,
       estado: decision,
       mensajeId: null,
     })
-    if (decision === 'DECLINED') return { ...antes, status: 'DECLINED', readOnly: true }
-    return (
-      (await this.repo.buscarPerfil(conversationId, userId)) ?? {
-        ...antes,
-        status: decision,
-        readOnly: false,
-      }
-    )
+    return vista
   }
 }

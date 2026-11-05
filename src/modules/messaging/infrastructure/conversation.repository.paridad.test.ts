@@ -847,7 +847,16 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
     const r = await real.solicitar(e)
     const d = await doble.solicitar(e)
     expect(r.mensaje.body).toBe(d.mensaje.body)
+    expect(d.estado).toBe(r.estado)
     return { real: r.conversationId, doble: d.conversationId }
+  }
+
+  /** El resultado de `responder` cuando responde; si no, el test falla diciendo por qué. */
+  function comoVista(
+    r: ConversacionDePerfilVista | 'no-encontrada' | 'no-pendiente',
+  ): ConversacionDePerfilVista {
+    if (typeof r === 'string') throw new Error(`responder devolvió ${r}`)
+    return r
   }
 
   /** Lo comparable de una vista de perfil: sin ids de conversación ni de mensajes. */
@@ -929,6 +938,32 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
     expect(await perfilEnAmbos(conv, invitadoId)).toBeNull()
   })
 
+  it('solicitar: devuelve el estado guardado, PENDING o ACCEPTED', async () => {
+    for (const [, repo] of implementaciones()) {
+      const e = { cuerpo: 'hola', ahora: minuto(1) }
+      expect(
+        (
+          await repo.solicitar({
+            ...e,
+            solicitante: parejaId,
+            ficha: fichaDe(proveedorId),
+            relacionados: false,
+          })
+        ).estado,
+      ).toBe('PENDING')
+      expect(
+        (
+          await repo.solicitar({
+            ...e,
+            solicitante: plannerId,
+            ficha: fichaDe(proveedorId),
+            relacionados: true,
+          })
+        ).estado,
+      ).toBe('ACCEPTED')
+    }
+  })
+
   it('solicitar: relacionados → ACCEPTED', async () => {
     const conv = await solicitarEnAmbos(plannerId, proveedorId, 'hola', 1, true)
     expect(await perfilEnAmbos(conv, proveedorId)).toMatchObject({
@@ -984,6 +1019,7 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
 
   it('responder: DECLINED oculta la conversación al proveedor y da retryAt al solicitante; un segundo responder → no-pendiente; el solicitante → no-encontrada', async () => {
     const conv = await solicitarEnAmbos(parejaId, proveedorId, 'hola', 1)
+    const vistas: unknown[] = []
 
     for (const [quien, repo] of implementaciones()) {
       const id = idDe(conv, quien)
@@ -992,7 +1028,9 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
       expect(await repo.responder(randomUUID(), proveedorId, 'ACCEPTED', minuto(2))).toBe(
         'no-encontrada',
       )
-      expect(await repo.responder(id, proveedorId, 'DECLINED', minuto(2))).toBe('ok')
+      vistas.push(
+        perfilSinVolatiles(comoVista(await repo.responder(id, proveedorId, 'DECLINED', minuto(2)))),
+      )
       expect(await repo.responder(id, proveedorId, 'ACCEPTED', minuto(3))).toBe('no-pendiente')
       expect(await repo.parDePerfil(parejaId, proveedorId)).toMatchObject({
         status: 'DECLINED',
@@ -1000,6 +1038,19 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
       })
     }
 
+    // Lo que devuelve `responder` al rechazar: la vista del proveedor, aunque ya no la vea.
+    expect(vistas[1]).toEqual(vistas[0])
+    expect(vistas[0]).toEqual({
+      status: 'DECLINED',
+      direction: 'RECEIVED',
+      other: { userId: parejaId, displayName: 'Pareja', role: 'CONTACT' },
+      vendor: { id: fichaDe(proveedorId).id, businessName: 'Catering Sol' },
+      lastMessage: { body: 'hola' },
+      unreadCount: 1,
+      readOnly: true,
+      retryAt: null,
+      otherMarks: { deliveredUpTo: false, readUpTo: false },
+    })
     expect(await perfilEnAmbos(conv, proveedorId)).toBeNull()
     expect(await perfilEnAmbos(conv, parejaId)).toMatchObject({
       status: 'DECLINED',
@@ -1007,6 +1058,21 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
       readOnly: true,
       retryAt: new Date(minuto(2).getTime() + ESPERA_TRAS_RECHAZO_MS),
     })
+  })
+
+  it('responder: ACCEPTED devuelve la vista del proveedor tras la transición, igual que buscarPerfil', async () => {
+    const conv = await solicitarEnAmbos(parejaId, proveedorId, 'hola', 1)
+    const vistas: unknown[] = []
+    for (const [quien, repo] of implementaciones()) {
+      const vista = comoVista(
+        await repo.responder(idDe(conv, quien), proveedorId, 'ACCEPTED', minuto(2)),
+      )
+      expect(vista.id).toBe(idDe(conv, quien))
+      vistas.push(perfilSinVolatiles(vista))
+    }
+    expect(vistas[1]).toEqual(vistas[0])
+    expect(vistas[0]).toEqual(await perfilEnAmbos(conv, proveedorId))
+    expect(vistas[0]).toMatchObject({ status: 'ACCEPTED', direction: 'RECEIVED', readOnly: false })
   })
 
   it('responder: una conversación de evento no es una solicitud → no-encontrada', async () => {
@@ -1024,7 +1090,9 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
   it('solicitar tras rechazo: antes de 24 h espera; después vuelve a PENDING con el historial anterior', async () => {
     const conv = await solicitarEnAmbos(parejaId, proveedorId, 'primera', 1)
     for (const [quien, repo] of implementaciones()) {
-      expect(await repo.responder(idDe(conv, quien), proveedorId, 'DECLINED', minuto(2))).toBe('ok')
+      expect(
+        await repo.responder(idDe(conv, quien), proveedorId, 'DECLINED', minuto(2)),
+      ).toMatchObject({ status: 'DECLINED' })
     }
 
     const retryAt = minuto(2 + DIA_EN_MIN)
@@ -1064,9 +1132,9 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
     const aceptada = await solicitarEnAmbos(plannerId, proveedorId, 'aceptada', 2, true)
     const rechazada = await solicitarEnAmbos(invitadoId, proveedorId, 'rechazada', 3)
     for (const [quien, repo] of implementaciones()) {
-      expect(await repo.responder(idDe(rechazada, quien), proveedorId, 'DECLINED', minuto(4))).toBe(
-        'ok',
-      )
+      expect(
+        await repo.responder(idDe(rechazada, quien), proveedorId, 'DECLINED', minuto(4)),
+      ).toMatchObject({ status: 'DECLINED' })
     }
     const enviada = await solicitarEnAmbos(proveedorId, otroProveedorId, 'enviada', 5)
 
@@ -1121,6 +1189,9 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
       [m1, m2, false],
       [m1, invitado, false],
       [invitado, v1, false],
+      // Nadie tiene relación consigo mismo, aunque sea ACTIVE o BOOKED.
+      [m1, m1, false],
+      [v1, v1, false],
     ]
     for (const [, repo] of implementaciones()) {
       for (const [a, b, esperado] of casos) {

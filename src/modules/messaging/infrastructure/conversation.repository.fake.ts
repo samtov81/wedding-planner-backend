@@ -411,8 +411,12 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     return Promise.resolve(conv === undefined ? null : this.parDe(conv))
   }
 
-  /** Como Prisma: algún evento donde los dos tienen acceso hoy y no son ambos proveedores. */
+  /**
+   * Como Prisma: algún evento donde los dos tienen acceso hoy y no son ambos
+   * proveedores. Nadie tiene relación consigo mismo.
+   */
   tienenRelacion(a: string, b: string): Promise<boolean> {
+    if (a === b) return Promise.resolve(false)
     const eventos = new Set([
       ...this.miembros.map((m) => m.eventId),
       ...this.proveedores.map((p) => p.eventId),
@@ -433,7 +437,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     cuerpo: string
     relacionados: boolean
     ahora: Date
-  }): Promise<{ conversationId: string; mensaje: MensajeVista }> {
+  }): Promise<{ conversationId: string; mensaje: MensajeVista; estado: 'PENDING' | 'ACCEPTED' }> {
     const pairKey = claveDePerfil(e.solicitante, e.ficha.userId)
     const existente = this.conversaciones.find((c) => c.pairKey === pairKey)
     const { accion, estado } = evaluarSolicitud({
@@ -474,7 +478,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
       }
     }
     const mensaje = await this.agregarMensaje(conv.id, e.solicitante, e.cuerpo, e.ahora)
-    return { conversationId: conv.id, mensaje }
+    return { conversationId: conv.id, mensaje, estado }
   }
 
   responder(
@@ -482,7 +486,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     userId: string,
     decision: 'ACCEPTED' | 'DECLINED',
     ahora: Date,
-  ): Promise<'ok' | 'no-encontrada' | 'no-pendiente'> {
+  ): Promise<ConversacionDePerfilVista | 'no-encontrada' | 'no-pendiente'> {
     const conv = this.conversaciones.find((c) => c.id === conversationId)
     const par = conv === undefined ? null : this.parDe(conv)
     if (conv?.solicitud == null || par === null || par.vendorUserId !== userId) {
@@ -491,7 +495,10 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     if (par.status !== 'PENDING') return Promise.resolve('no-pendiente')
     conv.solicitud.status = decision
     conv.solicitud.declinedAt = decision === 'DECLINED' ? ahora : null
-    return Promise.resolve('ok')
+    // Como Prisma: la vista del proveedor tras la transición, aunque ya no la vea.
+    const vista = this.vistaDePerfil(conv, userId, { aunqueNoLaVea: true })
+    if (vista === null) throw new Error(`conversación ${conv.id} sin vista tras responder`)
+    return Promise.resolve(vista)
   }
 
   buscarPerfil(conversationId: string, userId: string): Promise<ConversacionDePerfilVista | null> {
@@ -504,8 +511,13 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     requestsPending: number
     unreadTotal: number
   }> {
+    // Como Prisma, las DECLINED del lado proveedor ni se miran.
     const items = this.conversaciones
-      .filter((c) => c.kind === 'PROFILE')
+      .filter(
+        (c) =>
+          c.kind === 'PROFILE' &&
+          (c.solicitud?.requesterId === userId || c.solicitud?.status !== 'DECLINED'),
+      )
       .sort(ordenDeBandeja)
       .flatMap((c) => {
         const v = this.vistaDePerfil(c, userId)
@@ -525,11 +537,16 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     return [...this.fichas.values()].find((f) => f.userId === userId)
   }
 
-  /** null si no es `PROFILE`. Una ficha sin sembrar es un escenario mal montado. */
+  /**
+   * null si no es `PROFILE` o si su ficha no está sembrada: es lo que hace
+   * Prisma (`parDePerfil` y `vistasDePerfil` devuelven null o la descartan sin
+   * `vendorProfile`). Alternativa descartada (la anterior): lanzar, que hacía
+   * al doble más estricto que el adaptador y rompía en vez de responder.
+   */
   private parDe(conv: ConversacionEnMemoria): ParDePerfil | null {
     if (conv.solicitud === null) return null
     const ficha = this.fichas.get(conv.solicitud.vendorProfileId)
-    if (ficha === undefined) throw new Error('ficha sin sembrarFicha en el doble')
+    if (ficha === undefined) return null
     return {
       conversationId: conv.id,
       requesterId: conv.solicitud.requesterId,
@@ -543,9 +560,10 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
   private vistaDePerfil(
     conv: ConversacionEnMemoria,
     userId: string,
+    { aunqueNoLaVea = false }: { aunqueNoLaVea?: boolean } = {},
   ): ConversacionDePerfilVista | null {
     const par = this.parDe(conv)
-    if (par === null || !veConversacionDePerfil(par, userId)) return null
+    if (par === null || (!aunqueNoLaVea && !veConversacionDePerfil(par, userId))) return null
     const ficha = this.fichas.get(conv.solicitud?.vendorProfileId ?? '')
     const yo = conv.participantes.find((p) => p.userId === userId)
     const otro = conv.participantes.find((p) => p.userId !== userId)

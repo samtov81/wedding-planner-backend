@@ -231,14 +231,16 @@ export interface ConversationRepository {
   /**
    * Podrían abrir hoy una `EVENT_DIRECT` entre sí en algún evento (reglas de la
    * parte 1 §4.1, las de `rolEnEvento`): los dos con acceso hoy al mismo
-   * evento y no los dos como proveedores. Nunca VENDOR↔VENDOR.
+   * evento y no los dos como proveedores. Nunca VENDOR↔VENDOR, y nunca
+   * consigo mismo: con `a === b` es false sin consultar.
    */
   tienenRelacion(a: string, b: string): Promise<boolean>
 
   /**
    * En una transacción, bloqueando la fila del par: evalúa con
    * `evaluarSolicitud` (lanza sus errores de dominio), crea la conversación o
-   * la reintenta y añade el mensaje, que es la solicitud.
+   * la reintenta y añade el mensaje, que es la solicitud. `estado` es el que
+   * quedó guardado: con él se encola `contact.updated` sin releer la vista.
    */
   solicitar(e: {
     solicitante: string
@@ -246,18 +248,26 @@ export interface ConversationRepository {
     cuerpo: string
     relacionados: boolean
     ahora: Date
-  }): Promise<{ conversationId: string; mensaje: MensajeVista }>
+  }): Promise<{ conversationId: string; mensaje: MensajeVista; estado: 'PENDING' | 'ACCEPTED' }>
 
   /**
    * Acepta o rechaza. Sólo el proveedor (si no, o si no es `PROFILE`:
-   * `no-encontrada`) y sólo en `PENDING` (si no: `no-pendiente`).
+   * `no-encontrada`) y sólo en `PENDING` (si no: `no-pendiente`). Si responde,
+   * devuelve la vista del PROVEEDOR leída en la MISMA transacción, tras la
+   * transición. Tras un rechazo el proveedor ya no la ve
+   * (`veConversacionDePerfil`), así que se le devuelve igualmente su vista,
+   * `DECLINED` y en solo lectura: es la respuesta a lo que acaba de hacer, no
+   * un permiso para volver a leerla. Alternativa descartada: devolver sólo
+   * `'ok'` y que el caso de uso lea la vista antes o después; cualquiera de las
+   * dos lecturas queda fuera de la transacción y un reintento del solicitante
+   * entre medias la deja vieja o vacía.
    */
   responder(
     conversationId: string,
     userId: string,
     decision: 'ACCEPTED' | 'DECLINED',
     ahora: Date,
-  ): Promise<'ok' | 'no-encontrada' | 'no-pendiente'>
+  ): Promise<ConversacionDePerfilVista | 'no-encontrada' | 'no-pendiente'>
 
   /** null si no es `PROFILE` o `userId` no la ve (`veConversacionDePerfil`). */
   buscarPerfil(conversationId: string, userId: string): Promise<ConversacionDePerfilVista | null>

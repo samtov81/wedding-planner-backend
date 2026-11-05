@@ -1,4 +1,3 @@
-
 -- CreateEnum
 CREATE TYPE "ContactRequestStatus" AS ENUM ('PENDING', 'ACCEPTED', 'DECLINED');
 
@@ -19,8 +18,6 @@ ALTER TABLE "conversations" ADD CONSTRAINT "conversations_requesterId_fkey" FORE
 
 -- AddForeignKey
 ALTER TABLE "conversations" ADD CONSTRAINT "conversations_vendorProfileId_fkey" FOREIGN KEY ("vendorProfileId") REFERENCES "vendor_profiles"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-
-
 
 -- CHECK (no los modela Prisma). Una conversación PROFILE es la única con
 -- solicitante, ficha y estado, y ninguna otra los lleva ni tiene evento.

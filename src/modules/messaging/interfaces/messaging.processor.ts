@@ -19,6 +19,7 @@ import {
   type ConversationRepository,
 } from '../application/conversation.repository'
 import { alcanza } from '../domain/conversacion'
+import { ESTADOS_DE_SOLICITUD } from '../domain/perfil'
 import { mensajeJson, otherMarksJson } from './messaging.json'
 
 /**
@@ -38,7 +39,7 @@ const reciboSchema = z.object({
 
 const contactoActualizadoSchema = z.object({
   conversationId: z.guid(),
-  estado: z.enum(['PENDING', 'ACCEPTED', 'DECLINED']),
+  estado: z.enum(ESTADOS_DE_SOLICITUD),
   mensajeId: z.guid().nullable(),
 }) satisfies z.ZodType<JobContactoActualizado>
 

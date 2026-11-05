@@ -71,7 +71,7 @@ export class RequestContactUseCase {
     const conversacion = await this.repo.buscarPerfil(conversationId, userId)
     if (conversacion === null) {
       throw new Error(
-        `invariante rota: el solicitante no ve la conversación ${conversationId} que acaba de crear`,
+        `invariante rota: el solicitante no ve la conversación ${conversationId} que creó`,
       )
     }
     return { conversacion, mensaje }

@@ -15,7 +15,10 @@ import {
  * `pairKey`. Alternativa descartada: una clave por ficha (`vendorProfileId`):
  * el par ya identifica la ficha, porque cada proveedor tiene una sola.
  */
-export type EstadoDeSolicitud = 'PENDING' | 'ACCEPTED' | 'DECLINED'
+export const ESTADOS_DE_SOLICITUD = ['PENDING', 'ACCEPTED', 'DECLINED'] as const
+
+/** Una sola lista: el tipo y el esquema del job (`messaging.processor`) salen de ella. */
+export type EstadoDeSolicitud = (typeof ESTADOS_DE_SOLICITUD)[number]
 
 /** Espera tras un rechazo: exactamente 24 h desde `declinedAt`. */
 export const ESPERA_TRAS_RECHAZO_MS = 86_400_000

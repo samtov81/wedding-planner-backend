@@ -5,8 +5,8 @@ import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.po
 import { normalizarCuerpo } from '../domain/conversacion'
 import {
   ConversacionNoEncontradaError,
-  EscrituraEnSolicitudPendienteError,
   ConversacionSoloLecturaError,
+  EscrituraEnSolicitudPendienteError,
 } from '../domain/messaging-errors'
 import { encolarAvisoMensaje } from './avisos-mensajeria'
 import {

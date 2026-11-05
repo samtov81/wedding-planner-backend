@@ -13,10 +13,10 @@ export type ConversacionLocalizada =
 /**
  * Las rutas `/conversations/:id/...` y el worker sirven a los tres tipos (1:1
  * de la parte 1, sala del evento de la parte 2 y contacto desde la ficha de la
- * parte 3): éste es el ÚNICO sitio que
- * decide de cuál se trata y si `userId` la ve. `buscar` sólo encuentra 1:1,
- * `buscarSala` sólo salas y `buscarPerfil` sólo `PROFILE`, así que el orden no cambia el resultado. null = no
- * existe o no la ve (el mismo 404 para los dos). Alternativa descartada: rutas
+ * parte 3): éste es el ÚNICO sitio que decide de cuál se trata y si `userId`
+ * la ve. `buscar` sólo encuentra 1:1, `buscarSala` sólo salas y `buscarPerfil`
+ * sólo `PROFILE`, así que el orden no cambia el resultado. null = no existe o
+ * no la ve (el mismo 404 para los dos). Alternativa descartada: rutas
  * `/rooms/:id/...` duplicadas, que obligarían al frontend a dos hilos distintos.
  */
 export async function localizarConversacion(

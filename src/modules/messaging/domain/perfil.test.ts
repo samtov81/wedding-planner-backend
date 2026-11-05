@@ -120,6 +120,19 @@ describe('evaluarSolicitud', () => {
     }
   })
 
+  it('relacionados no salta una pendiente, una aceptada ni "rechazado por ti"', () => {
+    const conRelacion = { relacionados: true }
+    expect(() => evaluar(par(), conRelacion)).toThrow(SolicitudPendienteError)
+    expect(() => evaluar(par({ status: 'ACCEPTED' }), conRelacion)).toThrow(ContactoYaAceptadoError)
+    const rechazadoPorMi = par({
+      status: 'DECLINED',
+      declinedAt: rechazo,
+      requesterId: DUENO,
+      vendorUserId: YO,
+    })
+    expect(() => evaluar(rechazadoPorMi, conRelacion)).toThrow(RechazadoPorTiError)
+  })
+
   it('a las 24 h exactas reintenta como PENDING', () => {
     const declinado = par({ status: 'DECLINED', declinedAt: rechazo })
     const ahora = new Date(rechazo.getTime() + ESPERA_TRAS_RECHAZO_MS)
@@ -152,8 +165,12 @@ describe('estadoDeContacto', () => {
     })
   })
 
-  it('PENDING_RECEIVED para el otro', () => {
-    expect(estadoDeContacto(YO, DUENO, par({ requesterId: 'otro' })).state).toBe('PENDING_RECEIVED')
+  it('PENDING_RECEIVED para el otro, con el id de la conversación', () => {
+    expect(estadoDeContacto(YO, DUENO, par({ requesterId: 'otro' }))).toEqual({
+      state: 'PENDING_RECEIVED',
+      conversationId: 'conv-1',
+      retryAt: null,
+    })
   })
 
   it('ACCEPTED', () => {
@@ -191,6 +208,16 @@ describe('veConversacionDePerfil', () => {
   it('el solicitante sí la ve rechazada', () => {
     const p = par({ status: 'DECLINED', declinedAt: rechazo })
     expect(veConversacionDePerfil(p, YO)).toBe(true)
+  })
+
+  it('un tercero no la ve en ningún estado', () => {
+    for (const p of [
+      par(),
+      par({ status: 'ACCEPTED' }),
+      par({ status: 'DECLINED', declinedAt: rechazo }),
+    ]) {
+      expect(veConversacionDePerfil(p, 'user-tercero')).toBe(false)
+    }
   })
 
   it('el proveedor ve pendientes y aceptadas', () => {

@@ -5,7 +5,6 @@ import {
   type UsuarioAutenticado,
 } from '@/modules/auth/interfaces/current-user.decorator'
 import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
-import { UnauthorizedError } from '@/shared/domain'
 import { idDeRuta } from '@/shared/http/id-de-ruta'
 import { LIMITE_CONTACT_REQUESTS, LimitePorUsuario } from '@/shared/http/limite-por-usuario'
 import { validarCon } from '@/shared/http/validar-con'
@@ -15,6 +14,7 @@ import { ListProfileConversationsUseCase } from '../application/list-profile-con
 import { RequestContactUseCase } from '../application/request-contact.use-case'
 import { RespondContactUseCase } from '../application/respond-contact.use-case'
 import { ConversacionNoEncontradaError, FichaNoDisponibleError } from '../domain/messaging-errors'
+import { exigirUsuario } from './exigir-usuario'
 import { enviarMensajeSchema } from './messaging.dto'
 import {
   conversacionDePerfilJson,
@@ -117,8 +117,3 @@ export class ContactRequestsController {
 const idDeFicha = (id: string): string => idDeRuta(id, () => new FichaNoDisponibleError())
 const idDeConversacion = (id: string): string =>
   idDeRuta(id, () => new ConversacionNoEncontradaError())
-
-function exigirUsuario(usuario: UsuarioAutenticado | undefined): UsuarioAutenticado {
-  if (usuario === undefined) throw new UnauthorizedError('Falta el token de acceso')
-  return usuario
-}

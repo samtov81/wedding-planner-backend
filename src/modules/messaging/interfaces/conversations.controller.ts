@@ -6,7 +6,7 @@ import {
   type UsuarioAutenticado,
 } from '@/modules/auth/interfaces/current-user.decorator'
 import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
-import { decodeCursor, NotFoundError, UnauthorizedError } from '@/shared/domain'
+import { decodeCursor, NotFoundError } from '@/shared/domain'
 import { LIMITADOR_MESSAGES, LimiteDeRuta } from '@/shared/http/limitadores'
 import { validarCon } from '@/shared/http/validar-con'
 
@@ -21,6 +21,7 @@ import { OpenConversationUseCase } from '../application/open-conversation.use-ca
 import { OpenRoomUseCase } from '../application/open-room.use-case'
 import { SendMessageUseCase } from '../application/send-message.use-case'
 import { ConversacionNoEncontradaError } from '../domain/messaging-errors'
+import { exigirUsuario } from './exigir-usuario'
 import {
   abrirConversacionSchema,
   enviarMensajeSchema,
@@ -243,9 +244,4 @@ function idDeConversacion(id: string): string {
 function idDeEvento(id: string): string {
   if (!idSchema.safeParse(id).success) throw new NotFoundError('El evento no existe')
   return id
-}
-
-function exigirUsuario(usuario: UsuarioAutenticado | undefined): UsuarioAutenticado {
-  if (usuario === undefined) throw new UnauthorizedError('Falta el token de acceso')
-  return usuario
 }

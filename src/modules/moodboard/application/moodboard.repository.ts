@@ -112,6 +112,11 @@ export interface MoodboardRepository {
    * `collaborators`: miembros ACTIVE + (miembro: proveedores con alguna foto
    * activa compartida vigente; proveedor: él mismo), orden COUPLE, PLANNER,
    * VENDOR y por nombre. Un ADMIN sin membresía no es colaborador.
+   * El `label` de un proveedor reúne TODAS sus contrataciones BOOKED del evento
+   * (no sólo las que hoy llevan una foto compartida). El proveedor figura
+   * siempre en su propia lista; para un miembro, los proveedores sólo
+   * aparecen mientras el evento está ACTIVE: un proveedor no tiene acceso a un
+   * evento que no lo está, y listarlo expondría a quien no puede entrar.
    */
   resumen(eventId: string, visor: Visor): Promise<ResumenCrudo>
   /**

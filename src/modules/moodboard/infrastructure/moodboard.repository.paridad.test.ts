@@ -628,7 +628,7 @@ describe('Paridad: MoodboardRepositoryFake vs PrismaMoodboardRepository', () => 
       ).toEqual([
         ['Ana', 'COUPLE', 'Couple'],
         ['Berta', 'PLANNER', 'Planner'],
-        ['Flores del Sur', 'VENDOR', 'Decor & Floral'],
+        ['Flores del Sur', 'VENDOR', 'Decor & Floral · Venue'],
       ])
       // Un ADMIN sin membresía entra como `miembro` pero no figura como colaborador.
       const admin = await m.usuario('Admin')
@@ -637,6 +637,29 @@ describe('Paridad: MoodboardRepositoryFake vs PrismaMoodboardRepository', () => 
         comoAdmin.collaborators.some((c) => c.userId === admin),
         nombre,
       ).toBe(false)
+    })
+  })
+
+  it('resumen como proveedor sin nada compartido: figura él mismo con todas sus categorías', async () => {
+    await conAmbos(escenarioResumen, async (m, e, nombre) => {
+      await subir(m, e.eventId, e.decor, e.ana, 'Privada')
+      const r = await m.repo.resumen(e.eventId, proveedorVisor(e.flores))
+      expect(r.stats, nombre).toEqual({ images: 0, notes: 0 })
+      expect(r.activity, nombre).toEqual([])
+      expect(
+        r.collaborators.map((c) => [c.name, c.role, c.label]),
+        nombre,
+      ).toEqual([
+        ['Ana', 'COUPLE', 'Couple'],
+        ['Berta', 'PLANNER', 'Planner'],
+        ['Flores del Sur', 'VENDOR', 'Decor & Floral · Venue'],
+      ])
+      // Para un miembro, ese mismo proveedor no figura mientras no tenga foto compartida.
+      const comoMiembro = await m.repo.resumen(e.eventId, miembro(e.ana))
+      expect(
+        comoMiembro.collaborators.map((c) => c.role),
+        nombre,
+      ).toEqual(['COUPLE', 'PLANNER'])
     })
   })
 

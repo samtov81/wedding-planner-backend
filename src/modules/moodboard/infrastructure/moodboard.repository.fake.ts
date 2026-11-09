@@ -288,17 +288,22 @@ export class MoodboardRepositoryFake implements MoodboardRepository {
         label: m.role === 'COUPLE' ? 'Couple' : 'Planner',
       })
     }
-    const categoriasPorProveedor = new Map<string, Set<string>>()
-    for (const imagen of visibles) {
-      for (const c of this.contratacionesQueVen(imagen)) {
-        if (visor.tipo === 'proveedor' && c.userId !== visor.userId) continue
-        const categorias = categoriasPorProveedor.get(c.userId) ?? new Set<string>()
-        categorias.add(c.categoryName)
-        categoriasPorProveedor.set(c.userId, categorias)
+    // Miembro: proveedores con alguna foto activa compartida vigente. Proveedor:
+    // él mismo, siempre. Etiqueta: todas sus contrataciones BOOKED del evento.
+    const idsProveedor = new Set<string>(visor.tipo === 'proveedor' ? [visor.userId] : [])
+    if (visor.tipo === 'miembro') {
+      for (const imagen of visibles) {
+        for (const c of this.contratacionesQueVen(imagen)) idsProveedor.add(c.userId)
       }
     }
-    for (const [userId, categorias] of categoriasPorProveedor) {
+    for (const userId of idsProveedor) {
       if (colaboradores.some((c) => c.userId === userId)) continue
+      const categorias = new Set<string>()
+      for (const c of this.contrataciones.values()) {
+        if (c.eventId === eventId && c.status === 'BOOKED' && c.userId === userId) {
+          categorias.add(c.categoryName)
+        }
+      }
       const u = this.usuarios.get(userId)
       colaboradores.push({
         userId,

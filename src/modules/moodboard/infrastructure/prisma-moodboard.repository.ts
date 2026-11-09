@@ -277,19 +277,38 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
       role: m.role,
       label: m.role === 'COUPLE' ? 'Couple' : 'Planner',
     }))
-    // Proveedores con alguna foto activa compartida; un proveedor lo ve él solo.
+    // Miembro: proveedores con alguna foto activa compartida vigente. Proveedor:
+    // él mismo, siempre (spec §8), aunque aún no le hayan compartido nada.
+    const idsProveedor =
+      visor.tipo === 'proveedor' ? [visor.userId] : [...new Set(proveedores.map((p) => p.userId))]
+    // La etiqueta sale de TODAS sus contrataciones BOOKED del evento, no sólo de
+    // las que hoy llevan una foto compartida (ruling del controlador).
+    const contratos =
+      idsProveedor.length === 0
+        ? []
+        : await cliente.eventVendor.findMany({
+            where: {
+              eventId,
+              status: 'BOOKED',
+              vendorProfile: { userId: { in: idsProveedor } },
+            },
+            select: {
+              category: { select: { name: true } },
+              vendorProfile: { select: { userId: true } },
+            },
+          })
     const categoriasPorProveedor = new Map<string, Set<string>>()
-    for (const p of proveedores) {
-      if (visor.tipo === 'proveedor' && p.userId !== visor.userId) continue
-      const categorias = categoriasPorProveedor.get(p.userId) ?? new Set<string>()
-      categorias.add(p.categoryName)
-      categoriasPorProveedor.set(p.userId, categorias)
+    for (const c of contratos) {
+      if (c.vendorProfile === null) continue
+      const categorias = categoriasPorProveedor.get(c.vendorProfile.userId) ?? new Set<string>()
+      categorias.add(c.category.name)
+      categoriasPorProveedor.set(c.vendorProfile.userId, categorias)
     }
     const usuariosProveedor =
-      categoriasPorProveedor.size === 0
+      idsProveedor.length === 0
         ? []
         : await cliente.user.findMany({
-            where: { id: { in: [...categoriasPorProveedor.keys()] } },
+            where: { id: { in: idsProveedor } },
             select: { id: true, fullName: true, avatarKey: true },
           })
     for (const u of usuariosProveedor) {

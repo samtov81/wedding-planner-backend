@@ -125,6 +125,30 @@ describe('Paridad: PresenceEnMemoria vs RedisPresenceAdapter', () => {
     }
   })
 
+  it('una marca de anunciado sin latido caduca: al volver, se anuncia online otra vez', async () => {
+    // Un proceso que muere (o un despliegue, que no toca la presencia) deja la
+    // marca. Sin caducidad, el `conectar` de la vuelta no anunciaría nada y
+    // quien cargó el resumen mientras estaba fuera nunca lo vería volver.
+    for (const [nombre, presencia] of implementaciones()) {
+      const userId = randomUUID()
+      expect(await presencia.conectar(userId, 's1', T0), nombre).toBe(true)
+
+      expect(await presencia.conectar(userId, 's2', en(100_000)), nombre).toBe(true)
+    }
+  })
+
+  it('una sesión con latido conserva la marca: otro socket no se anuncia', async () => {
+    for (const [nombre, presencia] of implementaciones()) {
+      const userId = randomUUID()
+      await presencia.conectar(userId, 's1', T0)
+      for (const ms of [30_000, 60_000, 90_000]) {
+        await presencia.renovar([{ userId, socketId: 's1' }], en(ms))
+      }
+
+      expect(await presencia.conectar(userId, 's2', en(100_000)), nombre).toBe(false)
+    }
+  })
+
   it('renovar no resucita un socket ya desconectado', async () => {
     // El latido toma la lista de sockets del proceso y la manda a Redis; si
     // entretanto uno se desconecta, renovarlo lo dejaría como fantasma 75 s.

@@ -70,8 +70,10 @@ import { NotificationsGateway } from './interfaces/notifications.gateway'
     },
     {
       provide: PRESENCE_PORT,
-      useFactory: (env: Env) => new RedisPresenceAdapter(env.REDIS_URL),
-      inject: [ENV],
+      // La gracia del gateway alarga la vida de la marca de anunciado: la marca
+      // tiene que sobrevivir al último socket mientras la gracia corre.
+      useFactory: (env: Env, graciaMs: number) => new RedisPresenceAdapter(env.REDIS_URL, graciaMs),
+      inject: [ENV, PRESENCIA_GRACIA_MS],
     },
     { provide: PRESENCIA_GRACIA_MS, useValue: GRACIA_MS },
     ListNotificationsUseCase,

@@ -99,6 +99,16 @@ return 0
  * Conexión propia de ioredis, como `SocketIoRealtimeAdapter`: no se comparte
  * la del throttler ni la de BullMQ (que es bloqueante) para que el cierre de
  * cada una sea de su dueño.
+ *
+ * `maxRetriesPerRequest: 1`: con Redis caído, ioredis por defecto retiene
+ * cada comando durante 20 reintentos de reconexión (decenas de segundos) antes
+ * de fallarlo, y `ResumenUseCase` —que degrada a "nadie en línea" si
+ * `enLinea` falla— colgaría la petición todo ese tiempo. Con un reintento
+ * falla en milisegundos, como `RedisComprobacion` de `health`. A diferencia
+ * de aquélla, se conserva la cola offline (`enableOfflineQueue`): al arrancar,
+ * el primer `conectar` puede llegar antes de que el socket a Redis esté listo
+ * y debe esperar a la conexión, no fallar. Alternativa descartada:
+ * `commandTimeout`, que también cortaría comandos lentos con Redis sano.
  */
 export class RedisPresenceAdapter implements PresencePort, OnModuleDestroy {
   private readonly redis: Redis
@@ -107,7 +117,7 @@ export class RedisPresenceAdapter implements PresencePort, OnModuleDestroy {
 
   /** `graciaMs`: la MISMA que inyecta el gateway (`PRESENCIA_GRACIA_MS`). */
   constructor(redisUrl: string, graciaMs: number = GRACIA_MS) {
-    this.redis = new Redis(redisUrl)
+    this.redis = new Redis(redisUrl, { maxRetriesPerRequest: 1 })
     this.ttlMarcaMs = TTL_SOCKET_MS + graciaMs
   }
 

@@ -5,10 +5,14 @@ import { clienteDe } from '@/modules/database/transaccion'
 import { PrismaService } from '@/modules/database/prisma.service'
 
 import type {
+  ActividadDeMoodboard,
+  Colaborador,
   ContratacionCompartible,
   DatosNuevaImagen,
   ImagenDeMoodboard,
   MoodboardRepository,
+  NotaDeMoodboard,
+  ResumenCrudo,
 } from '../application/moodboard.repository'
 import type { Visor } from '../domain/moodboard'
 
@@ -28,6 +32,12 @@ const INCLUIR = {
   },
   _count: { select: { notes: true } },
 } satisfies Prisma.MoodboardImageInclude
+
+const INCLUIR_NOTA = {
+  author: { select: { id: true, fullName: true, avatarKey: true } },
+} satisfies Prisma.MoodboardNoteInclude
+
+type FilaNota = Prisma.MoodboardNoteGetPayload<{ include: typeof INCLUIR_NOTA }>
 
 type FilaImagen = Prisma.MoodboardImageGetPayload<{ include: typeof INCLUIR }>
 
@@ -174,25 +184,199 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
   }
 
   async proveedoresQueVen(imageId: string): Promise<string[]> {
+    const filas = await this.comparticionesQueVen({ id: imageId })
+    return [...new Set(filas.map((f) => f.userId))]
+  }
+
+  async listarNotas(imageId: string): Promise<NotaDeMoodboard[]> {
+    const filas = await clienteDe(this.prisma).moodboardNote.findMany({
+      where: { imageId },
+      include: INCLUIR_NOTA,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    })
+    return filas.map((f) => this.proyectarNota(f))
+  }
+
+  async crearNota(imageId: string, authorId: string, body: string): Promise<NotaDeMoodboard> {
+    const fila = await clienteDe(this.prisma).moodboardNote.create({
+      data: { imageId, authorId, body },
+      include: INCLUIR_NOTA,
+    })
+    return this.proyectarNota(fila)
+  }
+
+  async resumen(eventId: string, visor: Visor): Promise<ResumenCrudo> {
+    const cliente = clienteDe(this.prisma)
+    // Las fotos que el visor ve: la misma regla que listado y búsqueda.
+    const fotos: Prisma.MoodboardImageWhereInput = {
+      eventId,
+      archivedAt: null,
+      ...this.filtroDeVisor(eventId, visor),
+    }
+    const [images, notes, fotosRecientes, notasRecientes, miembros, proveedores] =
+      await Promise.all([
+        cliente.moodboardImage.count({ where: fotos }),
+        cliente.moodboardNote.count({ where: { image: fotos } }),
+        cliente.moodboardImage.findMany({
+          where: fotos,
+          select: {
+            id: true,
+            createdAt: true,
+            category: { select: { name: true } },
+            uploadedBy: { select: { fullName: true } },
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: 10,
+        }),
+        cliente.moodboardNote.findMany({
+          where: { image: fotos },
+          select: {
+            id: true,
+            imageId: true,
+            createdAt: true,
+            author: { select: { fullName: true } },
+            image: { select: { category: { select: { name: true } } } },
+          },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          take: 10,
+        }),
+        cliente.eventMembership.findMany({
+          where: { eventId, status: 'ACTIVE' },
+          select: {
+            role: true,
+            user: { select: { id: true, fullName: true, avatarKey: true } },
+          },
+        }),
+        this.comparticionesQueVen({ eventId }),
+      ])
+
+    const actividad: (ActividadDeMoodboard & { id: string })[] = [
+      ...fotosRecientes.map((f) => ({
+        id: f.id,
+        kind: 'image' as const,
+        imageId: f.id,
+        actorName: f.uploadedBy.fullName,
+        categoryName: f.category.name,
+        at: f.createdAt,
+      })),
+      ...notasRecientes.map((n) => ({
+        id: n.id,
+        kind: 'note' as const,
+        imageId: n.imageId,
+        actorName: n.author.fullName,
+        categoryName: n.image.category.name,
+        at: n.createdAt,
+      })),
+    ]
+    actividad.sort((a, b) => b.at.getTime() - a.at.getTime() || porTexto(b.id, a.id))
+
+    const colaboradores: Colaborador[] = miembros.map((m) => ({
+      userId: m.user.id,
+      name: m.user.fullName,
+      avatarKey: m.user.avatarKey,
+      role: m.role,
+      label: m.role === 'COUPLE' ? 'Couple' : 'Planner',
+    }))
+    // Proveedores con alguna foto activa compartida; un proveedor lo ve él solo.
+    const categoriasPorProveedor = new Map<string, Set<string>>()
+    for (const p of proveedores) {
+      if (visor.tipo === 'proveedor' && p.userId !== visor.userId) continue
+      const categorias = categoriasPorProveedor.get(p.userId) ?? new Set<string>()
+      categorias.add(p.categoryName)
+      categoriasPorProveedor.set(p.userId, categorias)
+    }
+    const usuariosProveedor =
+      categoriasPorProveedor.size === 0
+        ? []
+        : await cliente.user.findMany({
+            where: { id: { in: [...categoriasPorProveedor.keys()] } },
+            select: { id: true, fullName: true, avatarKey: true },
+          })
+    for (const u of usuariosProveedor) {
+      if (colaboradores.some((c) => c.userId === u.id)) continue
+      colaboradores.push({
+        userId: u.id,
+        name: u.fullName,
+        avatarKey: u.avatarKey,
+        role: 'VENDOR',
+        label: [...(categoriasPorProveedor.get(u.id) ?? [])].sort(porTexto).join(' · '),
+      })
+    }
+    const rango = { COUPLE: 0, PLANNER: 1, VENDOR: 2 }
+    colaboradores.sort(
+      (a, b) =>
+        rango[a.role] - rango[b.role] || porTexto(a.name, b.name) || porTexto(a.userId, b.userId),
+    )
+
+    return {
+      stats: { images, notes },
+      activity: actividad.slice(0, 10).map(({ id: _id, ...resto }) => resto),
+      collaborators: colaboradores,
+    }
+  }
+
+  async participantes(imageId: string, excluir: string): Promise<string[]> {
+    const cliente = clienteDe(this.prisma)
+    const imagen = await cliente.moodboardImage.findUnique({
+      where: { id: imageId },
+      select: { eventId: true, uploadedById: true },
+    })
+    if (imagen === null) return []
+    const [notas, proveedores, miembros] = await Promise.all([
+      cliente.moodboardNote.findMany({ where: { imageId }, select: { authorId: true } }),
+      this.proveedoresQueVen(imageId),
+      cliente.eventMembership.findMany({
+        where: { eventId: imagen.eventId, status: 'ACTIVE' },
+        select: { userId: true },
+      }),
+    ])
+    const veHoy = new Set([...proveedores, ...miembros.map((m) => m.userId)])
+    const candidatos = new Set([
+      imagen.uploadedById,
+      ...notas.map((n) => n.authorId),
+      ...proveedores,
+    ])
+    return [...candidatos].filter((u) => u !== excluir && veHoy.has(u)).sort(porTexto)
+  }
+
+  /**
+   * Comparticiones que HOY dan acceso a su proveedor, sobre las fotos que
+   * cumplan `imagen`: foto activa, evento ACTIVE y contratación BOOKED con
+   * ficha y del mismo evento que la foto. Única copia de la regla de
+   * "proveedor que ve" fuera de `filtroDeVisor`.
+   */
+  private async comparticionesQueVen(
+    imagen: Prisma.MoodboardImageWhereInput,
+  ): Promise<{ imageId: string; userId: string; categoryName: string }[]> {
     const filas = await clienteDe(this.prisma).moodboardShare.findMany({
       where: {
-        imageId,
         revokedAt: null,
-        image: { archivedAt: null, event: { status: 'ACTIVE' } },
+        image: { ...imagen, archivedAt: null, event: { status: 'ACTIVE' } },
         eventVendor: { status: 'BOOKED', vendorProfileId: { not: null } },
       },
       select: {
-        eventVendor: { select: { eventId: true, vendorProfile: { select: { userId: true } } } },
+        imageId: true,
+        eventVendor: {
+          select: {
+            eventId: true,
+            category: { select: { name: true } },
+            vendorProfile: { select: { userId: true } },
+          },
+        },
         image: { select: { eventId: true } },
       },
     })
-    const usuarios = new Set<string>()
+    const lista: { imageId: string; userId: string; categoryName: string }[] = []
     for (const f of filas) {
-      if (f.eventVendor.eventId === f.image.eventId && f.eventVendor.vendorProfile !== null) {
-        usuarios.add(f.eventVendor.vendorProfile.userId)
-      }
+      if (f.eventVendor.eventId !== f.image.eventId || f.eventVendor.vendorProfile === null)
+        continue
+      lista.push({
+        imageId: f.imageId,
+        userId: f.eventVendor.vendorProfile.userId,
+        categoryName: f.eventVendor.category.name,
+      })
     }
-    return [...usuarios]
+    return lista
   }
 
   /**
@@ -214,6 +398,16 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
           },
         },
       },
+    }
+  }
+
+  private proyectarNota(f: FilaNota): NotaDeMoodboard {
+    return {
+      id: f.id,
+      imageId: f.imageId,
+      body: f.body,
+      createdAt: f.createdAt,
+      author: { id: f.author.id, name: f.author.fullName, avatarKey: f.author.avatarKey },
     }
   }
 

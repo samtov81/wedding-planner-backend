@@ -16,6 +16,38 @@ export interface ImagenDeMoodboard {
   sharedWith: { eventVendorId: string; name: string }[]
 }
 
+export interface NotaDeMoodboard {
+  id: string
+  imageId: string
+  body: string
+  createdAt: Date
+  author: { id: string; name: string; avatarKey: string | null }
+}
+
+export interface Colaborador {
+  userId: string
+  name: string
+  avatarKey: string | null
+  role: 'COUPLE' | 'PLANNER' | 'VENDOR'
+  /** `Couple`, `Planner` o la(s) categoría(s) de la contratación, unidas con ` · `. */
+  label: string
+}
+
+export interface ActividadDeMoodboard {
+  kind: 'image' | 'note'
+  imageId: string
+  actorName: string
+  categoryName: string
+  at: Date
+}
+
+/** Resumen sin `online`: la presencia vive en Redis y la añade el caso de uso. */
+export interface ResumenCrudo {
+  stats: { images: number; notes: number }
+  activity: ActividadDeMoodboard[]
+  collaborators: Colaborador[]
+}
+
 export interface DatosNuevaImagen {
   eventId: string
   categoryId: string
@@ -70,6 +102,25 @@ export interface MoodboardRepository {
   usuariosDeContrataciones(eventVendorIds: string[]): Promise<string[]>
   /** userId de los proveedores que HOY ven la foto (compartida vigente, activa, BOOKED, evento ACTIVE). */
   proveedoresQueVen(imageId: string): Promise<string[]>
+  /** Notas de la foto en orden cronológico (`createdAt asc, id asc`). La visibilidad de la foto la decide el caso de uso. */
+  listarNotas(imageId: string): Promise<NotaDeMoodboard[]>
+  crearNota(imageId: string, authorId: string, body: string): Promise<NotaDeMoodboard>
+  /**
+   * Resumen sobre lo que el visor VE (fotos activas; proveedor: las compartidas
+   * con él, por la misma regla que el resto de lecturas). `activity`: las 10
+   * más recientes entre alta de foto y nota, más reciente primero.
+   * `collaborators`: miembros ACTIVE + (miembro: proveedores con alguna foto
+   * activa compartida vigente; proveedor: él mismo), orden COUPLE, PLANNER,
+   * VENDOR y por nombre. Un ADMIN sin membresía no es colaborador.
+   */
+  resumen(eventId: string, visor: Visor): Promise<ResumenCrudo>
+  /**
+   * A quién avisar de una nota: quien subió la foto + autores de notas + los
+   * proveedores que la ven, FILTRADOS por quién la ve hoy (miembro ACTIVE del
+   * evento o proveedor que la ve), sin `excluir`. Un proveedor revocado que
+   * escribió antes y un miembro REVOKED no entran.
+   */
+  participantes(imageId: string, excluir: string): Promise<string[]>
 }
 
 export const MOODBOARD_REPOSITORY = Symbol('MOODBOARD_REPOSITORY')

@@ -85,18 +85,21 @@ export interface DatosCrearImagen {
 }
 
 /**
- * Da de alta la foto ya subida. Todo dentro de la unidad de trabajo y en este
- * orden: bloquear el evento y contar → tope → categoría activa → comprobar en
- * R2 → insertar. El tope sólo es fiable bajo el `FOR UPDATE`: dos altas
- * concurrentes con 499 fotos se serializan y la segunda ve 500.
+ * Da de alta la foto ya subida, en este orden: comprobar en R2 → (unidad de
+ * trabajo: bloquear el evento y contar → tope → categoría activa → insertar).
+ * El tope sólo es fiable bajo el `FOR UPDATE`: dos altas concurrentes con 499
+ * fotos se serializan y la segunda ve 500.
  *
- * `confirmar` (una llamada a R2) va DENTRO de la transacción, tras el tope y
- * la categoría, aunque alargue el bloqueo de la fila del evento: así una
- * petición que va a fallar por cupo o categoría no toca el bucket (ni borra
- * un objeto inválido que no llegaría a usarse), y si R2 dice que no, no se
- * crea nada. Alternativa descartada: confirmar antes de abrir la transacción,
- * que acorta el bloqueo pero hace el viaje a R2 también para las peticiones
- * que el tope va a rechazar.
+ * `confirmar` (un HEAD a R2) va ANTES de abrir la unidad de trabajo: dentro,
+ * tras el `SELECT … FOR UPDATE` de la fila del evento, el viaje de red
+ * alargaría el bloqueo y con él cualquier INSERT con FK a ese evento (notas,
+ * invitados, gastos…) esperaría a R2. Si R2 dice que no, no se abre la
+ * transacción ni se crea nada. El precio: una petición que el tope o la
+ * categoría van a rechazar también hace el viaje a R2 (y, si el objeto no
+ * cumple las reglas, lo borra, que es lo correcto igualmente: nadie lo usaría).
+ * Alternativa descartada: confirmar dentro, tras el tope y la categoría, para
+ * ahorrar ese viaje a las peticiones condenadas a costa de tener la fila del
+ * evento bloqueada durante I/O de red.
  *
  * Tras el commit se encola `image.changed` sin `ocultarA` ni campana: una foto
  * nueva no está compartida con nadie todavía.
@@ -118,10 +121,10 @@ export class CrearImagenUseCase {
     datos: DatosCrearImagen,
   ): Promise<ImagenDeMoodboard> {
     const title = normalizarTitulo(datos.title)
+    await this.subidas.confirmar(prefijoMoodboard(eventId), datos.key)
     const imagen = await this.unidadDeTrabajo.ejecutar(async () => {
       exigirCupo(await this.repo.bloquearYContar(eventId))
       if (!(await this.repo.categoriaActiva(datos.categoryId))) throw new CategoriaInvalidaError()
-      await this.subidas.confirmar(prefijoMoodboard(eventId), datos.key)
       return await this.repo.crearImagen({
         eventId,
         categoryId: datos.categoryId,

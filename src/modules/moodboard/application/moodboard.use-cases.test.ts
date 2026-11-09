@@ -176,7 +176,7 @@ describe('casos de uso del moodboard', () => {
       expect(jobId.slice(`moodboard-img-${imagen.id}-`.length)).toMatch(/^\d+$/)
     })
 
-    it('con el cupo lleno lanza MOODBOARD_IMAGE_LIMIT y no confirma la subida', async () => {
+    it('con el cupo lleno lanza MOODBOARD_IMAGE_LIMIT y no crea nada', async () => {
       const { repo, almacen, preparar, crear } = escenario()
       for (let i = 0; i < 500; i++) {
         await repo.crearImagen({
@@ -229,7 +229,7 @@ describe('casos de uso del moodboard', () => {
     })
 
     it('con una key de otro prefijo (otro evento) lanza INVALID_UPLOAD y no crea nada', async () => {
-      const { almacen, preparar, crear, repo, memoria } = escenario()
+      const { almacen, preparar, crear, repo, memoria, uow } = escenario()
       const { key } = await preparar.ejecutar(OTRO_EVENTO, 'image/jpeg', 10)
       almacen.simularSubida(key)
       await expect(
@@ -243,10 +243,12 @@ describe('casos de uso del moodboard', () => {
       ).rejects.toMatchObject({ code: 'INVALID_UPLOAD', httpStatus: 422 })
       expect(repo.imagenes).toHaveLength(0)
       expect(memoria.encolados).toHaveLength(0)
+      // R2 se consulta antes de bloquear el evento: si dice que no, ni se abre la transacción.
+      expect(uow.transacciones).toBe(0)
     })
 
-    it('si el objeto no llegó al bucket lanza INVALID_UPLOAD', async () => {
-      const { preparar, crear } = escenario()
+    it('si el objeto no llegó al bucket lanza INVALID_UPLOAD sin abrir la transacción', async () => {
+      const { preparar, crear, repo, memoria, uow } = escenario()
       const { key } = await preparar.ejecutar(EVENTO, 'image/jpeg', 10)
       await expect(
         crear.ejecutar(EVENTO, PAREJA, {
@@ -257,6 +259,9 @@ describe('casos de uso del moodboard', () => {
           height: 1,
         }),
       ).rejects.toMatchObject({ code: 'INVALID_UPLOAD' })
+      expect(repo.imagenes).toHaveLength(0)
+      expect(memoria.encolados).toHaveLength(0)
+      expect(uow.transacciones).toBe(0)
     })
 
     it('un título vacío tras el recorte lanza INVALID_TITLE', async () => {

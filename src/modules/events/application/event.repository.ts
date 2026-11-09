@@ -104,7 +104,7 @@ export interface EventRepository {
    */
   buscarContratacionReservada(eventId: string, userId: string): Promise<{ id: string } | null>
 
-  /** Evento + membresía COUPLE del creador, en UNA transacción. Nace DRAFT. */
+  /** Evento + membresía PLANNER del creador, en UNA transacción. Nace DRAFT. */
   crearConMembresia(datos: DatosNuevoEvento): Promise<Event>
 
   /**

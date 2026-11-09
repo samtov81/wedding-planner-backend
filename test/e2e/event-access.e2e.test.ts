@@ -147,7 +147,7 @@ describe('Acceso a eventos e2e', () => {
     expect(respuesta.body).toMatchObject({
       id: eventoDeAna,
       name: 'Boda de Ana',
-      access: { kind: 'member', role: 'COUPLE', owner: true, budgetView: false },
+      access: { kind: 'member', role: 'PLANNER', owner: true, budgetView: false },
     })
   })
 
@@ -329,7 +329,7 @@ describe('Acceso a eventos e2e', () => {
     const eventoDeAnaPropio = await crearEvento(anaPropia.accessToken, 'Boda de Ana propia')
     const eventoDePedroPropio = await crearEvento(pedroPropio.accessToken, 'Boda de Pedro propia')
 
-    // Pedro es COUPLE del suyo y PLANNER ya activo en el de Ana.
+    // Pedro es PLANNER del suyo (lo creó) y PLANNER ya activo en el de Ana.
     await activarPlannerEn(eventoDeAnaPropio, anaPropia.accessToken, pedroEmail, pedroPropio.id)
 
     const deAna = await request(url)

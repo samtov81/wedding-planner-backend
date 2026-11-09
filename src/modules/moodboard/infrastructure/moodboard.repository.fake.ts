@@ -114,6 +114,15 @@ export class MoodboardRepositoryFake implements MoodboardRepository {
     return Promise.resolve(this.imagenes.filter((i) => i.eventId === eventId).length)
   }
 
+  /**
+   * No hace nada: el doble corre en un solo hilo y sin transacciones reales, así
+   * que no hay intercalado que serializar. La serialización se prueba contra
+   * Postgres (`prisma-moodboard.repository.test.ts`).
+   */
+  bloquearImagen(): Promise<void> {
+    return Promise.resolve()
+  }
+
   categoriaActiva(categoryId: string): Promise<boolean> {
     return Promise.resolve(this.categorias.get(categoryId)?.active === true)
   }

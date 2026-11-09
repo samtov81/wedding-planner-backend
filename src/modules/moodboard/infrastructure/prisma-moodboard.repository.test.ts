@@ -4,10 +4,13 @@ import { PrismaClient } from '@prisma/client'
 
 import type { PrismaService } from '@/modules/database/prisma.service'
 import { PrismaUnidadDeTrabajo } from '@/modules/database/transaccion'
+import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
+import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
 
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
+import { CompartirImagenUseCase, CrearNotaUseCase } from '../application/moodboard.use-cases'
 import { exigirCupo, MAX_IMAGENES_POR_EVENTO } from '../domain/moodboard'
-import { TopeDeImagenesError } from '../domain/moodboard-errors'
+import { ImagenArchivadaError, TopeDeImagenesError } from '../domain/moodboard-errors'
 import { PrismaMoodboardRepository } from './prisma-moodboard.repository'
 
 describe('PrismaMoodboardRepository (Postgres real)', () => {
@@ -229,5 +232,103 @@ describe('PrismaMoodboardRepository (Postgres real)', () => {
         MAX_IMAGENES_POR_EVENTO,
       )
     }, 60_000)
+  })
+
+  describe('bloqueo de la foto', () => {
+    /**
+     * Espera a que alguna sesión esté bloqueada esperando un lock de fila. Si en
+     * 5 s nadie espera, sigue: sin el bloqueo en el caso de uso, B no espera
+     * nunca y el test debe fallar en las aserciones, no colgarse.
+     */
+    async function esperarAQueAlguienEspere(): Promise<void> {
+      for (let i = 0; i < 100; i++) {
+        const [fila] = await prisma.$queryRaw<{ n: bigint }[]>`
+          SELECT count(*) AS n FROM pg_stat_activity
+          WHERE wait_event_type = 'Lock' AND datname = current_database()`
+        if ((fila?.n ?? 0n) > 0n) return
+        await new Promise((r) => setTimeout(r, 50))
+      }
+    }
+
+    /**
+     * A bloquea y archiva la foto y NO confirma hasta que B (nota o
+     * compartición, el caso de uso real) está esperando su lock; entonces
+     * confirma. B debe releer `archivedAt` ya confirmado y fallar con
+     * MOODBOARD_IMAGE_ARCHIVED sin escribir nada.
+     */
+    it.each(['nota', 'compartir'] as const)(
+      '%s: concurrente con un archivado, espera y ve la foto archivada',
+      async (accion) => {
+        const servicio = prisma as unknown as PrismaService
+        const repo = new PrismaMoodboardRepository(servicio)
+        const unidad = new PrismaUnidadDeTrabajo(servicio)
+        const avisos = new NotificationPortEnMemoria()
+        const cola = new InMemoryQueueAdapter()
+
+        const u = await prisma.user.create({
+          data: { email: `lock-${accion}@int-moodboard.test`, passwordHash: 'x', fullName: 'P' },
+        })
+        const perfil = await prisma.vendorProfile.create({
+          data: { userId: u.id, businessName: `Lock ${accion}`, categoryId },
+        })
+        const evento = await prisma.event.create({
+          data: {
+            name: `Lock ${accion}`,
+            ownerId: userId,
+            status: 'ACTIVE',
+            weddingDate: new Date('2027-06-12'),
+          },
+        })
+        const contratacion = await prisma.eventVendor.create({
+          data: { eventId: evento.id, categoryId, vendorProfileId: perfil.id, status: 'BOOKED' },
+        })
+        const foto = await repo.crearImagen({
+          eventId: evento.id,
+          categoryId,
+          title: 'Lock',
+          storageKey: `k-lock-${accion}`,
+          width: 10,
+          height: 10,
+          uploadedById: userId,
+        })
+
+        let avisarBloqueada: () => void = () => undefined
+        const bloqueada = new Promise<void>((r) => (avisarBloqueada = r))
+        const archivar = unidad.ejecutar(async () => {
+          await repo.bloquearImagen(evento.id, foto.id)
+          await repo.fijarArchivo(foto.id, userId)
+          avisarBloqueada()
+          await esperarAQueAlguienEspere()
+        })
+
+        await bloqueada
+        const miembro = { tipo: 'miembro' as const, userId }
+        const escribir =
+          accion === 'nota'
+            ? new CrearNotaUseCase(repo, unidad, avisos, cola).ejecutar(
+                evento.id,
+                foto.id,
+                miembro,
+                'Tarde',
+              )
+            : new CompartirImagenUseCase(repo, unidad, avisos, cola).ejecutar(
+                evento.id,
+                foto.id,
+                userId,
+                [contratacion.id],
+              )
+
+        const [a, b] = await Promise.allSettled([archivar, escribir])
+        expect(a.status).toBe('fulfilled')
+        expect(b.status).toBe('rejected')
+        expect((b as PromiseRejectedResult).reason).toBeInstanceOf(ImagenArchivadaError)
+        expect(await prisma.moodboardNote.count({ where: { imageId: foto.id } })).toBe(0)
+        expect(
+          await prisma.moodboardShare.count({ where: { imageId: foto.id, revokedAt: null } }),
+        ).toBe(0)
+        expect(avisos.creadas).toHaveLength(0)
+      },
+      30_000,
+    )
   })
 })

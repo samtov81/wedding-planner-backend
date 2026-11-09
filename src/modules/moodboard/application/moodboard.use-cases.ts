@@ -175,7 +175,10 @@ export class ObtenerImagenUseCase {
  * después, `proveedoresQueVen` ya no devuelve a nadie (una archivada no la ve
  * ningún proveedor), así que hay que leerlo antes y en la misma transacción.
  * Al recuperar no se oculta a nadie; quién vuelve a verla lo calcula el worker
- * con el estado actual.
+ * con el estado actual. Bloquea la fila de la foto antes de leerla (ver
+ * `bloquearImagen` en el puerto): una compartición concurrente que se cuele
+ * entre la lectura de `proveedoresQueVen` y el archivado dejaría a ese
+ * proveedor fuera de `ocultarA`.
  */
 @Injectable()
 export class ArchivarImagenUseCase {
@@ -195,6 +198,7 @@ export class ArchivarImagenUseCase {
   ): Promise<ImagenDeMoodboard> {
     const visor = comoMiembro(userId)
     const resultado = await this.unidadDeTrabajo.ejecutar(async () => {
+      await this.repo.bloquearImagen(eventId, imageId)
       const imagen = await exigirImagen(this.repo, eventId, imageId, visor)
       if ((imagen.archivedAt !== null) === archivada) return { imagen, ocultarA: null }
       const ocultarA = archivada ? await this.repo.proveedoresQueVen(imageId) : []
@@ -231,6 +235,13 @@ export class ArchivarImagenUseCase {
  *    dentro de la transacción (el repositorio ve sus propias escrituras).
  *
  * Si el conjunto pedido es el vigente no hay nada que avisar y no se encola.
+ *
+ * Lo primero de la transacción es `bloquearImagen` (igual en archivar y en
+ * escribir nota): las tres escrituras comparten el invariante "archivada =
+ * sin comparticiones ni notas nuevas" y se serializan sobre la fila de la
+ * foto; sin él, una compartición que leyó la foto activa antes de que un
+ * archivado concurrente confirmara escribiría sobre una archivada, y dos
+ * comparticiones de la misma contratación chocarían en el upsert (P2002).
  */
 @Injectable()
 export class CompartirImagenUseCase {
@@ -252,6 +263,7 @@ export class CompartirImagenUseCase {
     const visor = comoMiembro(userId)
     const pedidos = [...new Set(eventVendorIds)]
     const resultado = await this.unidadDeTrabajo.ejecutar(async () => {
+      await this.repo.bloquearImagen(eventId, imageId)
       exigirActiva(await exigirImagen(this.repo, eventId, imageId, visor))
       const compartibles = new Set(
         (await this.repo.listarCompartibles(eventId)).map((c) => c.eventVendorId),
@@ -323,6 +335,10 @@ export class ListarNotasUseCase {
  * escribió antes no recibe nada. Tras el commit encola `note.created` con esos
  * mismos destinatarios de campana.
  *
+ * Bloquea la fila de la foto antes de leerla (ver `bloquearImagen` en el
+ * puerto): una nota que empezó antes de que un archivado concurrente
+ * confirmara espera y lo ve, en vez de escribir sobre una foto archivada.
+ *
  * Orden de los errores: 404 antes que 422, para que un proveedor no distinga
  * una foto que no ve de una que existe pero está archivada (tampoco la ve).
  */
@@ -344,6 +360,7 @@ export class CrearNotaUseCase {
     body: string,
   ): Promise<NotaDeMoodboard> {
     const { nota, campanaA } = await this.unidadDeTrabajo.ejecutar(async () => {
+      await this.repo.bloquearImagen(eventId, imageId)
       exigirActiva(await exigirImagen(this.repo, eventId, imageId, visor))
       const cuerpo = normalizarNota(body)
       const nota = await this.repo.crearNota(imageId, visor.userId, cuerpo)

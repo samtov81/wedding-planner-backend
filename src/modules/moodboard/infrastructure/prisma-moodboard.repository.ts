@@ -62,6 +62,15 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
     return await cliente.moodboardImage.count({ where: { eventId } })
   }
 
+  /** Ver el contrato en el puerto. Sin fila que bloquear no hace nada. */
+  async bloquearImagen(eventId: string, imageId: string): Promise<void> {
+    // `$queryRaw` con template tag: los ids van como parámetros, nada se concatena.
+    await clienteDe(this.prisma).$queryRaw`
+      SELECT id FROM moodboard_images
+      WHERE id = ${imageId}::uuid AND "eventId" = ${eventId}::uuid
+      FOR UPDATE`
+  }
+
   async categoriaActiva(categoryId: string): Promise<boolean> {
     const categoria = await clienteDe(this.prisma).vendorCategory.findUnique({
       where: { id: categoryId },

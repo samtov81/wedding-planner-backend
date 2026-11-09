@@ -83,6 +83,27 @@ export interface ContratacionCompartible {
 export interface MoodboardRepository {
   /** `SELECT … FOR UPDATE` de la fila del evento + cuenta de TODAS sus imágenes. Dentro de UnidadDeTrabajo. */
   bloquearYContar(eventId: string): Promise<number>
+  /**
+   * `SELECT … FOR UPDATE` de la fila de la foto (de ese evento). Dentro de
+   * UnidadDeTrabajo, como PRIMERA sentencia de archivar, compartir y escribir
+   * nota. Sin nada que bloquear (no existe o es de otro evento) no hace nada:
+   * el `buscarImagen` que sigue da el 404.
+   *
+   * Por qué: esas tres escrituras comparten el invariante "una foto archivada
+   * no tiene comparticiones nuevas ni notas nuevas" (y `ocultarA` de archivar
+   * depende de las comparticiones vigentes). En READ COMMITTED, sin bloqueo,
+   * una nota o compartición que leyó `archivedAt = null` antes de que un
+   * archivado concurrente confirmara escribiría sobre una foto ya archivada,
+   * sonaría una campana que lleva a un 404 y el archivado no ocultaría a ese
+   * proveedor; dos comparticiones concurrentes de la misma contratación
+   * llegarían las dos al upsert y la perdedora daría P2002 (500). Con el
+   * bloqueo, la segunda espera y relee el estado confirmado.
+   *
+   * Por qué la fila de la FOTO y no la del evento (como `bloquearYContar`):
+   * serializa exactamente las escrituras que comparten el invariante, sin
+   * frenar las subidas ni las acciones sobre el resto de fotos del tablero.
+   */
+  bloquearImagen(eventId: string, imageId: string): Promise<void>
   categoriaActiva(categoryId: string): Promise<boolean>
   crearImagen(datos: DatosNuevaImagen): Promise<ImagenDeMoodboard>
   /** `createdAt desc, id desc`. `archivadas = true` con visor proveedor devuelve `[]`. */

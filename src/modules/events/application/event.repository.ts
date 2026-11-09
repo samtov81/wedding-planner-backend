@@ -212,7 +212,8 @@ export interface EventRepository {
    *
    * Vive aquí y no en `EventAccessService`: el servicio resuelve el acceso a UN
    * evento conocido; esto es la lista inversa, y recorrer los eventos uno a
-   * uno costaría una consulta por evento en cada conexión de socket.
+   * uno costaría una consulta por evento en cada transición de presencia
+   * (online u offline de un usuario; no en cada socket que conecta).
    */
   listarParticipaciones(userId: string): Promise<Participacion[]>
 }

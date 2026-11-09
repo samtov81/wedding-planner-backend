@@ -470,7 +470,8 @@ export class PrismaEventRepository implements EventRepository {
   async listarParticipaciones(userId: string): Promise<Participacion[]> {
     // Dos lecturas por índice en vez de un `event.findMany` con `OR` y joins
     // (como `listarAccesiblesPor`): aquí no hace falta el evento, sólo su id,
-    // y esto corre en cada conexión de socket.
+    // y esto corre en cada transición de presencia (online/offline de un
+    // usuario), no en cada conexión de socket.
     const [membresias, contrataciones] = await Promise.all([
       this.prisma.eventMembership.findMany({
         where: { userId, status: MEMBRESIA_CON_ACCESO },

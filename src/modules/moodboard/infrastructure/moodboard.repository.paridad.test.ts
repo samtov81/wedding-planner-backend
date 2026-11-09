@@ -7,6 +7,7 @@ import type { PrismaService } from '@/modules/database/prisma.service'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 import type { MoodboardRepository } from '../application/moodboard.repository'
 import type { Visor } from '../domain/moodboard'
+import { SubidaYaUsadaError } from '../domain/moodboard-errors'
 import { MoodboardRepositoryFake } from './moodboard.repository.fake'
 import { PrismaMoodboardRepository } from './prisma-moodboard.repository'
 
@@ -357,6 +358,26 @@ describe('Paridad: MoodboardRepositoryFake vs PrismaMoodboardRepository', () => 
       await m.cambiarContratacion(e.a, 'CANCELLED')
       expect(await ve(), `${nombre} contratación cancelada`).toBe(false)
       expect(await m.repo.proveedoresQueVen(f.id), nombre).toEqual([])
+    })
+  })
+
+  it('crearImagen con una storageKey ya usada lanza SubidaYaUsadaError y no crea nada', async () => {
+    await conAmbos(escenario, async (m, e, nombre) => {
+      const datos = {
+        eventId: e.eventId,
+        categoryId: e.categoryId,
+        title: 'Primera',
+        storageKey: `events/${e.eventId}/moodboard/${randomUUID()}.jpg`,
+        width: 800,
+        height: 600,
+        uploadedById: e.ana,
+      }
+      await m.repo.crearImagen(datos)
+      await expect(m.repo.crearImagen({ ...datos, title: 'Reintento' }), nombre).rejects.toThrow(
+        SubidaYaUsadaError,
+      )
+      const lista = await m.repo.listarImagenes(e.eventId, miembro(e.ana), false)
+      expect(titulos(lista), nombre).toEqual(['Primera'])
     })
   })
 

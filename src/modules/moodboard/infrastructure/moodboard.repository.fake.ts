@@ -11,6 +11,7 @@ import type {
   ResumenCrudo,
 } from '../application/moodboard.repository'
 import type { Visor } from '../domain/moodboard'
+import { SubidaYaUsadaError } from '../domain/moodboard-errors'
 
 type EstadoEvento = 'DRAFT' | 'ACTIVE'
 type EstadoContratacion = 'SHORTLISTED' | 'BOOKED' | 'CANCELLED'
@@ -129,7 +130,7 @@ export class MoodboardRepositoryFake implements MoodboardRepository {
 
   crearImagen(datos: DatosNuevaImagen): Promise<ImagenDeMoodboard> {
     if (this.imagenes.some((i) => i.storageKey === datos.storageKey)) {
-      return Promise.reject(new Error('storageKey duplicada'))
+      return Promise.reject(new SubidaYaUsadaError())
     }
     this.reloj += 1
     const guardada: ImagenGuardada = {

@@ -1,4 +1,4 @@
-import { NotFoundError, UnprocessableError } from '@/shared/domain'
+import { ConflictError, NotFoundError, UnprocessableError } from '@/shared/domain'
 
 /**
  * Una foto que no existe, es de otro evento, está archivada y quien pregunta
@@ -16,6 +16,17 @@ export class ImagenNoEncontradaError extends NotFoundError {
 export class TopeDeImagenesError extends UnprocessableError {
   constructor() {
     super('El tablero ha alcanzado el máximo de imágenes', 'MOODBOARD_IMAGE_LIMIT')
+  }
+}
+
+/**
+ * La key subida ya dio de alta una foto (`storageKey` es UNIQUE): típicamente
+ * el cliente reintentó `POST /images` tras perder la respuesta del primero.
+ * 409 y no 422 porque la petición era válida; lo que choca es el estado.
+ */
+export class SubidaYaUsadaError extends ConflictError {
+  constructor() {
+    super('La subida ya se usó para otra imagen', 'MOODBOARD_UPLOAD_ALREADY_USED')
   }
 }
 

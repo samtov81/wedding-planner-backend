@@ -58,7 +58,7 @@ type SummaryJson = {
 }
 ```
 
-Códigos: `MOODBOARD_IMAGE_NOT_FOUND` 404, `MOODBOARD_IMAGE_LIMIT` 422, `MOODBOARD_IMAGE_ARCHIVED` 422, `MOODBOARD_INVALID_CATEGORY` 422, `MOODBOARD_VENDOR_NOT_SHAREABLE` 422 (`details: { eventVendorIds }`), más los de storage (`INVALID_IMAGE`, `INVALID_UPLOAD`, `STORAGE_UNAVAILABLE`).
+Códigos: `MOODBOARD_IMAGE_NOT_FOUND` 404, `MOODBOARD_IMAGE_LIMIT` 422, `MOODBOARD_IMAGE_ARCHIVED` 422, `MOODBOARD_INVALID_CATEGORY` 422, `MOODBOARD_VENDOR_NOT_SHAREABLE` 422 (`details: { eventVendorIds }`), `MOODBOARD_UPLOAD_ALREADY_USED` 409 (la `key` ya dio de alta una foto: reintento de `POST /images`), más los de storage (`INVALID_IMAGE`, `INVALID_UPLOAD`, `STORAGE_UNAVAILABLE`).
 
 Socket (namespace `/realtime`), todos con payload de **ids** — el cliente vuelve a leer por REST:
 

@@ -10,7 +10,11 @@ import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapt
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 import { CompartirImagenUseCase, CrearNotaUseCase } from '../application/moodboard.use-cases'
 import { exigirCupo, MAX_IMAGENES_POR_EVENTO } from '../domain/moodboard'
-import { ImagenArchivadaError, TopeDeImagenesError } from '../domain/moodboard-errors'
+import {
+  ImagenArchivadaError,
+  SubidaYaUsadaError,
+  TopeDeImagenesError,
+} from '../domain/moodboard-errors'
 import { PrismaMoodboardRepository } from './prisma-moodboard.repository'
 
 describe('PrismaMoodboardRepository (Postgres real)', () => {
@@ -136,6 +140,29 @@ describe('PrismaMoodboardRepository (Postgres real)', () => {
           },
         }),
       ).rejects.toMatchObject({ code: 'P2002' })
+    })
+
+    it('el adaptador traduce la storageKey duplicada a MOODBOARD_UPLOAD_ALREADY_USED (409), también dentro de una unidad de trabajo', async () => {
+      const servicio = prisma as unknown as PrismaService
+      const repo = new PrismaMoodboardRepository(servicio)
+      const unidad = new PrismaUnidadDeTrabajo(servicio)
+      const datos = {
+        eventId,
+        categoryId,
+        title: 'Reintento',
+        storageKey: 'k-base',
+        width: 10,
+        height: 10,
+        uploadedById: userId,
+      }
+      await expect(repo.crearImagen(datos)).rejects.toBeInstanceOf(SubidaYaUsadaError)
+      const enUnidad = unidad.ejecutar(() => repo.crearImagen(datos))
+      await expect(enUnidad).rejects.toBeInstanceOf(SubidaYaUsadaError)
+      await expect(enUnidad).rejects.toMatchObject({
+        code: 'MOODBOARD_UPLOAD_ALREADY_USED',
+        httpStatus: 409,
+      })
+      expect(await prisma.moodboardImage.count({ where: { storageKey: 'k-base' } })).toBe(1)
     })
 
     it('rechaza una segunda fila (imagen, contratación) con P2002', async () => {

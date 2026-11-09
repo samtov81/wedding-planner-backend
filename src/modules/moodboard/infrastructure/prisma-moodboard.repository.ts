@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common'
-import type { Prisma } from '@prisma/client'
+import { Prisma } from '@prisma/client'
 
 import { clienteDe } from '@/modules/database/transaccion'
 import { PrismaService } from '@/modules/database/prisma.service'
@@ -15,6 +15,7 @@ import type {
   ResumenCrudo,
 } from '../application/moodboard.repository'
 import type { Visor } from '../domain/moodboard'
+import { SubidaYaUsadaError } from '../domain/moodboard-errors'
 
 const porTexto = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 
@@ -79,12 +80,28 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
     return categoria?.active === true
   }
 
+  /**
+   * `storageKey` es UNIQUE: reintentar el alta con la misma key choca (P2002)
+   * y se traduce aquí, en la frontera, a `SubidaYaUsadaError` (409), para que
+   * el caso de uso no conozca códigos de Prisma. Capturar el P2002 deja la
+   * transacción abortada, pero es la última sentencia de la unidad de trabajo:
+   * el error sube y la unidad hace rollback, sin nada más que escribir.
+   * Alternativa descartada: buscar la key antes de insertar, que añade una
+   * consulta por alta para un caso raro y sigue necesitando la captura.
+   */
   async crearImagen(datos: DatosNuevaImagen): Promise<ImagenDeMoodboard> {
-    const fila = await clienteDe(this.prisma).moodboardImage.create({
-      data: datos,
-      include: INCLUIR,
-    })
-    return this.proyectar(fila)
+    try {
+      const fila = await clienteDe(this.prisma).moodboardImage.create({
+        data: datos,
+        include: INCLUIR,
+      })
+      return this.proyectar(fila)
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new SubidaYaUsadaError()
+      }
+      throw error
+    }
   }
 
   async listarImagenes(

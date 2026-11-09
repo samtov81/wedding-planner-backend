@@ -752,6 +752,26 @@ describe('moodboard e2e', () => {
       }
     })
 
+    it('repetir POST /images con la misma key → 409 MOODBOARD_UPLOAD_ALREADY_USED y una sola foto', async () => {
+      const cuerpo = {
+        key: await keySubida(),
+        title: 'Reintento',
+        categoryId,
+        width: 800,
+        height: 600,
+      }
+      await request(server).post(`${base()}/images`).set(como('creador')).send(cuerpo).expect(201)
+      const r = await request(server)
+        .post(`${base()}/images`)
+        .set(como('creador'))
+        .send(cuerpo)
+        .expect(409)
+      expect((r.body as ErrorCuerpo).code).toBe('MOODBOARD_UPLOAD_ALREADY_USED')
+      const lista = (await request(server).get(`${base()}/images`).set(como('creador')).expect(200))
+        .body as ImagenCuerpo[]
+      expect(lista.map((i) => i.title)).toEqual(['Reintento'])
+    })
+
     it('un :imageId que no es UUID → 404 MOODBOARD_IMAGE_NOT_FOUND', async () => {
       for (const peticion of [
         request(server).get(`${base()}/images/no-es-uuid`),

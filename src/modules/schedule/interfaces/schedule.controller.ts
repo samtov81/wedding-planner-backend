@@ -11,6 +11,11 @@ import {
 } from '@nestjs/common'
 
 import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
+import {
+  type EventAccess,
+  puedeCambiarEstadoDelCronograma,
+} from '@/modules/events/domain/event-access'
+import { EventAccessOf } from '@/modules/events/interfaces/event-access-of.decorator'
 import { EventAccessGuard } from '@/modules/events/interfaces/event-access.guard'
 import { RequireEventAccess } from '@/modules/events/interfaces/require-event-access.decorator'
 import type { Ubicacion } from '@/shared/domain'
@@ -20,7 +25,10 @@ import { validarCon } from '@/shared/http/validar-con'
 import { CreateScheduleItemUseCase } from '../application/create-schedule-item.use-case'
 import { DeleteScheduleItemUseCase } from '../application/delete-schedule-item.use-case'
 import { ListScheduleItemsUseCase } from '../application/list-schedule-items.use-case'
-import { UpdateScheduleItemUseCase } from '../application/update-schedule-item.use-case'
+import {
+  type ActorDelCronograma,
+  UpdateScheduleItemUseCase,
+} from '../application/update-schedule-item.use-case'
 import { ItemDeCronogramaNoEncontradoError } from '../domain/schedule-errors'
 import type { ScheduleItem, ScheduleItemStatus } from '../domain/schedule-item'
 import { createScheduleItemSchema, updateScheduleItemSchema } from './schedule.dto'
@@ -45,18 +53,23 @@ export class ScheduleController {
   @Post()
   async crearItem(
     @Param('eventId') eventId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
     @Body() body: unknown,
   ): Promise<ItemRespuesta> {
     const datos = validarCon(createScheduleItemSchema, body)
     return aRespuesta(
-      await this.crear.ejecutar(eventId, {
-        title: datos.title,
-        description: datos.description ?? null,
-        startsAt: datos.startsAt,
-        endsAt: datos.endsAt ?? null,
-        location: datos.location ?? null,
-        status: datos.status,
-      }),
+      await this.crear.ejecutar(
+        eventId,
+        {
+          title: datos.title,
+          description: datos.description ?? null,
+          startsAt: datos.startsAt,
+          endsAt: datos.endsAt ?? null,
+          location: datos.location ?? null,
+          status: datos.status,
+        },
+        actorDe(acceso),
+      ),
     )
   }
 
@@ -65,11 +78,17 @@ export class ScheduleController {
   async editarItem(
     @Param('eventId') eventId: string,
     @Param('itemId') itemId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
     @Body() body: unknown,
   ): Promise<ItemRespuesta> {
     const id = idDeRuta(itemId, () => new ItemDeCronogramaNoEncontradoError())
     return aRespuesta(
-      await this.actualizar.ejecutar(eventId, id, validarCon(updateScheduleItemSchema, body)),
+      await this.actualizar.ejecutar(
+        eventId,
+        id,
+        validarCon(updateScheduleItemSchema, body),
+        actorDe(acceso),
+      ),
     )
   }
 
@@ -85,6 +104,16 @@ export class ScheduleController {
       idDeRuta(itemId, () => new ItemDeCronogramaNoEncontradoError()),
     )
   }
+}
+
+/**
+ * Traduce el acceso que el guard ya resolvió a lo que el caso de uso
+ * necesita. Sin acceso la ruta perdió su guard: error de programación (500),
+ * como en `event-vendors.controller.ts`, nunca un permiso concedido.
+ */
+function actorDe(acceso: EventAccess | undefined): ActorDelCronograma {
+  if (acceso === undefined) throw new Error('ScheduleController requires EventAccessGuard')
+  return { puedeCambiarEstado: puedeCambiarEstadoDelCronograma(acceso) }
 }
 
 interface ItemRespuesta {

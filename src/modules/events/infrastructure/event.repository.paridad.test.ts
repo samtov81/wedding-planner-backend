@@ -196,7 +196,7 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
       }
 
       expect(await repo.buscarMembresiaActiva(evento.id, ownerId), nombre).toEqual({
-        role: 'COUPLE',
+        role: 'PLANNER',
         owner: true,
         budgetView: false,
       })
@@ -291,7 +291,7 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
       )
     }
     expect(resultados[0]).toEqual([
-      { fullName: 'Owner', role: 'COUPLE', status: 'ACTIVE', owner: true, budgetView: false },
+      { fullName: 'Owner', role: 'PLANNER', status: 'ACTIVE', owner: true, budgetView: false },
       { fullName: 'Ana', role: 'COUPLE', status: 'ACTIVE', owner: false, budgetView: true },
       { fullName: 'Pia', role: 'PLANNER', status: 'INVITED', owner: false, budgetView: false },
     ])
@@ -410,7 +410,7 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
       }
       // El dominio ya lo trata como `edit`: aquí sólo importa que ambos lo lean igual.
       expect(await repo.buscarMembresiaActiva(evento.id, ownerId), nombre).toEqual({
-        role: 'COUPLE',
+        role: 'PLANNER',
         owner: true,
         budgetView: true,
       })

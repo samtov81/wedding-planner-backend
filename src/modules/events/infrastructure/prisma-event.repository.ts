@@ -152,7 +152,7 @@ export class PrismaEventRepository implements EventRepository {
         data: {
           eventId: evento.id,
           userId: datos.ownerId,
-          role: 'COUPLE',
+          role: 'PLANNER',
           status: MEMBRESIA_CON_ACCESO,
         },
       })

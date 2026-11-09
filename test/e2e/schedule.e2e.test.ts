@@ -101,6 +101,58 @@ describe('Cronograma del evento e2e', () => {
     await request(url).delete(`/events/${evento}/schedule/${id}`).set(auth).expect(404)
   })
 
+  it('quien crea el evento es su PLANNER', async () => {
+    const detalle = await request(url)
+      .get(`/events/${evento}`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .expect(200)
+    expect((detalle.body as { access: unknown }).access).toMatchObject({
+      kind: 'member',
+      role: 'PLANNER',
+      owner: true,
+    })
+  })
+
+  it('la pareja edita el cronograma pero no cambia el estado: eso es del planner', async () => {
+    const pareja = await registrarYEntrar('pareja-schedule@test.com', 'Pareja')
+    await prisma.eventMembership.create({
+      data: { eventId: evento, userId: pareja.id, role: 'COUPLE', invitedById: ana.id },
+    })
+    const comoPareja = { Authorization: `Bearer ${pareja.accessToken}` }
+
+    const creado = await request(url)
+      .post(`/events/${evento}/schedule`)
+      .set(comoPareja)
+      .send({ title: 'Brindis', startsAt: '2027-06-12T23:00:00Z' })
+      .expect(201)
+    const id = (creado.body as { id: string }).id
+
+    await request(url)
+      .patch(`/events/${evento}/schedule/${id}`)
+      .set(comoPareja)
+      .send({ title: 'Brindis de los novios' })
+      .expect(200)
+    const prohibido = await request(url)
+      .patch(`/events/${evento}/schedule/${id}`)
+      .set(comoPareja)
+      .send({ status: 'DONE' })
+      .expect(403)
+    expect(prohibido.body).toMatchObject({ code: 'SCHEDULE_STATUS_PLANNER_ONLY' })
+    await request(url)
+      .post(`/events/${evento}/schedule`)
+      .set(comoPareja)
+      .send({ title: 'Ya hecho', startsAt: '2027-06-12T23:00:00Z', status: 'DONE' })
+      .expect(403)
+
+    await request(url)
+      .patch(`/events/${evento}/schedule/${id}`)
+      .set('Authorization', `Bearer ${ana.accessToken}`)
+      .send({ status: 'DONE' })
+      .expect(200)
+
+    await request(url).delete(`/events/${evento}/schedule/${id}`).set(comoPareja).expect(204)
+  })
+
   it('POST con fin antes de inicio → 400; id no UUID → 404; extraño → 404', async () => {
     const auth = { Authorization: `Bearer ${ana.accessToken}` }
     await request(url)

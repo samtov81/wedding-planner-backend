@@ -53,7 +53,7 @@ export type PermisoDeEvento = EventRole | 'VENDOR' | 'OWNER' | 'BUDGET_VIEW' | '
 
 /**
  * Los permisos con los que se compara en las rutas. Una lista y no una sola
- * etiqueta porque el creador es a la vez `COUPLE` y `OWNER`. `admin` no
+ * etiqueta porque el creador es a la vez `PLANNER` y `OWNER`. `admin` no
  * aparece aquí a propósito: se resuelve antes, saltándose la lista.
  */
 export function permisosDe(acceso: EventAccess): PermisoDeEvento[] {
@@ -64,6 +64,27 @@ export function permisosDe(acceso: EventAccess): PermisoDeEvento[] {
   if (presupuesto === 'edit') return [...base, 'BUDGET_VIEW', 'BUDGET_EDIT']
   if (presupuesto === 'view') return [...base, 'BUDGET_VIEW']
   return base
+}
+
+/**
+ * Quién mueve el ESTADO de un ítem del cronograma (PENDING → IN_PROGRESS →
+ * DONE): el PLANNER, sea el creador o un invitado, y ADMIN. La pareja lo lee
+ * pero no lo cambia; sí sigue creando, editando y borrando ítems, porque lo
+ * que se le quita es decir "esto está hecho", no planificar.
+ *
+ * Mira el ROL, no `owner`: desde que el creador nace PLANNER, ser creador ya
+ * implica ser planner, y los eventos antiguos —cuyo creador nació COUPLE— se
+ * quedan como están a propósito (sin migración de datos). Si se mirara
+ * `owner`, una pareja creadora de un evento antiguo seguiría cambiando
+ * estados y la regla diría dos cosas según la antigüedad del evento.
+ *
+ * No es un `PermisoDeEvento` de `@RequireEventAccess`: la ruta PATCH es la
+ * misma para editar el título que para cambiar el estado, así que la decisión
+ * depende del CUERPO y la toma el caso de uso con este booleano.
+ */
+export function puedeCambiarEstadoDelCronograma(acceso: EventAccess): boolean {
+  if (acceso.kind === 'admin') return true
+  return acceso.kind === 'member' && acceso.role === 'PLANNER'
 }
 
 /**

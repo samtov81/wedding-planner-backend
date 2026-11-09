@@ -156,7 +156,7 @@ export class EventRepositoryEnMemoria implements EventRepository {
       id: randomUUID(),
       eventId: evento.id,
       userId: datos.ownerId,
-      role: 'COUPLE',
+      role: 'PLANNER',
       status: MEMBRESIA_CON_ACCESO,
     })
     return Promise.resolve(this.materializar(evento))

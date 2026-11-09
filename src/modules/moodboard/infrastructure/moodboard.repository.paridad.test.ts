@@ -341,19 +341,27 @@ describe('Paridad: MoodboardRepositoryFake vs PrismaMoodboardRepository', () => 
       await m.repo.fijarComparticion(f.id, [e.a], e.ana)
       expect(await ve(), `${nombre} compartida`).toBe(true)
 
+      expect(await m.repo.proveedoresQueVen(f.id), `${nombre} compartida`).toEqual([e.prov])
+
       await m.repo.fijarComparticion(f.id, [], e.ana)
       expect(await ve(), `${nombre} revocada`).toBe(false)
+      expect(await m.repo.proveedoresQueVen(f.id), `${nombre} revocada`).toEqual([])
       await m.repo.fijarComparticion(f.id, [e.a], e.ana)
       expect(await ve(), `${nombre} reavivada`).toBe(true)
+      expect(await m.repo.proveedoresQueVen(f.id), `${nombre} reavivada`).toEqual([e.prov])
 
       await m.repo.fijarArchivo(f.id, e.ana)
       expect(await ve(), `${nombre} archivada`).toBe(false)
+      expect(await m.repo.proveedoresQueVen(f.id), `${nombre} archivada`).toEqual([])
       await m.repo.fijarArchivo(f.id, null)
       expect(await ve(), `${nombre} recuperada`).toBe(true)
+      expect(await m.repo.proveedoresQueVen(f.id), `${nombre} recuperada`).toEqual([e.prov])
 
       await m.cambiarEvento(e.eventId, 'DRAFT')
       expect(await ve(), `${nombre} evento DRAFT`).toBe(false)
+      expect(await m.repo.proveedoresQueVen(f.id), `${nombre} evento DRAFT`).toEqual([])
       await m.cambiarEvento(e.eventId, 'ACTIVE')
+      expect(await m.repo.proveedoresQueVen(f.id), `${nombre} evento ACTIVE`).toEqual([e.prov])
 
       await m.cambiarContratacion(e.a, 'CANCELLED')
       expect(await ve(), `${nombre} contratación cancelada`).toBe(false)

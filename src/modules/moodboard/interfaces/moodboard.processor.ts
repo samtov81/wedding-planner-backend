@@ -4,6 +4,10 @@ import { UnrecoverableError, type Job } from 'bullmq'
 import { z } from 'zod'
 
 import {
+  TIPO_MOODBOARD_IMAGEN_COMPARTIDA,
+  TIPO_MOODBOARD_NOTA_ANADIDA,
+} from '@/modules/notifications/application/notification.port'
+import {
   NOTIFICACION_CREADA,
   REALTIME_PORT,
   type RealtimePort,
@@ -29,7 +33,7 @@ const imagenCambiadaSchema = z.object({
   imageId: z.guid(),
   ocultarA: z.array(z.guid()),
   campanaA: z.array(z.guid()),
-  tipoCampana: z.literal('moodboard.image.shared').nullable(),
+  tipoCampana: z.literal(TIPO_MOODBOARD_IMAGEN_COMPARTIDA).nullable(),
 }) satisfies z.ZodType<JobImagenCambiada>
 
 const notaCreadaSchema = z.object({
@@ -48,7 +52,7 @@ function leer<T>(esquema: z.ZodType<T>, job: Job): T {
 }
 
 /** Tipo de campana de una nota: fijo, el job no lo lleva (sólo hay uno). */
-const CAMPANA_DE_NOTA = 'moodboard.note.added'
+const CAMPANA_DE_NOTA = TIPO_MOODBOARD_NOTA_ANADIDA
 
 /**
  * Worker de la cola `moodboard` (spec 2026-11-09 §7). Emite al socket con

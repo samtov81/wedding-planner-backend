@@ -7,6 +7,8 @@ import {
 import {
   NOTIFICATION_PORT,
   type NotificationPort,
+  TIPO_MOODBOARD_IMAGEN_COMPARTIDA,
+  TIPO_MOODBOARD_NOTA_ANADIDA,
 } from '@/modules/notifications/application/notification.port'
 import { PRESENCE_PORT, type PresencePort } from '@/modules/notifications/application/presence.port'
 import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
@@ -277,7 +279,7 @@ export class CompartirImagenUseCase {
       const { altas, bajas } = await this.repo.fijarComparticion(imageId, pedidos, userId)
       const campanaA = await this.repo.usuariosDeContrataciones(altas)
       if (campanaA.length > 0) {
-        await this.avisos.crearParaUsuarios(eventId, campanaA, 'moodboard.image.shared', {
+        await this.avisos.crearParaUsuarios(eventId, campanaA, TIPO_MOODBOARD_IMAGEN_COMPARTIDA, {
           imageId,
         })
       }
@@ -298,7 +300,7 @@ export class CompartirImagenUseCase {
         imageId,
         ocultarA: resultado.ocultarA,
         campanaA: resultado.campanaA,
-        tipoCampana: resultado.campanaA.length > 0 ? 'moodboard.image.shared' : null,
+        tipoCampana: resultado.campanaA.length > 0 ? TIPO_MOODBOARD_IMAGEN_COMPARTIDA : null,
       })
     }
     return resultado.imagen
@@ -369,7 +371,7 @@ export class CrearNotaUseCase {
       const nota = await this.repo.crearNota(imageId, visor.userId, cuerpo)
       const campanaA = await this.repo.participantes(imageId, visor.userId)
       if (campanaA.length > 0) {
-        await this.avisos.crearParaUsuarios(eventId, campanaA, 'moodboard.note.added', {
+        await this.avisos.crearParaUsuarios(eventId, campanaA, TIPO_MOODBOARD_NOTA_ANADIDA, {
           imageId,
           noteId: nota.id,
         })

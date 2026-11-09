@@ -84,6 +84,17 @@ export const TIPO_PROVEEDOR_CONTRATADO = 'event.vendor.booked'
  * miembros ACTIVE y a proveedores BOOKED del evento publicado; la visibilidad de
  * la foto concreta la vuelve a comprobar el REST al abrirla.
  */
-export const TIPOS_MOODBOARD = ['moodboard.image.shared', 'moodboard.note.added'] as const
+export const TIPO_MOODBOARD_IMAGEN_COMPARTIDA = 'moodboard.image.shared'
+export const TIPO_MOODBOARD_NOTA_ANADIDA = 'moodboard.note.added'
+/**
+ * Se construye con las dos constantes de arriba, que son las que importa el
+ * moodboard para crear y anunciar cada campana: renombrar un tipo aquí lo
+ * renombra en los dos lados, y `visiblesDe` no puede quedarse filtrando por un
+ * literal que ya nadie escribe.
+ */
+export const TIPOS_MOODBOARD = [
+  TIPO_MOODBOARD_IMAGEN_COMPARTIDA,
+  TIPO_MOODBOARD_NOTA_ANADIDA,
+] as const
 
 export const NOTIFICATION_PORT = Symbol('NOTIFICATION_PORT')

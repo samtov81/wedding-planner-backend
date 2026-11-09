@@ -1,5 +1,6 @@
 import type { Logger } from '@nestjs/common'
 
+import type { TIPO_MOODBOARD_IMAGEN_COMPARTIDA } from '@/modules/notifications/application/notification.port'
 import type { QueueName, QueuePort } from '@/modules/queue/application/queue.port'
 
 /**
@@ -41,7 +42,7 @@ export interface JobImagenCambiada {
   ocultarA: string[]
   /** userId a los que se les creó una campana en este cambio (alta de compartición). */
   campanaA: string[]
-  tipoCampana: 'moodboard.image.shared' | null
+  tipoCampana: typeof TIPO_MOODBOARD_IMAGEN_COMPARTIDA | null
 }
 
 export interface JobNotaCreada {

@@ -3,10 +3,11 @@
  * invitación a un evento): en BullMQ un worker que toma un job y retorna lo
  * marca completado, así que un worker sobre una cola compartida se come los
  * jobs de los demás productores. Cada tipo con worker propio, su cola. Lo mismo
- * vale para `messaging` (mensajes y recibos en tiempo real, ver `avisos-mensajeria.ts`).
+ * vale para `messaging` (mensajes y recibos en tiempo real, ver `avisos-mensajeria.ts`)
+ * y para `moodboard` (fotos, comparticiones y notas, ver `avisos-moodboard.ts`).
  */
 export type QueueName =
-  'email' | 'invitations' | 'notifications' | 'maintenance' | 'members' | 'messaging'
+  'email' | 'invitations' | 'notifications' | 'maintenance' | 'members' | 'messaging' | 'moodboard'
 
 export interface EnqueueOptions {
   /**

@@ -200,6 +200,27 @@ export interface EventRepository {
    * desempate), con nombre del evento y de quien invitó.
    */
   listarInvitacionesPendientes(userId: string): Promise<InvitacionPendiente[]>
+
+  /**
+   * Los eventos en los que participa el usuario, para anunciar su presencia
+   * (spec 2026-11-09 §8): membresías ACTIVE (`comoProveedor: false`, en
+   * cualquier estado del evento, como `buscarMembresiaActiva`) y contrataciones
+   * BOOKED de su ficha en eventos ACTIVE (`true`, como
+   * `buscarContratacionReservada`). Cada evento sale UNA vez; si es miembro y
+   * proveedor a la vez gana `false`, porque la presencia de un miembro llega a
+   * más salas. Orden por `eventId`, sólo para que sea estable.
+   *
+   * Vive aquí y no en `EventAccessService`: el servicio resuelve el acceso a UN
+   * evento conocido; esto es la lista inversa, y recorrer los eventos uno a
+   * uno costaría una consulta por evento en cada conexión de socket.
+   */
+  listarParticipaciones(userId: string): Promise<Participacion[]>
+}
+
+/** Un evento en el que participa un usuario: ver `listarParticipaciones`. */
+export interface Participacion {
+  eventId: string
+  comoProveedor: boolean
 }
 
 export const EVENT_REPOSITORY = Symbol('EVENT_REPOSITORY')

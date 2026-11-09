@@ -16,6 +16,7 @@ import type {
   MembresiaGestionable,
   MembresiaPersistida,
   MiembroPersistido,
+  Participacion,
 } from '../application/event.repository'
 import type { Event } from '../domain/event'
 import {
@@ -466,6 +467,30 @@ export class PrismaEventRepository implements EventRepository {
     }))
   }
 
+  async listarParticipaciones(userId: string): Promise<Participacion[]> {
+    // Dos lecturas por índice en vez de un `event.findMany` con `OR` y joins
+    // (como `listarAccesiblesPor`): aquí no hace falta el evento, sólo su id,
+    // y esto corre en cada conexión de socket.
+    const [membresias, contrataciones] = await Promise.all([
+      this.prisma.eventMembership.findMany({
+        where: { userId, status: MEMBRESIA_CON_ACCESO },
+        select: { eventId: true },
+      }),
+      this.prisma.eventVendor.findMany({
+        where: {
+          status: CONTRATACION_CON_ACCESO,
+          vendorProfile: { userId },
+          event: { status: 'ACTIVE' },
+        },
+        select: { eventId: true },
+      }),
+    ])
+    return unirParticipaciones(
+      membresias.map((m) => m.eventId),
+      contrataciones.map((c) => c.eventId),
+    )
+  }
+
   /** La fila de Prisma no sale de infrastructure/: el dominio ve su `Event`. */
   private aDominio(fila: FilaConConteos): Event {
     const tieneVenue =
@@ -496,4 +521,17 @@ export class PrismaEventRepository implements EventRepository {
       updatedAt: fila.updatedAt,
     }
   }
+}
+
+/** Una entrada por evento, ordenada por `eventId`; la membresía gana a la contratación. */
+function unirParticipaciones(
+  comoMiembro: readonly string[],
+  comoProveedor: readonly string[],
+): Participacion[] {
+  const porEvento = new Map<string, boolean>()
+  for (const eventId of comoProveedor) porEvento.set(eventId, true)
+  for (const eventId of comoMiembro) porEvento.set(eventId, false)
+  return [...porEvento]
+    .map(([eventId, proveedor]) => ({ eventId, comoProveedor: proveedor }))
+    .sort((a, b) => (a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0))
 }

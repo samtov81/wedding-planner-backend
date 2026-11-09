@@ -688,4 +688,105 @@ describe('Paridad: EventRepositoryEnMemoria vs PrismaEventRepository', () => {
     ])
     expect(resultados[1]).toEqual(resultados[0])
   })
+
+  it('listarParticipaciones: membresías ACTIVE y contrataciones BOOKED en ACTIVE, una vez por evento', async () => {
+    // Lo que usa la presencia para decidir a qué salas anunciar a alguien
+    // (spec 2026-11-09 §8). Un evento sale una sola vez; si es miembro Y
+    // proveedor, gana miembro (`false`): su presencia va también a los proveedores.
+    const categoria = await categoriaId(prisma)
+    const resultados = []
+    for (const [nombre, repo] of sujetos()) {
+      const u = await prisma.user.create({
+        data: {
+          email: `participa-${randomUUID()}@paridad.test`,
+          passwordHash: 'x',
+          fullName: 'Participa',
+        },
+      })
+      const publicado = async (etiqueta: string) => {
+        const creado = await repo.crearConMembresia({
+          name: etiqueta,
+          ownerId,
+          weddingDate: new Date('2027-06-12T00:00:00Z'),
+          totalBudget: '100.00',
+          venue: VENUE,
+        })
+        await repo.publicarSiCompleto(creado.id)
+        return creado.id
+      }
+      const etiquetas = new Map<string, string>()
+      const evento = async (etiqueta: string, activo: boolean) => {
+        const id = activo
+          ? await publicado(etiqueta)
+          : (await repo.crearConMembresia({ name: etiqueta, ownerId })).id
+        etiquetas.set(id, etiqueta)
+        return id
+      }
+      const miembro = await evento('miembro-borrador', false)
+      const invitado = await evento('invitado', true)
+      const revocado = await evento('revocado', true)
+      const contratadoDosVeces = await evento('contratado-dos-veces', true)
+      const contratadoBorrador = await evento('contratado-borrador', false)
+      const noContratado = await evento('no-contratado', true)
+      const ambas = await evento('ambas', true)
+      await evento('ajeno', true)
+
+      const membresias: Array<[string, 'ACTIVE' | 'INVITED' | 'REVOKED']> = [
+        [miembro, 'ACTIVE'],
+        [invitado, 'INVITED'],
+        [revocado, 'REVOKED'],
+        [ambas, 'ACTIVE'],
+      ]
+      const contrataciones: Array<[string, 'BOOKED' | 'SHORTLISTED' | 'CANCELLED']> = [
+        [contratadoDosVeces, 'BOOKED'],
+        [contratadoDosVeces, 'BOOKED'],
+        [contratadoBorrador, 'BOOKED'],
+        [noContratado, 'SHORTLISTED'],
+        [noContratado, 'CANCELLED'],
+        [ambas, 'BOOKED'],
+      ]
+      if (repo instanceof EventRepositoryEnMemoria) {
+        for (const [eventId, status] of membresias) {
+          repo.membresias.push({ eventId, userId: u.id, role: 'COUPLE', status })
+        }
+        repo.perfiles.push({ id: `perfil-${u.id}`, userId: u.id })
+        for (const [eventId, status] of contrataciones) {
+          repo.eventVendors.push({
+            id: randomUUID(),
+            eventId,
+            vendorProfileId: `perfil-${u.id}`,
+            status,
+          })
+        }
+      } else {
+        for (const [eventId, status] of membresias) {
+          await prisma.eventMembership.create({
+            data: { eventId, userId: u.id, role: 'COUPLE', status },
+          })
+        }
+        const perfil = await prisma.vendorProfile.create({
+          data: { userId: u.id, businessName: 'Participa', categoryId: categoria },
+        })
+        for (const [eventId, status] of contrataciones) {
+          await prisma.eventVendor.create({
+            data: { eventId, vendorProfileId: perfil.id, categoryId: categoria, status },
+          })
+        }
+      }
+
+      const participaciones = await repo.listarParticipaciones(u.id)
+      resultados.push(
+        participaciones
+          .map((p) => ({ evento: etiquetas.get(p.eventId), comoProveedor: p.comoProveedor }))
+          .sort((a, b) => (a.evento ?? '').localeCompare(b.evento ?? '')),
+      )
+      expect(await repo.listarParticipaciones(randomUUID()), nombre).toEqual([])
+    }
+    expect(resultados[0]).toEqual([
+      { evento: 'ambas', comoProveedor: false },
+      { evento: 'contratado-dos-veces', comoProveedor: true },
+      { evento: 'miembro-borrador', comoProveedor: false },
+    ])
+    expect(resultados[1]).toEqual(resultados[0])
+  })
 })

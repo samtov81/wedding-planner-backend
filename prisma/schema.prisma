@@ -101,6 +101,10 @@ model User {
   emailVerificationTokens    EmailVerificationToken[]
   passwordResetTokens        PasswordResetToken[]
   expensesCreated            Expense[]                 @relation("ExpenseCreatedBy")
+  moodboardImagesUploaded    MoodboardImage[]          @relation("MoodboardUploader")
+  moodboardImagesArchived    MoodboardImage[]          @relation("MoodboardArchiver")
+  moodboardShares            MoodboardShare[]
+  moodboardNotes             MoodboardNote[]
 
   @@map("users")
 }
@@ -180,8 +184,9 @@ model VendorCategory {
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
 
-  vendorProfiles VendorProfile[]
-  eventVendors   EventVendor[]
+  vendorProfiles  VendorProfile[]
+  eventVendors    EventVendor[]
+  moodboardImages MoodboardImage[]
 
   @@map("vendor_categories")
 }
@@ -247,6 +252,7 @@ model Event {
   seatingTables   SeatingTable[]
   seatingObjects  SeatingObject[]
   seatAssignments SeatAssignment[]
+  moodboardImages MoodboardImage[]
 
   @@index([ownerId])
   @@map("events")
@@ -354,7 +360,7 @@ model EventVendor {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  event         Event          @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event           Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
   /// `onDelete: Restrict`, no `SetNull`: si se pusiera a NULL al borrar la
   /// ficha, un EventVendor que apuntaba al marketplace se quedaría con
   /// `vendorProfileId = NULL` y `externalName = NULL` a la vez — el estado
@@ -362,9 +368,10 @@ model EventVendor {
   /// ficha con historial comercial no se borra: se marca `SUSPENDED`
   /// (VendorProfileStatus ya tiene ese valor), que no requiere tocar
   /// ninguna fila de EventVendor.
-  vendorProfile VendorProfile? @relation(fields: [vendorProfileId], references: [id], onDelete: Restrict)
-  category      VendorCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  expenses      Expense[]
+  vendorProfile   VendorProfile?   @relation(fields: [vendorProfileId], references: [id], onDelete: Restrict)
+  category        VendorCategory   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  expenses        Expense[]
+  moodboardShares MoodboardShare[]
 
   @@index([eventId])
   @@index([vendorProfileId])
@@ -646,4 +653,71 @@ model MessageRecipient {
   @@id([messageId, userId])
   @@index([userId, messageId])
   @@map("message_recipients")
+}
+
+/// Foto del tablero de inspiración de un evento. Nada se borra desde la API: se
+/// archiva (`archivedAt` + `archivedById`, ambos o ninguno, CHECK
+/// `moodboard_images_archivado_coherente`). `storageKey` es la key del objeto
+/// en R2, nunca una URL (las de lectura son prefirmadas y caducan).
+/// `width`/`height` los mide el cliente antes de subir: sirven para reservar la
+/// caja del masonry, no son seguridad. `categoryId` es `Restrict`: una categoría
+/// con fotos no se borra (se desactiva).
+model MoodboardImage {
+  id           String    @id @default(uuid()) @db.Uuid
+  eventId      String    @db.Uuid
+  categoryId   String    @db.Uuid
+  title        String
+  storageKey   String    @unique
+  width        Int
+  height       Int
+  uploadedById String    @db.Uuid
+  archivedAt   DateTime?
+  archivedById String?   @db.Uuid
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  event      Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  category   VendorCategory   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  uploadedBy User             @relation("MoodboardUploader", fields: [uploadedById], references: [id], onDelete: Restrict)
+  archivedBy User?            @relation("MoodboardArchiver", fields: [archivedById], references: [id], onDelete: Restrict)
+  shares     MoodboardShare[]
+  notes      MoodboardNote[]
+
+  @@index([eventId, createdAt])
+  @@map("moodboard_images")
+}
+
+/// Compartición de una foto con una contratación (`EventVendor`). Volver a
+/// compartir reaviva la fila (`revokedAt = null`) en vez de duplicarla, de ahí
+/// el UNIQUE; dejar de compartir pone `revokedAt` y queda historial.
+model MoodboardShare {
+  id            String    @id @default(uuid()) @db.Uuid
+  imageId       String    @db.Uuid
+  eventVendorId String    @db.Uuid
+  sharedById    String    @db.Uuid
+  createdAt     DateTime  @default(now())
+  revokedAt     DateTime?
+
+  image       MoodboardImage @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  eventVendor EventVendor    @relation(fields: [eventVendorId], references: [id], onDelete: Restrict)
+  sharedBy    User           @relation(fields: [sharedById], references: [id], onDelete: Restrict)
+
+  @@unique([imageId, eventVendorId])
+  @@index([eventVendorId])
+  @@map("moodboard_shares")
+}
+
+/// Nota de una foto. Sin `updatedAt`: no se editan ni se borran.
+model MoodboardNote {
+  id        String   @id @default(uuid()) @db.Uuid
+  imageId   String   @db.Uuid
+  authorId  String   @db.Uuid
+  body      String
+  createdAt DateTime @default(now())
+
+  image  MoodboardImage @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  author User           @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([imageId, createdAt])
+  @@map("moodboard_notes")
 }

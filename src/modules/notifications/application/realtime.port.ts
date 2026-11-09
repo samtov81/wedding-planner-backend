@@ -10,6 +10,12 @@
  * es una optimización de LATENCIA sobre un estado que ya existe, no un canal
  * de verdad.
  */
+/**
+ * Se re-exporta el nombre del evento de socket para que otros módulos no
+ * importen `notifications/domain`.
+ */
+export { NOTIFICACION_CREADA } from '../domain/notification'
+
 export interface RealtimePort {
   emitirAEvento(eventId: string, tipo: string, payload: unknown): Promise<void>
   emitirAUsuario(userId: string, tipo: string, payload: unknown): Promise<void>

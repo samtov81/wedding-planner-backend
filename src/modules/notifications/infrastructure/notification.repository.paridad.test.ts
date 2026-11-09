@@ -609,6 +609,93 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
       expect(filas[0]?.createdAt.getTime()).toBeGreaterThan(primera?.createdAt.getTime() ?? 0)
       expect(puerto.creadas).toHaveLength(1)
     })
+
+    describe('crearParaUsuarios (avisos de moodboard)', () => {
+      /** Copia al doble las filas que Prisma escribió, para leerlas por los dos lados. */
+      async function copiarAlDoble(): Promise<void> {
+        for (const f of await prisma.notification.findMany()) {
+          doble.filas.push({
+            id: f.id,
+            eventId: f.eventId,
+            userId: f.userId,
+            type: f.type,
+            payload: f.payload,
+            createdAt: f.createdAt,
+            readAt: f.readAt,
+          })
+        }
+      }
+
+      it('el proveedor y el miembro la listan en los dos; las filas escritas coinciden', async () => {
+        await contratar(eventId)
+        const puerto = new NotificationPortEnMemoria()
+        const payload = { imageId: 'img-1' }
+
+        await real.crearParaUsuarios(eventId, [provId, miId], 'moodboard.note.added', payload)
+        await puerto.crearParaUsuarios(eventId, [provId, miId], 'moodboard.note.added', payload)
+        await copiarAlDoble()
+
+        const enPrisma = (await prisma.notification.findMany()).map((f) => ({
+          eventId: f.eventId,
+          userId: f.userId,
+          tipo: f.type,
+          payload: f.payload,
+        }))
+        expect(enPrisma).toHaveLength(2)
+        expect(puerto.creadas).toEqual(expect.arrayContaining(enPrisma))
+        expect(puerto.creadas).toHaveLength(2)
+
+        for (const [, repo] of implementaciones()) {
+          for (const usuario of [provId, miId]) {
+            const pagina = await repo.listarDeUsuario(usuario, todas)
+            expect(pagina.items.map((n) => n.type)).toEqual(['moodboard.note.added'])
+            expect(await repo.contarNoLeidasDeUsuario(usuario)).toBe(1)
+          }
+        }
+      })
+
+      it('deduplica los userId en los dos', async () => {
+        const puerto = new NotificationPortEnMemoria()
+
+        await real.crearParaUsuarios(eventId, [miId, miId, otroId], 'moodboard.image.shared', {})
+        await puerto.crearParaUsuarios(eventId, [miId, miId, otroId], 'moodboard.image.shared', {})
+
+        expect(await prisma.notification.count()).toBe(2)
+        expect(puerto.creadas).toHaveLength(2)
+      })
+
+      it('el proveedor sigue SIN ver crearParaMiembros de otros tipos', async () => {
+        await contratar(eventId)
+        await sembrarEnAmbos({ userId: provId, tipo: 'guest.rsvp.updated', minuto: 1 })
+
+        for (const [, repo] of implementaciones()) {
+          expect((await repo.listarDeUsuario(provId, todas)).items).toEqual([])
+          expect(await repo.contarNoLeidasDeUsuario(provId)).toBe(0)
+        }
+      })
+
+      it('con la contratación CANCELLED el proveedor deja de ver la de moodboard', async () => {
+        const ev = await contratar(eventId)
+        await real.crearParaUsuarios(eventId, [provId], 'moodboard.image.shared', {})
+        await copiarAlDoble()
+        await cancelar(ev, eventId)
+
+        for (const [, repo] of implementaciones()) {
+          expect((await repo.listarDeUsuario(provId, todas)).items).toEqual([])
+          expect(await repo.contarNoLeidasDeUsuario(provId)).toBe(0)
+        }
+      })
+
+      it('una lista vacía no crea nada en los dos', async () => {
+        const puerto = new NotificationPortEnMemoria()
+
+        await real.crearParaUsuarios(eventId, [], 'moodboard.note.added', {})
+        await puerto.crearParaUsuarios(eventId, [], 'moodboard.note.added', {})
+
+        expect(await prisma.notification.count()).toBe(0)
+        expect(puerto.creadas).toEqual([])
+      })
+    })
   })
 
   describe('crearParaDueno (puerto de escritura)', () => {

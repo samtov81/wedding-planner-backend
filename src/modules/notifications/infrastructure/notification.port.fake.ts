@@ -50,6 +50,16 @@ export class NotificationPortEnMemoria implements NotificationPort {
     return this.crear(eventId, dueno === undefined ? [] : [dueno], tipo, payload)
   }
 
+  /** Una fila por `userId` distinto, sin validar membresía (como el adaptador real). */
+  crearParaUsuarios(
+    eventId: string,
+    userIds: readonly string[],
+    tipo: string,
+    payload: unknown,
+  ): Promise<void> {
+    return this.crear(eventId, [...new Set(userIds)], tipo, payload)
+  }
+
   /**
    * Honra `fallarProximaCreacion` y serializa el payload como `crear` (ruling B).
    * Una segunda llamada para el mismo `eventVendorId` no añade otra fila.

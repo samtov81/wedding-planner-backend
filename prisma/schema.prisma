@@ -690,6 +690,8 @@ model MoodboardImage {
 /// Compartición de una foto con una contratación (`EventVendor`). Volver a
 /// compartir reaviva la fila (`revokedAt = null`) en vez de duplicarla, de ahí
 /// el UNIQUE; dejar de compartir pone `revokedAt` y queda historial.
+/// `eventVendor` es Cascade: la compartición es de la contratación y muere con
+/// ella; las notas cuelgan de la foto, no de la compartición, y sobreviven.
 model MoodboardShare {
   id            String    @id @default(uuid()) @db.Uuid
   imageId       String    @db.Uuid
@@ -699,7 +701,7 @@ model MoodboardShare {
   revokedAt     DateTime?
 
   image       MoodboardImage @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  eventVendor EventVendor    @relation(fields: [eventVendorId], references: [id], onDelete: Restrict)
+  eventVendor EventVendor    @relation(fields: [eventVendorId], references: [id], onDelete: Cascade)
   sharedBy    User           @relation(fields: [sharedById], references: [id], onDelete: Restrict)
 
   @@unique([imageId, eventVendorId])

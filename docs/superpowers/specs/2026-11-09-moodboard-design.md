@@ -146,7 +146,9 @@ Tres tablas nuevas. Nombres orientativos; el builder ajusta a la convención de
 **`MoodboardShare`** (`moodboard_shares`)
 
 - `imageId` (→ MoodboardImage, cascade), `eventVendorId` (→ EventVendor,
-  restrict), `sharedById`, `createdAt`, `revokedAt?`.
+  cascade), `sharedById`, `createdAt`, `revokedAt?`. Cascade porque la
+  compartición es de la contratación: quitar la contratación se la lleva,
+  mientras que las notas cuelgan de la foto y sobreviven.
 - UNIQUE `(imageId, eventVendorId)`: volver a compartir reaviva la fila
   (`revokedAt = null`) en vez de duplicarla — mismo criterio que
   `avisarAProveedor`. Dejar de compartir pone `revokedAt`. Así queda historial.

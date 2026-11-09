@@ -673,6 +673,40 @@ describe('moodboard e2e', () => {
     })
   })
 
+  describe('quitar una contratación', () => {
+    it('con la foto compartida y luego revocada se borra (200) y la foto y sus notas siguen para los miembros', async () => {
+      const deLaB = await prisma.eventVendor.findUniqueOrThrow({ where: { id: contratacionB } })
+      const venue = await categoriaId(prisma, 'venue')
+      const segunda = (
+        await prisma.eventVendor.create({
+          data: {
+            eventId,
+            vendorProfileId: deLaB.vendorProfileId,
+            categoryId: venue,
+            status: 'BOOKED',
+          },
+        })
+      ).id
+      const f = await subirFoto()
+      await compartir(f.id, [segunda])
+      const deB = await nota(f.id, 'provB', 'La quiero en la entrada')
+      await compartir(f.id, [])
+
+      await request(server)
+        .delete(`/events/${eventId}/vendors/${segunda}`)
+        .set(como('creador'))
+        .expect(200)
+
+      expect(await prisma.eventVendor.findUnique({ where: { id: segunda } })).toBeNull()
+      expect(await prisma.moodboardShare.count({ where: { eventVendorId: segunda } })).toBe(0)
+      await request(server).get(`${base()}/images/${f.id}`).set(como('pareja')).expect(200)
+      const notas = (
+        await request(server).get(`${base()}/images/${f.id}/notes`).set(como('pareja')).expect(200)
+      ).body as NotaCuerpo[]
+      expect(notas.map((n) => n.id)).toEqual([deB.id])
+    })
+  })
+
   describe('notas', () => {
     it('la nota de B en una foto compartida con A y B: A la lee con autor B y recibe la campana; B no', async () => {
       const f = await subirFoto()

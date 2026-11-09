@@ -141,7 +141,7 @@ Enforced by the use cases, not by the database: the cap of **500 photos per even
 
 ### `moodboard_shares`
 
-Shares a photo with one hiring (`EventVendor`). Belongs to a `MoodboardImage` (`onDelete: Cascade`) and an `EventVendor` (`onDelete: Restrict`); `sharedById` points to `users` (`onDelete: Restrict`). UNIQUE `(imageId, eventVendorId)`: sharing again revives the row (`revokedAt = null`) instead of duplicating it, and unsharing sets `revokedAt`, so the history is kept. Indexed by `eventVendorId`.
+Shares a photo with one hiring (`EventVendor`). Belongs to a `MoodboardImage` (`onDelete: Cascade`) and an `EventVendor` (`onDelete: Cascade` — a share belongs to the hiring, so removing the hiring removes its shares; notes hang off the photo, not the share, and survive); `sharedById` points to `users` (`onDelete: Restrict`). UNIQUE `(imageId, eventVendorId)`: sharing again revives the row (`revokedAt = null`) instead of duplicating it, and unsharing sets `revokedAt`, so the history is kept. Indexed by `eventVendorId`.
 
 Enforced by the use cases, not by the database: the `EventVendor` belongs to the same event as the image, is `BOOKED` and has a `vendorProfileId`; and a vendor hired twice in the same event sees the photos shared with either hiring.
 

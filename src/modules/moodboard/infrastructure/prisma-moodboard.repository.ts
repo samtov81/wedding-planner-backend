@@ -34,7 +34,11 @@ type FilaImagen = Prisma.MoodboardImageGetPayload<{ include: typeof INCLUIR }>
 /**
  * Adaptador Prisma del puerto. La visibilidad de proveedor se expresa UNA vez
  * (`filtroDeVisor`) y la usan listado y búsqueda, para que no puedan divergir.
- * Las escrituras van por `clienteDe(this.prisma)`: `bloquearYContar` y
+ * TODA lectura y escritura va por `clienteDe(this.prisma)` (no-op fuera de una
+ * transacción): dentro de una unidad de trabajo, `proveedoresQueVen` tras
+ * `fijarComparticion` debe ver lo recién escrito sin confirmar. Alternativa
+ * descartada: leer con `this.prisma`, que usa otra conexión y no lo vería.
+ * `bloquearYContar` y
  * `crearImagen` corren en la misma transacción que abre el caso de uso.
  */
 @Injectable()
@@ -49,7 +53,7 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
   }
 
   async categoriaActiva(categoryId: string): Promise<boolean> {
-    const categoria = await this.prisma.vendorCategory.findUnique({
+    const categoria = await clienteDe(this.prisma).vendorCategory.findUnique({
       where: { id: categoryId },
       select: { active: true },
     })
@@ -70,7 +74,7 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
     archivadas: boolean,
   ): Promise<ImagenDeMoodboard[]> {
     if (visor.tipo === 'proveedor' && archivadas) return []
-    const filas = await this.prisma.moodboardImage.findMany({
+    const filas = await clienteDe(this.prisma).moodboardImage.findMany({
       where: {
         eventId,
         archivedAt: archivadas ? { not: null } : null,
@@ -87,7 +91,7 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
     imageId: string,
     visor: Visor,
   ): Promise<ImagenDeMoodboard | null> {
-    const fila = await this.prisma.moodboardImage.findFirst({
+    const fila = await clienteDe(this.prisma).moodboardImage.findFirst({
       where: { id: imageId, eventId, ...this.filtroDeVisor(eventId, visor) },
       include: INCLUIR,
     })
@@ -105,7 +109,7 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
   }
 
   async listarCompartibles(eventId: string): Promise<ContratacionCompartible[]> {
-    const filas = await this.prisma.eventVendor.findMany({
+    const filas = await clienteDe(this.prisma).eventVendor.findMany({
       where: { eventId, status: 'BOOKED', vendorProfileId: { not: null } },
       select: {
         id: true,
@@ -160,7 +164,7 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
   }
 
   async usuariosDeContrataciones(eventVendorIds: string[]): Promise<string[]> {
-    const filas = await this.prisma.eventVendor.findMany({
+    const filas = await clienteDe(this.prisma).eventVendor.findMany({
       where: { id: { in: eventVendorIds }, vendorProfileId: { not: null } },
       select: { vendorProfile: { select: { userId: true } } },
     })
@@ -170,7 +174,7 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
   }
 
   async proveedoresQueVen(imageId: string): Promise<string[]> {
-    const filas = await this.prisma.moodboardShare.findMany({
+    const filas = await clienteDe(this.prisma).moodboardShare.findMany({
       where: {
         imageId,
         revokedAt: null,

@@ -43,6 +43,10 @@ export interface ContratacionCompartible {
  * archivada. Es la UNIÓN de todas sus contrataciones (spec 2026-11-09 §4):
  * alternativa descartada, apoyarse en el `eventVendorId` de `EventAccess`, que
  * es uno arbitrario (`findFirst`) y ocultaría las fotos de la otra contratación.
+ *
+ * Todas las lecturas son conscientes de la transacción: dentro de una
+ * `UnidadDeTrabajo` ven las escrituras aún sin confirmar de esa misma unidad
+ * (p. ej. `proveedoresQueVen` justo después de `fijarComparticion`).
  */
 export interface MoodboardRepository {
   /** `SELECT … FOR UPDATE` de la fila del evento + cuenta de TODAS sus imágenes. Dentro de UnidadDeTrabajo. */

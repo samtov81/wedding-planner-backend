@@ -143,6 +143,48 @@ describe('PrismaMoodboardRepository (Postgres real)', () => {
     })
   })
 
+  describe('lecturas dentro de una unidad de trabajo', () => {
+    it('proveedoresQueVen ve la revocación aún sin confirmar', async () => {
+      const servicio = prisma as unknown as PrismaService
+      const repo = new PrismaMoodboardRepository(servicio)
+      const unidad = new PrismaUnidadDeTrabajo(servicio)
+      const u = await prisma.user.create({
+        data: { email: 'rw@int-moodboard.test', passwordHash: 'x', fullName: 'Prov A' },
+      })
+      const perfil = await prisma.vendorProfile.create({
+        data: { userId: u.id, businessName: 'Prov A', categoryId },
+      })
+      const evento = await prisma.event.create({
+        data: {
+          name: 'RW',
+          ownerId: userId,
+          status: 'ACTIVE',
+          weddingDate: new Date('2027-06-12'),
+        },
+      })
+      const contratacion = await prisma.eventVendor.create({
+        data: { eventId: evento.id, categoryId, vendorProfileId: perfil.id, status: 'BOOKED' },
+      })
+      const foto = await repo.crearImagen({
+        eventId: evento.id,
+        categoryId,
+        title: 'RW',
+        storageKey: 'k-rw',
+        width: 10,
+        height: 10,
+        uploadedById: userId,
+      })
+      await repo.fijarComparticion(foto.id, [contratacion.id], userId)
+      expect(await repo.proveedoresQueVen(foto.id)).toEqual([u.id])
+
+      const dentro = await unidad.ejecutar(async () => {
+        await repo.fijarComparticion(foto.id, [], userId)
+        return await repo.proveedoresQueVen(foto.id)
+      })
+      expect(dentro).not.toContain(u.id)
+    })
+  })
+
   describe('tope de imágenes con concurrencia', () => {
     it('con 499 fotos, dos subidas en paralelo: una falla y quedan 500', async () => {
       const dueno = await prisma.user.create({

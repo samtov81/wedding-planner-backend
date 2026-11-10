@@ -124,6 +124,15 @@ export class ScheduleItemRepositoryEnMemoria implements ScheduleItemRepository {
     return Promise.resolve(true)
   }
 
+  /**
+   * No hace nada: el doble corre en un solo hilo y sin transacciones reales, así
+   * que no hay intercalado que serializar. La serialización se prueba contra
+   * Postgres (`prisma-schedule-item.repository.test.ts`).
+   */
+  bloquearItems(): Promise<void> {
+    return Promise.resolve()
+  }
+
   listarConAsignaciones(eventId: string): Promise<ItemConAsignaciones[]> {
     return Promise.resolve(
       this.items

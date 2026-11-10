@@ -99,6 +99,31 @@ export interface ScheduleItemRepository {
   actualizar(eventId: string, itemId: string, cambios: CambiosItem): Promise<ScheduleItem> // 404 si no existe
   eliminar(eventId: string, itemId: string): Promise<boolean> // false si no existía
 
+  /**
+   * `SELECT … FOR UPDATE` de las filas de esos ítems del evento, en orden de
+   * id (dos transacciones que bloquean conjuntos solapados los toman en el
+   * mismo orden y no se interbloquean). Sólo tiene efecto dentro de una
+   * `UnidadDeTrabajo`; los ids que no existen o son de otro evento se ignoran.
+   *
+   * Lo llaman, lo PRIMERO de su transacción, editar (cambio de hora), asignar
+   * y confirmar. Sin él:
+   *  - un proveedor que confirma mientras el planner cambia la hora podría
+   *    confirmar la hora vieja: el UPDATE de `confirmar` compara con la hora
+   *    de su instantánea, que no ve el cambio aún sin confirmar (spec
+   *    2026-11-10 §4, "la confirmación no pisa una desconfirmación");
+   *  - dos `fijarAsignaciones` concurrentes sobre el mismo ítem leerían las
+   *    dos "sin fila" y la segunda chocaría con el UNIQUE (P2002 → 500).
+   * Con el bloqueo, la segunda transacción espera y su primera lectura ya ve
+   * lo confirmado por la primera.
+   *
+   * Por qué las filas de los ÍTEMS y no la del evento (como `bloquearYContar`
+   * del moodboard): serializa exactamente lo que comparte el invariante, sin
+   * frenar al resto del evento (invitados, gastos, otras partes del
+   * cronograma). Alternativa descartada: `SERIALIZABLE` en la transacción,
+   * que obliga a reintentar en el caso de uso por fallos de serialización.
+   */
+  bloquearItems(eventId: string, itemIds: string[]): Promise<void>
+
   listarConAsignaciones(eventId: string): Promise<ItemConAsignaciones[]> // startsAt asc, id asc
   buscarConAsignaciones(eventId: string, itemId: string): Promise<ItemConAsignaciones | null>
   listarAsignables(eventId: string): Promise<Asignable[]> // BOOKED con ficha, por nombre

@@ -158,6 +158,18 @@ export class PrismaScheduleItemRepository implements ScheduleItemRepository {
     return count > 0
   }
 
+  /** Ver el contrato en el puerto. Sin ids (o sin filas) no bloquea nada. */
+  async bloquearItems(eventId: string, itemIds: string[]): Promise<void> {
+    if (itemIds.length === 0) return
+    // `$queryRaw` con template tag: los ids van como parámetros (el array como
+    // `text[]`), nada se concatena. `ORDER BY id` fija el orden de los bloqueos.
+    await clienteDe(this.prisma).$queryRaw`
+      SELECT id FROM schedule_items
+      WHERE "eventId" = ${eventId}::uuid AND id = ANY(${itemIds}::uuid[])
+      ORDER BY id
+      FOR UPDATE`
+  }
+
   async listarConAsignaciones(eventId: string): Promise<ItemConAsignaciones[]> {
     const filas = await clienteDe(this.prisma).scheduleItem.findMany({
       where: { eventId },

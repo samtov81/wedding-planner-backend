@@ -571,6 +571,39 @@ describe('Paridad: ScheduleItemRepositoryEnMemoria vs PrismaScheduleItemReposito
     })
   })
 
+  /**
+   * `bloquearItems` sólo serializa (se prueba contra Postgres en
+   * `prisma-schedule-item.repository.test.ts`): en ambos sujetos no devuelve
+   * nada ni cambia lo que el puerto lee, ni con ids ajenos o inexistentes.
+   */
+  it('bloquearItems no cambia nada observable', async () => {
+    const resultados: unknown[] = []
+    await conAmbos(async (m) => {
+      const eventId = await m.evento()
+      const otroEvento = await m.evento()
+      const planner = await m.usuario('Planner')
+      const prov = await contratado(m, eventId, 'Proveedor')
+      const ceremonia = await item(m, eventId, 'Ceremonia', '2027-06-12T18:00:00Z')
+      const ajeno = await item(m, otroEvento, 'Ajeno', '2027-06-12T19:00:00Z')
+      await m.repo.fijarAsignaciones(ceremonia.id, [prov.eventVendorId], planner)
+      const antes = await m.repo.listarConAsignaciones(eventId)
+
+      const devuelto = await m.repo.bloquearItems(eventId, [ceremonia.id, ajeno.id, randomUUID()])
+      await m.repo.bloquearItems(eventId, [])
+
+      const despues = await m.repo.listarConAsignaciones(eventId)
+      expect(despues).toEqual(antes)
+      resultados.push([
+        devuelto,
+        despues.map((i) => ({
+          ...sinVolatiles({ ...i }),
+          vendors: i.vendors.map(({ eventVendorId: _ev, ...v }) => v),
+        })),
+      ])
+    })
+    expect(resultados[0]).toEqual(resultados[1])
+  })
+
   it('eliminar el ítem se lleva sus asignaciones', async () => {
     await conAmbos(async (m) => {
       const eventId = await m.evento()

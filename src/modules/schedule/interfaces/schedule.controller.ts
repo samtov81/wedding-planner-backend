@@ -10,15 +10,16 @@ import {
   UseGuards,
 } from '@nestjs/common'
 
-import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
 import {
-  type EventAccess,
-  puedeCambiarEstadoDelCronograma,
-} from '@/modules/events/domain/event-access'
+  CurrentUser,
+  type UsuarioAutenticado,
+} from '@/modules/auth/interfaces/current-user.decorator'
+import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
+import { type EventAccess, esPlannerDelEvento } from '@/modules/events/domain/event-access'
 import { EventAccessOf } from '@/modules/events/interfaces/event-access-of.decorator'
 import { EventAccessGuard } from '@/modules/events/interfaces/event-access.guard'
 import { RequireEventAccess } from '@/modules/events/interfaces/require-event-access.decorator'
-import type { Ubicacion } from '@/shared/domain'
+import { type Ubicacion, UnauthorizedError } from '@/shared/domain'
 import { idDeRuta } from '@/shared/http/id-de-ruta'
 import { validarCon } from '@/shared/http/validar-con'
 
@@ -45,8 +46,13 @@ export class ScheduleController {
 
   @RequireEventAccess('COUPLE', 'PLANNER')
   @Get()
-  async listarItems(@Param('eventId') eventId: string): Promise<ItemRespuesta[]> {
-    return (await this.listar.ejecutar(eventId)).map(aRespuesta)
+  async listarItems(
+    @Param('eventId') eventId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+  ): Promise<ItemRespuesta[]> {
+    return (await this.listar.ejecutar(eventId, esPlannerDelEvento(accesoDe(acceso)))).map(
+      aRespuesta,
+    )
   }
 
   @RequireEventAccess('COUPLE', 'PLANNER')
@@ -54,6 +60,7 @@ export class ScheduleController {
   async crearItem(
     @Param('eventId') eventId: string,
     @EventAccessOf() acceso: EventAccess | undefined,
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
     @Body() body: unknown,
   ): Promise<ItemRespuesta> {
     const datos = validarCon(createScheduleItemSchema, body)
@@ -68,7 +75,7 @@ export class ScheduleController {
           location: datos.location ?? null,
           status: datos.status,
         },
-        actorDe(acceso),
+        actorDe(acceso, usuario),
       ),
     )
   }
@@ -79,6 +86,7 @@ export class ScheduleController {
     @Param('eventId') eventId: string,
     @Param('itemId') itemId: string,
     @EventAccessOf() acceso: EventAccess | undefined,
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
     @Body() body: unknown,
   ): Promise<ItemRespuesta> {
     const id = idDeRuta(itemId, () => new ItemDeCronogramaNoEncontradoError())
@@ -87,7 +95,7 @@ export class ScheduleController {
         eventId,
         id,
         validarCon(updateScheduleItemSchema, body),
-        actorDe(acceso),
+        actorDe(acceso, usuario),
       ),
     )
   }
@@ -107,13 +115,26 @@ export class ScheduleController {
 }
 
 /**
- * Traduce el acceso que el guard ya resolvió a lo que el caso de uso
- * necesita. Sin acceso la ruta perdió su guard: error de programación (500),
- * como en `event-vendors.controller.ts`, nunca un permiso concedido.
+ * Sin acceso la ruta perdió su guard: error de programación (500), como en
+ * `event-vendors.controller.ts`, nunca un permiso concedido.
  */
-function actorDe(acceso: EventAccess | undefined): ActorDelCronograma {
+function accesoDe(acceso: EventAccess | undefined): EventAccess {
   if (acceso === undefined) throw new Error('ScheduleController requires EventAccessGuard')
-  return { puedeCambiarEstado: puedeCambiarEstadoDelCronograma(acceso) }
+  return acceso
+}
+
+/**
+ * Traduce el acceso que el guard ya resolvió y el usuario autenticado a lo
+ * que el caso de uso necesita (`esPlannerDelEvento`, la única copia de la
+ * regla). Sin usuario, 401 como en `moodboard.controller.ts`.
+ */
+function actorDe(
+  acceso: EventAccess | undefined,
+  usuario: UsuarioAutenticado | undefined,
+): ActorDelCronograma {
+  const esPlanner = esPlannerDelEvento(accesoDe(acceso))
+  if (usuario === undefined) throw new UnauthorizedError('Falta el token de acceso')
+  return { userId: usuario.id, esPlanner }
 }
 
 interface ItemRespuesta {

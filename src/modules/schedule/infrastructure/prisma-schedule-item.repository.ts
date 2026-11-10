@@ -332,7 +332,8 @@ export class PrismaScheduleItemRepository implements ScheduleItemRepository {
    * Un solo UPDATE: la comparación con la hora vista va en el WHERE, así que
    * no hay hueco entre leer la hora y escribir la confirmación dentro de esta
    * sentencia. Que el cambio de hora del planner no se cuele entre medias es
-   * cosa del caso de uso (bloquea la fila del evento). `endsAt: null` en
+   * cosa del caso de uso: bloquea las filas de los ÍTEMS (`bloquearItems`,
+   * `SELECT … FOR UPDATE`), no la del evento. `endsAt: null` en
    * Prisma es `IS NULL`, que es justo "el ítem sigue sin hora de fin".
    * Alternativa descartada: leer los pendientes actuales y confirmar los que
    * coincidan, que son dos sentencias y abre la carrera que esto cierra.

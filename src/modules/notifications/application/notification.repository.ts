@@ -51,11 +51,15 @@ export interface NotificationRepository {
    * Lo mismo que `listar` pero a nivel de usuario: mezcla TODOS sus eventos
    * (campana global), con el mismo orden total y el mismo cursor.
    *
-   * "Visible" = es del usuario Y, en ese evento, su membresía sigue ACTIVE o,
-   * sólo para `event.vendor.booked`, es el proveedor de una contratación BOOKED
-   * de un evento PUBLICADO (la misma condición que da acceso a un proveedor,
-   * `buscarContratacionReservada`: un aviso de un evento en borrador aparece
-   * cuando el evento se publica). El filtro va en la consulta, no en el caso de
+   * "Visible" = es del usuario Y se cumple una de tres ramas: (1) su
+   * membresía en ese evento sigue ACTIVE, para cualquier tipo; (2) el tipo es
+   * `event.vendor.booked` y es el proveedor de una contratación BOOKED de un
+   * evento PUBLICADO; (3) el tipo es de moodboard o del cronograma
+   * (`TIPOS_PARA_PROVEEDOR`) y es miembro ACTIVE o proveedor BOOKED de un
+   * evento publicado. La condición de proveedor es la misma que le da acceso
+   * (`buscarContratacionReservada`): un aviso de un evento en borrador aparece
+   * cuando el evento se publica, y un proveedor nunca ve los avisos de
+   * miembro. El filtro va en la consulta, no en el caso de
    * uso (spec §4.1): quien es revocado deja de ver las notificaciones de ese
    * evento, y el contador de `contarNoLeidasDeUsuario` y `marcarTodasLeidas`
    * aplican la MISMA regla para que la lista, la insignia y el "marcar todas"
@@ -65,8 +69,7 @@ export interface NotificationRepository {
    * usuario y filtrar después, que rompe la paginación (páginas cortas) y deja
    * el contador inflado.
    *
-   * Comportamiento deliberado: la visibilidad es «ACTIVE, o proveedor BOOKED
-   * (con evento publicado) para `event.vendor.booked`» HOY. Si un miembro
+   * Comportamiento deliberado: la visibilidad es la de las tres ramas HOY. Si un miembro
    * revocado es reinvitado y acepta, sus notificaciones antiguas de ese evento
    * (también las no leídas que `marcarTodasLeidas` no tocó mientras eran
    * invisibles) vuelven a verse. Alternativa descartada en esta ronda: filtrar

@@ -13,10 +13,17 @@ import type { ScheduleItemRepository } from './schedule-item.repository'
  * Mientras estuvo cancelada, sus jobs llegaron al worker y se descartaron
  * (`destinoRecordatorio` da null) o siguen esperando en Redis. Aquí se
  * encola UNO por asignación vigente con `startsAt` futuro, con el MISMO jobId
- * determinista (`jobIdDeRecordatorio`): si el job de antes sigue pendiente,
- * BullMQ deduplica y llega un solo aviso; si ya se consumió, éste lo repone.
+ * determinista (`jobIdDeRecordatorio`). Si el job de antes sigue pendiente,
+ * BullMQ ignora el nuevo y el pendiente avisará a su hora, ya con la
+ * contratación vigente. Si ya se consumió, es que llegó su `−15 min`: ese
+ * recordatorio ya no se puede dar a tiempo y `debeProgramarse` lo excluye,
+ * así que no hay nada que reponer. Lo que este paso SÍ aporta es el job de
+ * una hora que cambió mientras la contratación estaba cancelada (nadie lo
+ * encoló entonces porque no era vigente): otra hora, otro jobId.
  * Alternativa descartada: guardar en la base qué jobs se descartaron para
  * reponer sólo ésos; el jobId ya hace ese trabajo sin estado nuevo.
+ * El barrido periódico (`ReconstruirRecordatorios`) cubre lo que esto no
+ * alcance (Redis caído en este momento, una carrera con un cambio de hora).
  *
  * Se llama después del commit del PATCH y NUNCA lanza: un fallo al leer o al
  * encolar se registra. El PATCH ya está guardado y deshacerlo por un aviso

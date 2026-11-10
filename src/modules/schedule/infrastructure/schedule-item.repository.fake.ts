@@ -344,6 +344,29 @@ export class ScheduleItemRepositoryEnMemoria implements ScheduleItemRepository {
     return Promise.resolve(futuras.map((i) => ({ itemId: i.id, startsAt: i.startsAt })))
   }
 
+  asignacionesFuturasVigentes(
+    desde: Date,
+    hasta: Date,
+  ): Promise<{ itemId: string; eventVendorId: string; startsAt: Date }[]> {
+    const filas: { itemId: string; eventVendorId: string; startsAt: Date }[] = []
+    for (const { fila } of this.vigentes(() => true)) {
+      const item = this.itemDe(fila)
+      if (item === undefined || item.status !== 'PENDING') continue
+      if (this.eventos.get(item.eventId)?.status !== 'ACTIVE') continue
+      const t = item.startsAt.getTime()
+      if (t <= desde.getTime() || t > hasta.getTime()) continue
+      filas.push({ itemId: item.id, eventVendorId: fila.eventVendorId, startsAt: item.startsAt })
+    }
+    return Promise.resolve(
+      filas.sort(
+        (a, b) =>
+          a.startsAt.getTime() - b.startsAt.getTime() ||
+          porTexto(a.itemId, b.itemId) ||
+          porTexto(a.eventVendorId, b.eventVendorId),
+      ),
+    )
+  }
+
   /**
    * Asignaciones que cumplen `filtro` y son VIGENTES: contratación `BOOKED` y
    * con ficha. Única copia de la regla en el doble. `fila` es la guardada (no

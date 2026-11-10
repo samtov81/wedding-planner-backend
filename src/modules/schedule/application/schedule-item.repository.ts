@@ -184,6 +184,17 @@ export interface ScheduleItemRepository {
     eventVendorId: string,
     ahora: Date,
   ): Promise<{ itemId: string; startsAt: Date }[]>
+  /**
+   * Asignaciones vigentes de TODOS los eventos `ACTIVE` cuyo ítem sigue
+   * `PENDING` y empieza en `(desde, hasta]`, por hora, ítem y contratación:
+   * lo que el barrido periódico (`ReconstruirRecordatorios`) vuelve a encolar.
+   * Es exactamente lo que el worker aceptaría avisar (`destinoRecordatorio` +
+   * `debeAvisar`), salvo la hora, que se lee aquí y no se compara.
+   */
+  asignacionesFuturasVigentes(
+    desde: Date,
+    hasta: Date,
+  ): Promise<{ itemId: string; eventVendorId: string; startsAt: Date }[]>
 }
 
 export const SCHEDULE_ITEM_REPOSITORY = Symbol('SCHEDULE_ITEM_REPOSITORY')

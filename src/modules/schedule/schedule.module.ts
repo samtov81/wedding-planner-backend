@@ -1,4 +1,4 @@
-import { BullModule } from '@nestjs/bullmq'
+import { BullModule, getQueueToken } from '@nestjs/bullmq'
 import { Module } from '@nestjs/common'
 
 import { AuthModule } from '@/modules/auth/auth.module'
@@ -10,6 +10,7 @@ import {
 } from '@/modules/notifications/application/notification.port'
 import { REALTIME_PORT, type RealtimePort } from '@/modules/notifications/application/realtime.port'
 import { NotificationsModule } from '@/modules/notifications/notifications.module'
+import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
 import { StorageModule } from '@/modules/storage/storage.module'
 import { UsersModule } from '@/modules/users/users.module'
 
@@ -28,12 +29,20 @@ import {
 } from './application/participacion.use-cases'
 import { GENERADOR_PDF } from './application/pdf.port'
 import {
+  COLA_MANTENIMIENTO,
+  ReconstruirRecordatorios,
+} from './application/reconstruir-recordatorios'
+import {
   SCHEDULE_ITEM_REPOSITORY,
   type ScheduleItemRepository,
 } from './application/schedule-item.repository'
 import { UpdateScheduleItemUseCase } from './application/update-schedule-item.use-case'
 import { PdfkitCronograma } from './infrastructure/pdfkit-cronograma'
 import { PrismaScheduleItemRepository } from './infrastructure/prisma-schedule-item.repository'
+import {
+  MantenimientoCronogramaProcessor,
+  type PlanificadorDeJobs,
+} from './interfaces/mantenimiento-cronograma.processor'
 import { ScheduleController } from './interfaces/schedule.controller'
 import { ScheduleProcessor } from './interfaces/schedule.processor'
 import { ScheduleRemindersModule } from './schedule-reminders.module'
@@ -63,6 +72,12 @@ import { ScheduleRemindersModule } from './schedule-reminders.module'
  * hoy ningún proveedor de aquí lo inyecta, porque los casos de uso encolan
  * con `encolarRecordatorios` directamente.
  *
+ * `registerQueue('maintenance')` y `MantenimientoCronogramaProcessor`: el
+ * barrido periódico que reconstruye los recordatorios desde la base
+ * (`ReconstruirRecordatorios`). El worker recibe la `Queue` de BullMQ (por
+ * `getQueueToken`) SÓLO para registrar su planificador al arrancar; los
+ * recordatorios se siguen encolando por `QUEUE_PORT`.
+ *
  * `UNIDAD_DE_TRABAJO` y `QUEUE_PORT` llegan de `DatabaseModule` y
  * `QueueModule`, que son globales: se cablean igual que en `VendorsModule` y
  * `MoodboardModule`, sin declararlos aquí.
@@ -75,7 +90,7 @@ import { ScheduleRemindersModule } from './schedule-reminders.module'
     NotificationsModule,
     StorageModule,
     ScheduleRemindersModule,
-    BullModule.registerQueue({ name: COLA_CRONOGRAMA }),
+    BullModule.registerQueue({ name: COLA_CRONOGRAMA }, { name: COLA_MANTENIMIENTO }),
   ],
   controllers: [ScheduleController],
   providers: [
@@ -105,6 +120,19 @@ import { ScheduleRemindersModule } from './schedule-reminders.module'
         tiempoReal: RealtimePort,
       ) => new ScheduleProcessor(items, notificaciones, tiempoReal),
       inject: [SCHEDULE_ITEM_REPOSITORY, NOTIFICATION_PORT, REALTIME_PORT],
+    },
+    {
+      provide: MantenimientoCronogramaProcessor,
+      useFactory: (
+        items: ScheduleItemRepository,
+        cola: QueuePort,
+        planificador: PlanificadorDeJobs,
+      ) =>
+        new MantenimientoCronogramaProcessor(
+          new ReconstruirRecordatorios(items, cola),
+          planificador,
+        ),
+      inject: [SCHEDULE_ITEM_REPOSITORY, QUEUE_PORT, getQueueToken(COLA_MANTENIMIENTO)],
     },
   ],
 })

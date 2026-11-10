@@ -444,6 +444,49 @@ export class PrismaScheduleItemRepository implements ScheduleItemRepository {
       .map((f) => ({ itemId: f.scheduleItemId, startsAt: f.scheduleItem.startsAt }))
       .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime() || porTexto(a.itemId, b.itemId))
   }
+
+  /**
+   * Un solo SELECT con las mismas condiciones que `destinoRecordatorio`
+   * (`VIGENTE` + evento `ACTIVE`) más ítem `PENDING` y la ventana de hora.
+   * Cruza TODOS los eventos: no hay `@@index` sobre `startsAt` a secas (el de
+   * la tabla es `[eventId, startsAt]`), así que con volumen esto recorre
+   * `schedule_items`; cada 10 minutos y con el tamaño de una agenda de bodas
+   * es asumible. Si deja de serlo, el índice va en una migración aparte. El
+   * orden se fija en memoria, como en `asignacionesFuturas`, para que coincida
+   * con el doble sin depender de la colación de Postgres.
+   */
+  async asignacionesFuturasVigentes(
+    desde: Date,
+    hasta: Date,
+  ): Promise<{ itemId: string; eventVendorId: string; startsAt: Date }[]> {
+    const filas = await clienteDe(this.prisma).scheduleItemVendor.findMany({
+      where: {
+        ...VIGENTE,
+        scheduleItem: {
+          status: 'PENDING',
+          startsAt: { gt: desde, lte: hasta },
+          event: { status: 'ACTIVE' },
+        },
+      },
+      select: {
+        scheduleItemId: true,
+        eventVendorId: true,
+        scheduleItem: { select: { startsAt: true } },
+      },
+    })
+    return filas
+      .map((f) => ({
+        itemId: f.scheduleItemId,
+        eventVendorId: f.eventVendorId,
+        startsAt: f.scheduleItem.startsAt,
+      }))
+      .sort(
+        (a, b) =>
+          a.startsAt.getTime() - b.startsAt.getTime() ||
+          porTexto(a.itemId, b.itemId) ||
+          porTexto(a.eventVendorId, b.eventVendorId),
+      )
+  }
 }
 
 function aNota(fila: FilaDeNota): NotaDeItem {

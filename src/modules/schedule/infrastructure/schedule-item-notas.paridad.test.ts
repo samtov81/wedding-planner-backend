@@ -279,4 +279,88 @@ describe('Paridad: notas y recordatorios del cronograma', () => {
     })
     expect(resultados[1]).toEqual(resultados[0])
   })
+
+  /**
+   * La consulta cruza TODOS los eventos de la base: en Postgres hay filas de
+   * los casos anteriores. La ventana (2091) no la usa ningún otro caso, y el
+   * resultado se traduce a títulos de ESTE mundo, así que un intruso saldría
+   * como `?` y rompería la igualdad.
+   */
+  it('asignacionesFuturasVigentes: ventana (desde, hasta], PENDING, evento ACTIVE y vigente', async () => {
+    const resultados: unknown[] = []
+    await conAmbos(async (m) => {
+      const eventId = await m.evento()
+      const borrador = await m.evento()
+      await m.estadoEvento(borrador, 'DRAFT')
+      const planner = await m.usuario('Planner')
+      const a = await contratado(m, eventId, 'Banda Sol')
+      const b = await contratado(m, eventId, 'Fotos Mar')
+      const cancelada = await contratado(m, eventId, 'Velas Luz')
+      const deBorrador = await contratado(m, borrador, 'Banda Sol')
+      const externa = await m.contratacion({
+        eventId,
+        userId: null,
+        name: 'Externo',
+        status: 'BOOKED',
+      })
+
+      const creados = [
+        // En `desde` exacto: fuera (el intervalo es abierto por abajo).
+        ['EnDesde', eventId, '2091-01-01T10:00:00Z', [a.eventVendorId]],
+        ['Dentro', eventId, '2091-01-01T12:00:00Z', [b.eventVendorId, a.eventVendorId]],
+        // En `hasta` exacto: dentro (cerrado por arriba).
+        ['EnHasta', eventId, '2091-01-03T10:00:00Z', [a.eventVendorId]],
+        ['Despues', eventId, '2091-01-03T10:00:01Z', [a.eventVendorId]],
+        ['Hecho', eventId, '2091-01-01T13:00:00Z', [a.eventVendorId]],
+        ['Cancelada', eventId, '2091-01-01T14:00:00Z', [cancelada.eventVendorId]],
+        ['Borrador', borrador, '2091-01-01T15:00:00Z', [deBorrador.eventVendorId]],
+        ['Externa', eventId, '2091-01-01T16:00:00Z', [externa]],
+      ] as const
+      const titulos = new Map<string, string>()
+      for (const [titulo, evento, hora, asignadas] of creados) {
+        const i = await item(m, evento, titulo, hora)
+        titulos.set(i.id, titulo)
+        await m.repo.fijarAsignaciones(i.id, [...asignadas], planner)
+        if (titulo === 'Hecho') await m.repo.actualizar(evento, i.id, { status: 'DONE' })
+      }
+      await m.cambiarContratacion(cancelada.eventVendorId, 'CANCELLED')
+      const nombres = new Map([
+        [a.eventVendorId, 'A'],
+        [b.eventVendorId, 'B'],
+      ])
+
+      const filas = await m.repo.asignacionesFuturasVigentes(
+        new Date('2091-01-01T10:00:00Z'),
+        new Date('2091-01-03T10:00:00Z'),
+      )
+      // Los ids son aleatorios: el orden se comprueba aquí, contra la regla
+      // (hora, ítem, contratación), y el contenido se compara ya ordenado por nombre.
+      const clave = (f: (typeof filas)[number]) =>
+        `${f.startsAt.toISOString()}|${f.itemId}|${f.eventVendorId}`
+      resultados.push({
+        ordenado: filas.every((f, i) => i === 0 || clave(filas[i - 1] ?? f) < clave(f)),
+        filas: filas
+          .map((f) => ({
+            titulo: titulos.get(f.itemId) ?? '?',
+            contratacion: nombres.get(f.eventVendorId) ?? '?',
+            startsAt: f.startsAt,
+          }))
+          .sort(
+            (x, y) =>
+              x.startsAt.getTime() - y.startsAt.getTime() ||
+              x.contratacion.localeCompare(y.contratacion),
+          ),
+      })
+    })
+    const dentro = new Date('2091-01-01T12:00:00Z')
+    expect(resultados[0]).toEqual({
+      ordenado: true,
+      filas: [
+        { titulo: 'Dentro', contratacion: 'A', startsAt: dentro },
+        { titulo: 'Dentro', contratacion: 'B', startsAt: dentro },
+        { titulo: 'EnHasta', contratacion: 'A', startsAt: new Date('2091-01-03T10:00:00Z') },
+      ],
+    })
+    expect(resultados[1]).toEqual(resultados[0])
+  })
 })

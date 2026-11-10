@@ -19,6 +19,11 @@ import {
   COLA_CRONOGRAMA,
   jobIdDeRecordatorio,
 } from '@/modules/schedule/application/avisos-cronograma'
+import {
+  CADA_BARRIDO_MS,
+  COLA_MANTENIMIENTO,
+  EVENTO_BARRIDO_RECORDATORIOS,
+} from '@/modules/schedule/application/reconstruir-recordatorios'
 import { GENERADOR_PDF } from '@/modules/schedule/application/pdf.port'
 import { ANTELACION_RECORDATORIO_MS } from '@/modules/schedule/domain/participacion'
 import { PdfkitCronograma } from '@/modules/schedule/infrastructure/pdfkit-cronograma'
@@ -806,6 +811,23 @@ describe('cronograma con proveedores e2e', () => {
       expect(recibidos).toHaveLength(1)
       expect(await campana('provB', 'schedule.item.reminder')).toEqual([])
     }, 30_000)
+  })
+
+  describe('barrido periódico de recordatorios', () => {
+    it('al arrancar, la app deja registrado en Redis el barrido cada 10 minutos', async () => {
+      const mantenimiento = new Queue(COLA_MANTENIMIENTO, {
+        connection: { url: redis.getConnectionUrl() },
+      })
+      try {
+        const planificador = await mantenimiento.getJobScheduler(EVENTO_BARRIDO_RECORDATORIOS)
+        expect(planificador).toMatchObject({
+          name: EVENTO_BARRIDO_RECORDATORIOS,
+          every: CADA_BARRIDO_MS,
+        })
+      } finally {
+        await mantenimiento.close()
+      }
+    })
   })
 
   describe('recontratación (Review Focus 3)', () => {

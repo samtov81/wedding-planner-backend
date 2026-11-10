@@ -1,8 +1,9 @@
-import { Inject, Logger } from '@nestjs/common'
+import { Inject, Logger, type OnModuleDestroy } from '@nestjs/common'
 import {
   ConnectedSocket,
   MessageBody,
   type OnGatewayConnection,
+  type OnGatewayDisconnect,
   type OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
@@ -17,9 +18,20 @@ import {
 } from '@/modules/auth/application/autenticar-access-token'
 import { TokenService } from '@/modules/auth/application/token.service'
 import { EventAccessService } from '@/modules/events/application/event-access.service'
+import {
+  EVENT_REPOSITORY,
+  type EventRepository,
+} from '@/modules/events/application/event.repository'
 import { USER_REPOSITORY, type UserRepository } from '@/modules/users/application/user.repository'
 import { UnauthorizedError } from '@/shared/domain'
 
+import {
+  EVENTO_PRESENCIA,
+  LATIDO_MS,
+  PRESENCE_PORT,
+  PRESENCIA_GRACIA_MS,
+  type PresencePort,
+} from '../application/presence.port'
 import {
   NAMESPACE_REALTIME,
   salaDeEvento,
@@ -102,27 +114,70 @@ const NO_EXISTE: RespuestaSala = { ok: false, code: 'NOT_FOUND' }
  * REST, no acceso a datos nuevos: el REST le responde 404 desde ese momento.
  *
  * Audiencias (ver `salas.ts`): COUPLE, PLANNER y ADMIN entran en
- * `event:<id>`; un vendor BOOKED en `event:<id>:vendors`, donde hoy no se
- * emite nada — por REST no ve invitados, y todo lo que se emite a un evento
- * son datos de invitados.
+ * `event:<id>`; un vendor BOOKED en `event:<id>:vendors`. `event:<id>` ya no
+ * lleva sólo datos de invitados (también moodboard y presencia), pero sigue
+ * siendo de quien planifica: lo que un proveedor puede ver le llega por su sala
+ * de usuario o por `event:<id>:vendors`, que lleva la presencia de los miembros.
+ *
+ * Presencia (spec 2026-11-09 §8; mecánica en `PresencePort`): cada socket que
+ * conecta se registra y cada uno que se va se borra; las transiciones se
+ * anuncian con `presence.changed { userId, online }` a las salas de los eventos
+ * en los que participa el usuario (`listarParticipaciones`):
+ *  - un MIEMBRO, a `event:<id>` y a `event:<id>:vendors`;
+ *  - un PROVEEDOR, sólo a `event:<id>`: un proveedor no sabe cuándo está
+ *    conectado otro (spec 2026-11-09 §8).
+ * La salida espera una GRACIA (`PRESENCIA_GRACIA_MS`) antes de confirmar: este
+ * mismo gateway echa cada socket al caducar su token (15 min) y el cliente
+ * vuelve al momento; sin gracia, todos parpadearían offline/online. Un latido
+ * cada `LATIDO_MS` renueva los sockets de ESTE proceso; si el proceso muere,
+ * caducan solos.
+ *
+ * La presencia es un extra: si Redis falla al registrar o anunciar, se registra
+ * el error y la conexión sigue. Alternativa descartada: rechazar el socket; el
+ * canal de tiempo real sirve para mucho más que el punto verde, y perderlo
+ * entero por él sería un mal cambio.
+ *
+ * Cierre: desde `onModuleDestroy` no se toca la presencia. Los sockets que la
+ * app echa al cerrar (un despliegue) se quedan registrados hasta caducar, así
+ * que, si reconectan a otra réplica dentro de 75 s, nadie los ve parpadear.
+ * Además, la conexión de Redis de la presencia ya puede estar cerrada.
  *
  * CORS: lo pone `RedisIoAdapter` con la allowlist del entorno, la misma que el
  * HTTP. Aquí no: el CORS de Socket.IO es del servidor, no de un namespace, y el
  * decorador sólo admite valores fijos.
  */
 @WebSocketGateway({ namespace: NAMESPACE_REALTIME })
-export class NotificationsGateway implements OnGatewayInit, OnGatewayConnection {
+export class NotificationsGateway
+  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect, OnModuleDestroy
+{
   @WebSocketServer() readonly server!: Namespace
 
   private readonly registro = new Logger(NotificationsGateway.name)
+
+  /**
+   * El registro de presencia de cada socket conectado (se quita al irse).
+   * `handleDisconnect` lo espera antes de borrar: si un socket se va mientras
+   * `conectar` sigue en Redis, el `ZREM` llegaría antes que el `ZADD` y
+   * dejaría un fantasma. Nunca rechaza (`registrarConexion` captura).
+   */
+  private readonly registrosEnVuelo = new Map<string, Promise<void>>()
+  private readonly gracias = new Set<NodeJS.Timeout>()
+  private latido: NodeJS.Timeout | undefined
+  private cerrando = false
 
   constructor(
     private readonly tokens: TokenService,
     @Inject(USER_REPOSITORY) private readonly usuarios: UserRepository,
     private readonly accesoAEventos: EventAccessService,
+    @Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository,
+    @Inject(PRESENCE_PORT) private readonly presencia: PresencePort,
+    @Inject(PRESENCIA_GRACIA_MS) private readonly graciaMs: number,
   ) {}
 
   afterInit(namespace: Namespace): void {
+    // `unref`: el latido no mantiene vivo un proceso que ya no tiene otra cosa que hacer.
+    this.latido = setInterval(() => void this.latir(namespace), LATIDO_MS).unref()
+
     namespace.use((socket, next) => {
       this.autenticar(socket as SocketRealtime).then(
         () => next(),
@@ -140,7 +195,27 @@ export class NotificationsGateway implements OnGatewayInit, OnGatewayConnection 
   }
 
   async handleConnection(socket: SocketRealtime): Promise<void> {
+    // El registro arranca ANTES del `join` para que `handleDisconnect` lo
+    // encuentre aunque el socket se vaya mientras se une a su sala.
+    const registro = this.registrarConexion(socket.data.userId, socket.id)
+    this.registrosEnVuelo.set(socket.id, registro)
     await socket.join(salaDeUsuario(socket.data.userId))
+    await registro
+  }
+
+  handleDisconnect(socket: SocketRealtime): void {
+    const registro = this.registrosEnVuelo.get(socket.id)
+    this.registrosEnVuelo.delete(socket.id)
+    // Un socket que el middleware rechazó no tiene usuario ni registro.
+    if (this.cerrando || registro === undefined) return
+    void this.registrarSalida(socket.data.userId, socket.id, registro)
+  }
+
+  onModuleDestroy(): void {
+    this.cerrando = true
+    clearInterval(this.latido)
+    for (const temporizador of this.gracias) clearTimeout(temporizador)
+    this.gracias.clear()
   }
 
   @SubscribeMessage('join')
@@ -174,6 +249,85 @@ export class NotificationsGateway implements OnGatewayInit, OnGatewayConnection 
     await socket.leave(salaDeEvento(leido.data.eventId))
     await socket.leave(salaDeVendorsDeEvento(leido.data.eventId))
     return { ok: true }
+  }
+
+  /** Registra el socket y, si el usuario no estaba anunciado, anuncia online. Nunca rechaza. */
+  private async registrarConexion(userId: string, socketId: string): Promise<void> {
+    try {
+      if (await this.presencia.conectar(userId, socketId, new Date())) {
+        await this.anunciar(userId, true)
+      }
+    } catch (error) {
+      this.registrarFallo(`Fallo al registrar la presencia userId=${userId}`, error)
+    }
+  }
+
+  /**
+   * Borra el socket y programa la confirmación tras la gracia. Se programa
+   * aunque el borrado falle: el socket caducará solo, y `confirmarSalida` lo
+   * verá vivo y no anunciará nada falso.
+   */
+  private async registrarSalida(
+    userId: string,
+    socketId: string,
+    registro: Promise<void>,
+  ): Promise<void> {
+    try {
+      await registro
+      await this.presencia.desconectar(userId, socketId)
+    } catch (error) {
+      this.registrarFallo(`Fallo al borrar la presencia userId=${userId}`, error)
+    }
+    if (this.cerrando) return
+    const temporizador = setTimeout(() => {
+      this.gracias.delete(temporizador)
+      void this.confirmarSalida(userId)
+    }, this.graciaMs)
+    this.gracias.add(temporizador)
+  }
+
+  private async confirmarSalida(userId: string): Promise<void> {
+    try {
+      if (await this.presencia.confirmarSalida(userId, new Date())) {
+        await this.anunciar(userId, false)
+      }
+    } catch (error) {
+      this.registrarFallo(`Fallo al confirmar la salida userId=${userId}`, error)
+    }
+  }
+
+  /**
+   * UNA emisión a todas las salas: Socket.IO entrega una sola vez a cada
+   * socket aunque esté en varias. Por `this.server`, que pasa por el adapter de
+   * Redis y llega a los sockets de todas las réplicas. Sin participaciones no
+   * se emite: `to([])` sería un broadcast a TODO el namespace.
+   */
+  private async anunciar(userId: string, online: boolean): Promise<void> {
+    const participaciones = await this.eventos.listarParticipaciones(userId)
+    if (participaciones.length === 0) return
+    const salas = participaciones.flatMap(({ eventId, comoProveedor }) =>
+      comoProveedor
+        ? [salaDeEvento(eventId)]
+        : [salaDeEvento(eventId), salaDeVendorsDeEvento(eventId)],
+    )
+    this.server.to(salas).emit(EVENTO_PRESENCIA, { userId, online })
+  }
+
+  /** Renueva los sockets que tiene ESTE proceso; los de otras réplicas los renuevan ellas. */
+  private async latir(namespace: Namespace): Promise<void> {
+    const sockets = [...namespace.sockets.values()].map((socket) => ({
+      userId: (socket as SocketRealtime).data.userId,
+      socketId: socket.id,
+    }))
+    try {
+      await this.presencia.renovar(sockets, new Date())
+    } catch (error) {
+      this.registrarFallo('Fallo al renovar la presencia', error)
+    }
+  }
+
+  private registrarFallo(mensaje: string, error: unknown): void {
+    this.registro.error(mensaje, error instanceof Error ? error.stack : String(error))
   }
 
   private async autenticar(socket: SocketRealtime): Promise<void> {

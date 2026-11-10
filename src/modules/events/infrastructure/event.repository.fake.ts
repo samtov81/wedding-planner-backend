@@ -13,6 +13,7 @@ import type {
   MembresiaGestionable,
   MembresiaPersistida,
   MiembroPersistido,
+  Participacion,
 } from '../application/event.repository'
 import {
   DIAS_DE_CIERRE_POR_DEFECTO,
@@ -415,6 +416,31 @@ export class EventRepositoryEnMemoria implements EventRepository {
           }
         }),
       ),
+    )
+  }
+
+  /** Mismas dos fuentes que `listarAccesiblesPor`; aquí sólo el id y cómo participa. */
+  listarParticipaciones(userId: string): Promise<Participacion[]> {
+    const porEvento = new Map<string, boolean>()
+    const perfil = this.perfiles.find((p) => p.userId === userId)
+    for (const v of this.eventVendors) {
+      if (
+        perfil !== undefined &&
+        v.vendorProfileId === perfil.id &&
+        v.status === CONTRATACION_CON_ACCESO &&
+        this.estaActivo(v.eventId)
+      ) {
+        porEvento.set(v.eventId, true)
+      }
+    }
+    // Después: si también es miembro, gana `false`.
+    for (const m of this.membresias) {
+      if (m.userId === userId && m.status === MEMBRESIA_CON_ACCESO) porEvento.set(m.eventId, false)
+    }
+    return Promise.resolve(
+      [...porEvento]
+        .map(([eventId, comoProveedor]) => ({ eventId, comoProveedor }))
+        .sort((a, b) => (a.eventId < b.eventId ? -1 : a.eventId > b.eventId ? 1 : 0)),
     )
   }
 

@@ -13,6 +13,7 @@ import { GuestsModule } from '@/modules/guests/guests.module'
 import { HealthModule } from '@/modules/health/health.module'
 import { MailModule } from '@/modules/mail/mail.module'
 import { MessagingModule } from '@/modules/messaging/messaging.module'
+import { MoodboardModule } from '@/modules/moodboard/moodboard.module'
 import { NotificationsModule } from '@/modules/notifications/notifications.module'
 import { QueueModule } from '@/modules/queue/queue.module'
 import { ScheduleModule } from '@/modules/schedule/schedule.module'
@@ -63,6 +64,7 @@ import { RegistroModule } from '@/shared/logging/registro.module'
     GuestsModule,
     NotificationsModule,
     MessagingModule,
+    MoodboardModule,
     HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

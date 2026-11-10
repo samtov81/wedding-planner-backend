@@ -16,3 +16,9 @@ export interface RealtimePort {
 }
 
 export const REALTIME_PORT = Symbol('REALTIME_PORT')
+
+/**
+ * Se re-exporta el nombre del evento de socket para que otros módulos no
+ * importen `notifications/domain`.
+ */
+export { NOTIFICACION_CREADA } from '../domain/notification'

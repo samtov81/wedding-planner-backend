@@ -5,7 +5,11 @@ import { PrismaService } from '@/modules/database/prisma.service'
 import { clienteDe } from '@/modules/database/transaccion'
 import { encodeCursor, type CursorPage } from '@/shared/domain'
 
-import { TIPO_PROVEEDOR_CONTRATADO, type NotificationPort } from '../application/notification.port'
+import {
+  TIPO_PROVEEDOR_CONTRATADO,
+  TIPOS_MOODBOARD,
+  type NotificationPort,
+} from '../application/notification.port'
 import type {
   NotificationRepository,
   OpcionesListado,
@@ -38,7 +42,10 @@ const MIEMBRO_ACTIVO = { status: 'ACTIVE' } satisfies Prisma.EventMembershipWher
  * `buscarContratacionReservada` concede acceso a un proveedor: visibilidad y
  * acceso no pueden discrepar. La rama de proveedor va filtrada por tipo: un
  * miembro revocado que luego es contratado no recupera sus avisos de miembro,
- * que llevan a páginas que el proveedor no puede abrir. Un aviso de un evento
+ * que llevan a páginas que el proveedor no puede abrir. Los tipos de moodboard
+ * (`TIPOS_MOODBOARD`) son la tercera rama: miembro ACTIVE o proveedor BOOKED
+ * (evento publicado), porque su destinatario puede ser un proveedor y el
+ * moodboard es una pantalla que ambos abren (spec 2026-11-09 §7). Un aviso de un evento
  * en borrador aparece cuando éste se publica. Un usuario que es las dos cosas
  * ve cada fila una sola vez: el `OR` está sobre la notificación, no es un join. Una
  * contratación cancelada (o sólo preseleccionada) retira la visibilidad igual
@@ -62,6 +69,21 @@ const visiblesDe = (userId: string): Prisma.NotificationWhereInput => ({
       event: {
         status: 'ACTIVE',
         vendors: { some: { status: 'BOOKED', vendorProfile: { userId } } },
+      },
+    },
+    {
+      // Avisos de moodboard: miembro ACTIVE (ya cubierto arriba) o proveedor
+      // BOOKED del evento publicado. Sólo estos tipos: un proveedor sigue sin
+      // ver los avisos de miembro. La foto concreta la re-comprueba el REST.
+      type: { in: [...TIPOS_MOODBOARD] },
+      event: {
+        OR: [
+          { memberships: { some: { userId, ...MIEMBRO_ACTIVO } } },
+          {
+            status: 'ACTIVE',
+            vendors: { some: { status: 'BOOKED', vendorProfile: { userId } } },
+          },
+        ],
       },
     },
   ],
@@ -115,6 +137,26 @@ export class PrismaNotificationRepository implements NotificationPort, Notificat
 
     await cliente.notification.create({
       data: { eventId, userId: evento.ownerId, type: tipo, payload: json },
+    })
+  }
+
+  /**
+   * Una fila por `userId` distinto, por `clienteDe(this.prisma)` (misma razón
+   * que `crearParaMiembros`: se llama dentro de la unidad de trabajo). No valida
+   * membresía: el llamador ya calculó los destinatarios. `[]` no toca la base.
+   */
+  async crearParaUsuarios(
+    eventId: string,
+    userIds: readonly string[],
+    tipo: string,
+    payload: unknown,
+  ): Promise<void> {
+    const json = comoJson(payload)
+    const distintos = [...new Set(userIds)]
+    if (distintos.length === 0) return
+
+    await clienteDe(this.prisma).notification.createMany({
+      data: distintos.map((userId) => ({ eventId, userId, type: tipo, payload: json })),
     })
   }
 

@@ -128,6 +128,30 @@ It is the only record of who was in the room when (memberships keep no history: 
 
 Enforced by the use cases, not by the database: that the recipients are exactly the ACTIVE members at send time and never the sender or a vendor.
 
+### `moodboard_images`
+
+A photo on an event's inspiration board. Belongs to an `Event` (`onDelete: Cascade`) and to a `VendorCategory` (`onDelete: Restrict` — a category with photos cannot be deleted). `uploadedById` and `archivedById` point to `users` (`onDelete: Restrict`). `storageKey` is unique and holds the object key in R2, never a URL. `width`/`height` are measured by the client before uploading and only reserve the masonry box: they are not a security boundary. Nothing is deleted through the API: a photo is archived (`archivedAt` + `archivedById`). Indexed by `(eventId, createdAt)`.
+
+CHECK constraints:
+- `moodboard_images_titulo` — `title`, trimmed, is 1 to 120 characters.
+- `moodboard_images_dimensiones` — `width` and `height` are each between 1 and 20000.
+- `moodboard_images_archivado_coherente` — `archivedAt` and `archivedById` are both null or both set.
+
+Enforced by the use cases, not by the database: the cap of **500 photos per event** (active + archived, since nothing is deleted), checked inside the transaction after locking the event row with `SELECT … FOR UPDATE`, like the tables cap; and that `categoryId` is an active category.
+
+### `moodboard_shares`
+
+Shares a photo with one hiring (`EventVendor`). Belongs to a `MoodboardImage` (`onDelete: Cascade`) and an `EventVendor` (`onDelete: Cascade` — a share belongs to the hiring, so removing the hiring removes its shares; notes hang off the photo, not the share, and survive); `sharedById` points to `users` (`onDelete: Restrict`). UNIQUE `(imageId, eventVendorId)`: sharing again revives the row (`revokedAt = null`) instead of duplicating it, and unsharing sets `revokedAt`, so the history is kept. Indexed by `eventVendorId`.
+
+Enforced by the use cases, not by the database: the `EventVendor` belongs to the same event as the image, is `BOOKED` and has a `vendorProfileId`; and a vendor hired twice in the same event sees the photos shared with either hiring.
+
+### `moodboard_notes`
+
+A note on a photo. Belongs to a `MoodboardImage` (`onDelete: Cascade`); `authorId` points to `users` (`onDelete: Restrict`). No `updatedAt`: notes are never edited or deleted. Indexed by `(imageId, createdAt)`.
+
+CHECK constraints:
+- `moodboard_notes_cuerpo` — `body`, trimmed, is 1 to 2000 characters (same cap as chat messages).
+
 ## Development Workflow
 
 ### Creating a New Migration

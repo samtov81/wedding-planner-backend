@@ -19,6 +19,15 @@
  *    sería un aviso que lleva a un 403. Mismo contrato de transacción que
  *    `crearParaMiembros`.
  *  - `payload` se guarda como JSON: sólo valores serializables.
+ *  - `crearParaUsuarios` crea UNA fila por cada `userId` de la lista, sin
+ *    duplicados, y nada si la lista está vacía. NO valida membresía ni
+ *    contratación: el llamador (moodboard) ya calculó los destinatarios según
+ *    quién puede ver la foto en ese momento, y repetir aquí esa regla la
+ *    duplicaría en dos módulos. Quién LEE la fila lo decide `visiblesDe` en el
+ *    adaptador. Mismo contrato de transacción que `crearParaMiembros`
+ *    (`clienteDe(prisma)`). Alternativa descartada: filtrar por membresía
+ *    ACTIVE dentro del método, que dejaría fuera a los proveedores (spec
+ *    2026-11-09 §7).
  *  - `avisarAProveedor` crea (o reaviva) el `event.vendor.booked` de UN
  *    proveedor contratado. Ver su docblock: es el único aviso cuyo destinatario
  *    no es miembro del evento.
@@ -26,6 +35,12 @@
 export interface NotificationPort {
   crearParaMiembros(eventId: string, tipo: string, payload: unknown): Promise<void>
   crearParaDueno(eventId: string, tipo: string, payload: unknown): Promise<void>
+  crearParaUsuarios(
+    eventId: string,
+    userIds: readonly string[],
+    tipo: string,
+    payload: unknown,
+  ): Promise<void>
 
   /**
    * Crea `event.vendor.booked` para `userId` (el usuario de la ficha del
@@ -62,5 +77,24 @@ export interface NotificationPort {
  * `domain/`. Payload: `{ eventVendorId: string }`.
  */
 export const TIPO_PROVEEDOR_CONTRATADO = 'event.vendor.booked'
+
+/**
+ * Tipos de campana del moodboard (spec 2026-11-09 §7). Viven junto al puerto por
+ * la misma razón que `TIPO_PROVEEDOR_CONTRATADO`. `visiblesDe` deja verlos a
+ * miembros ACTIVE y a proveedores BOOKED del evento publicado; la visibilidad de
+ * la foto concreta la vuelve a comprobar el REST al abrirla.
+ */
+export const TIPO_MOODBOARD_IMAGEN_COMPARTIDA = 'moodboard.image.shared'
+export const TIPO_MOODBOARD_NOTA_ANADIDA = 'moodboard.note.added'
+/**
+ * Se construye con las dos constantes de arriba, que son las que importa el
+ * moodboard para crear y anunciar cada campana: renombrar un tipo aquí lo
+ * renombra en los dos lados, y `visiblesDe` no puede quedarse filtrando por un
+ * literal que ya nadie escribe.
+ */
+export const TIPOS_MOODBOARD = [
+  TIPO_MOODBOARD_IMAGEN_COMPARTIDA,
+  TIPO_MOODBOARD_NOTA_ANADIDA,
+] as const
 
 export const NOTIFICATION_PORT = Symbol('NOTIFICATION_PORT')

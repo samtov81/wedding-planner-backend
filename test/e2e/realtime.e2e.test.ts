@@ -3,7 +3,7 @@ import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
 import type { INestApplication } from '@nestjs/common'
-import { NestFactory } from '@nestjs/core'
+import { Test } from '@nestjs/testing'
 import { PrismaClient } from '@prisma/client'
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis'
 import cookieParser from 'cookie-parser'
@@ -19,6 +19,7 @@ import {
   NOTIFICATION_PORT,
   type NotificationPort,
 } from '@/modules/notifications/application/notification.port'
+import { PRESENCIA_GRACIA_MS } from '@/modules/notifications/application/presence.port'
 import { RedisIoAdapter } from '@/modules/notifications/infrastructure/redis-io.adapter'
 import { DomainExceptionFilter } from '@/shared/http/domain-exception.filter'
 
@@ -27,6 +28,12 @@ import { startPostgres, type PostgresDeTest } from '../support/containers'
 
 const SECRETO_WEBHOOK = `whsec_${Buffer.from('secreto-e2e-del-webhook-32-bytes').toString('base64')}`
 const SECRETO_JWT = 'x'.repeat(32)
+
+/**
+ * Gracia de presencia acortada (token `PRESENCIA_GRACIA_MS`): con los 20 s
+ * reales, el caso de `online: false` duraría 20 s. Todo lo demás es real.
+ */
+const GRACIA_E2E_MS = 300
 
 interface Participante {
   id: string
@@ -57,9 +64,17 @@ describe('Tiempo real e2e', () => {
   let extraño: Participante
   const abiertos: SocketCliente[] = []
 
-  /** Una instancia de la API como la arranca `main.ts`, escuchando en un puerto libre. */
+  /**
+   * Una instancia de la API como la arranca `main.ts`, escuchando en un puerto
+   * libre. Por `Test.createTestingModule` sólo para acortar la gracia de la
+   * presencia; el resto del grafo es el de `AppModule`, sin dobles.
+   */
   async function arrancarInstancia(): Promise<{ app: INestApplication; url: string }> {
-    const nueva = await NestFactory.create(AppModule, { logger: false, rawBody: true })
+    const modulo = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(PRESENCIA_GRACIA_MS)
+      .useValue(GRACIA_E2E_MS)
+      .compile()
+    const nueva = modulo.createNestApplication({ logger: false, rawBody: true })
     nueva.use(cookieParser())
     nueva.useGlobalFilters(new DomainExceptionFilter())
     const sockets = new RedisIoAdapter(nueva)
@@ -117,10 +132,17 @@ describe('Tiempo real e2e', () => {
     })
   }
 
-  /** Registra TODO lo que un socket recibe, para afirmar lo que NO le llegó. */
+  /**
+   * Registra TODO lo que un socket recibe, para afirmar lo que NO le llegó.
+   * Salvo la presencia: es legítimo que un vendor la oiga (spec 2026-11-09 §8)
+   * y, con las salidas de otros casos llegando tras su gracia, no es
+   * determinista. La presencia tiene sus propios casos abajo.
+   */
   function grabar(socket: SocketCliente): Array<[string, unknown]> {
     const recibidos: Array<[string, unknown]> = []
-    socket.onAny((evento: string, datos: unknown) => recibidos.push([evento, datos]))
+    socket.onAny((evento: string, datos: unknown) => {
+      if (evento !== 'presence.changed') recibidos.push([evento, datos])
+    })
     return recibidos
   }
 
@@ -481,5 +503,116 @@ describe('Tiempo real e2e', () => {
       { timeout: 10_000 },
     )
     expect(recibidosExtraño).toEqual([])
+  })
+
+  describe('presencia', () => {
+    interface Presencia {
+      userId: string
+      online: boolean
+    }
+
+    /**
+     * Usuarios NUEVOS en cada caso: la salida de un usuario de otro caso llega
+     * tras su gracia y podría cruzarse con lo que este caso escucha.
+     */
+    async function miembroNuevo(): Promise<Participante> {
+      const nuevo = await participante(`miembro-${randomUUID()}@test.com`)
+      await prisma.eventMembership.create({
+        data: { eventId, userId: nuevo.id, role: 'PLANNER' },
+      })
+      return nuevo
+    }
+
+    async function proveedorNuevo(): Promise<Participante> {
+      const nuevo = await participante(`proveedor-${randomUUID()}@test.com`)
+      const categoria = await categoriaId(prisma, 'catering')
+      const perfil = await prisma.vendorProfile.create({
+        data: { userId: nuevo.id, businessName: 'Otro catering', categoryId: categoria },
+      })
+      await prisma.eventVendor.create({
+        data: { eventId, vendorProfileId: perfil.id, categoryId: categoria, status: 'BOOKED' },
+      })
+      return nuevo
+    }
+
+    /** Lo que `socket` oye de la presencia de `userId`, desde ya. */
+    function oirPresenciaDe(socket: SocketCliente, userId: string): Presencia[] {
+      const oidas: Presencia[] = []
+      socket.on('presence.changed', (p: Presencia) => {
+        if (p.userId === userId) oidas.push(p)
+      })
+      return oidas
+    }
+
+    async function observador(quien: Participante, url = urlA): Promise<SocketCliente> {
+      const socket = await conectarComo(quien, url)
+      expect(await unirse(socket)).toEqual({ ok: true })
+      return socket
+    }
+
+    it('el proveedor en su sala oye a la pareja conectarse, aunque esté en OTRA instancia', async () => {
+      const proveedor = await proveedorNuevo()
+      const deLaPareja = await miembroNuevo()
+      const oidas = oirPresenciaDe(await observador(proveedor, urlB), deLaPareja.id)
+
+      await conectarComo(deLaPareja)
+
+      await vi.waitFor(() => expect(oidas).toEqual([{ userId: deLaPareja.id, online: true }]), {
+        timeout: 10_000,
+      })
+    })
+
+    it('la pareja en su sala oye al proveedor conectarse; otro proveedor no', async () => {
+      const deLaPareja = await miembroNuevo()
+      const proveedor = await proveedorNuevo()
+      const otroProveedor = await proveedorNuevo()
+      const oidasPorLaPareja = oirPresenciaDe(await observador(deLaPareja), proveedor.id)
+      const oidasPorOtro = oirPresenciaDe(await observador(otroProveedor), proveedor.id)
+
+      await conectarComo(proveedor)
+
+      await vi.waitFor(
+        () => expect(oidasPorLaPareja).toEqual([{ userId: proveedor.id, online: true }]),
+        { timeout: 10_000 },
+      )
+      // Espera acotada: lo que no tiene que llegar, no llega en 1,5 s.
+      await new Promise((r) => setTimeout(r, 1_500))
+      expect(oidasPorOtro).toEqual([])
+    })
+
+    it('al desconectarse, tras la gracia, la sala oye online: false', async () => {
+      const deLaPareja = await miembroNuevo()
+      const quienSeVa = await miembroNuevo()
+      const oidas = oirPresenciaDe(await observador(deLaPareja), quienSeVa.id)
+      const socket = await conectarComo(quienSeVa)
+      await vi.waitFor(() => expect(oidas).toHaveLength(1), { timeout: 10_000 })
+
+      socket.disconnect()
+
+      await vi.waitFor(
+        () =>
+          expect(oidas).toEqual([
+            { userId: quienSeVa.id, online: true },
+            { userId: quienSeVa.id, online: false },
+          ]),
+        { timeout: 10_000 },
+      )
+    })
+
+    it('reconectar dentro de la gracia no anuncia nada', async () => {
+      // Review Focus 4: el gateway echa el socket al caducar el token y el
+      // cliente vuelve con uno nuevo; la sala no debe ver el parpadeo.
+      const deLaPareja = await miembroNuevo()
+      const quienVuelve = await miembroNuevo()
+      const oidas = oirPresenciaDe(await observador(deLaPareja), quienVuelve.id)
+      const primero = await conectarComo(quienVuelve)
+      await vi.waitFor(() => expect(oidas).toHaveLength(1), { timeout: 10_000 })
+
+      primero.disconnect()
+      await conectarComo(quienVuelve, urlB)
+      await new Promise((r) => setTimeout(r, GRACIA_E2E_MS * 4))
+
+      expect(oidas).toEqual([{ userId: quienVuelve.id, online: true }])
+    })
   })
 })

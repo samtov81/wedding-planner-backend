@@ -27,8 +27,8 @@ import { Throttle, type ThrottlerOptions } from '@nestjs/throttler'
  * ajeno.
  *
  * Los límites de abajo que dicen "por IP" (`vendor-catalog`, `invite`,
- * `messages`) cuentan así por el DESIGN-GAP de que este guard corre antes que
- * `JwtAuthGuard`. Para contar por usuario existe `limite-por-usuario.ts`
+ * `messages`, `moodboard-notes`) cuentan así por el DESIGN-GAP de que este
+ * guard corre antes que `JwtAuthGuard`. Para contar por usuario existe `limite-por-usuario.ts`
  * (`@LimitePorUsuario`, usado por `contact-requests`); migrarlos es cosa aparte.
  */
 export const LIMITADOR_GLOBAL = 'global'
@@ -44,6 +44,7 @@ export const LIMITADOR_VENDOR_CATALOG = 'vendor-catalog'
 export const LIMITADOR_VENDOR_PROFILE = 'vendor-profile'
 export const LIMITADOR_INVITE = 'invite'
 export const LIMITADOR_MESSAGES = 'messages'
+export const LIMITADOR_MOODBOARD_NOTES = 'moodboard-notes'
 
 type LimitadorDeRuta =
   | typeof LIMITADOR_RSVP
@@ -58,6 +59,7 @@ type LimitadorDeRuta =
   | typeof LIMITADOR_VENDOR_PROFILE
   | typeof LIMITADOR_INVITE
   | typeof LIMITADOR_MESSAGES
+  | typeof LIMITADOR_MOODBOARD_NOTES
 
 const reflector = new Reflector()
 const marca = (nombre: LimitadorDeRuta): string => `limitador-de-ruta:${nombre}`
@@ -179,6 +181,15 @@ export function crearLimitadores(limiteGlobalPorMinuto: number): ThrottlerOption
       ttl: 60_000,
       limit: 30,
       skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_MESSAGES),
+    },
+    // Escribir una nota del moodboard: 30/min por IP. Cada nota crea campanas
+    // para todos los participantes de la foto. Por IP por el mismo DESIGN-GAP
+    // que `vendor-catalog` (el guard cuenta antes de que exista `req.user`).
+    {
+      name: LIMITADOR_MOODBOARD_NOTES,
+      ttl: 60_000,
+      limit: 30,
+      skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_MOODBOARD_NOTES),
     },
   ]
 }

@@ -15,8 +15,10 @@ import { MarkAllReadUseCase } from './application/mark-all-read.use-case'
 import { MarkReadUseCase } from './application/mark-read.use-case'
 import { NOTIFICATION_PORT } from './application/notification.port'
 import { NOTIFICATION_REPOSITORY } from './application/notification.repository'
+import { GRACIA_MS, PRESENCE_PORT, PRESENCIA_GRACIA_MS } from './application/presence.port'
 import { REALTIME_PORT } from './application/realtime.port'
 import { PrismaNotificationRepository } from './infrastructure/prisma-notification.repository'
+import { RedisPresenceAdapter } from './infrastructure/redis-presence.adapter'
 import { SocketIoRealtimeAdapter } from './infrastructure/socketio-realtime.adapter'
 import { COLA_NOTIFICACIONES, NotificationProcessor } from './interfaces/notification.processor'
 import { MyNotificationsController } from './interfaces/my-notifications.controller'
@@ -32,6 +34,11 @@ import { NotificationsGateway } from './interfaces/notifications.gateway'
  *    que `NOTIFICATION_REPOSITORY` (`useExisting`): crear y leer son dos
  *    puertos de un único adaptador.
  *  - `REALTIME_PORT` → `SocketIoRealtimeAdapter` (Redis emitter).
+ *  - `PRESENCE_PORT` → `RedisPresenceAdapter`, con su propia conexión (spec
+ *    2026-11-09 §8). Se EXPORTA para que otros módulos (el moodboard) pregunten
+ *    `enLinea` por el puerto, sin tocar este `infrastructure/`. Nest llama a su
+ *    `onModuleDestroy`, que cierra la conexión.
+ *  - `PRESENCIA_GRACIA_MS` → `GRACIA_MS`; sólo un e2e lo sobrescribe.
  *
  * `AuthModule` + `UsersModule` + `EventsModule` se IMPORTAN para que el gateway
  * y el controlador autoricen con el mismo `TokenService`, `USER_REPOSITORY`,
@@ -61,6 +68,14 @@ import { NotificationsGateway } from './interfaces/notifications.gateway'
       useFactory: (env: Env) => new SocketIoRealtimeAdapter(env.REDIS_URL),
       inject: [ENV],
     },
+    {
+      provide: PRESENCE_PORT,
+      // La gracia del gateway alarga la vida de la marca de anunciado: la marca
+      // tiene que sobrevivir al último socket mientras la gracia corre.
+      useFactory: (env: Env, graciaMs: number) => new RedisPresenceAdapter(env.REDIS_URL, graciaMs),
+      inject: [ENV, PRESENCIA_GRACIA_MS],
+    },
+    { provide: PRESENCIA_GRACIA_MS, useValue: GRACIA_MS },
     ListNotificationsUseCase,
     MarkReadUseCase,
     ListMyNotificationsUseCase,
@@ -69,6 +84,6 @@ import { NotificationsGateway } from './interfaces/notifications.gateway'
     NotificationProcessor,
     NotificationsGateway,
   ],
-  exports: [NOTIFICATION_PORT, REALTIME_PORT],
+  exports: [NOTIFICATION_PORT, REALTIME_PORT, PRESENCE_PORT],
 })
 export class NotificationsModule {}

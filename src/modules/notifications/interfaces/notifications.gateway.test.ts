@@ -12,12 +12,17 @@ import { EventRepositoryEnMemoria } from '@/modules/events/infrastructure/event.
 import { USER_REPOSITORY } from '@/modules/users/application/user.repository'
 import { UserRepositoryEnMemoria } from '@/modules/users/infrastructure/user.repository.fake'
 
+import { PRESENCE_PORT, PRESENCIA_GRACIA_MS } from '../application/presence.port'
 import { salaDeEvento, salaDeUsuario, salaDeVendorsDeEvento } from '../application/salas'
+import { PresenceEnMemoria } from '../infrastructure/presence.fake'
 import { NotificationsGateway } from './notifications.gateway'
 
 type RespuestaJoin = { ok: true } | { ok: false; code: string }
 
 const SECRETO = 'x'.repeat(32)
+
+/** Gracia corta: los tests de presencia esperan la salida de verdad, con sockets reales. */
+const GRACIA_DE_TEST_MS = 150
 
 function usuario(id: string, systemRole: 'USER' | 'ADMIN' = 'USER') {
   return {
@@ -60,9 +65,17 @@ describe('NotificationsGateway', () => {
   const vendorId = randomUUID()
   const exPlannerId = randomUUID()
   const adminId = randomUUID()
+  // Presencia: un evento propio y un usuario NUEVO por caso, para que la
+  // salida (con su gracia) de un caso no se cruce con el siguiente.
+  const eventoPresenciaId = randomUUID()
+  const observadorMiembroId = randomUUID()
+  const observadorVendorId = randomUUID()
+  const otroVendorId = randomUUID()
+  const miembrosPresencia = Array.from({ length: 4 }, () => randomUUID())
 
   let usuarios: UserRepositoryEnMemoria
   let eventos: EventRepositoryEnMemoria
+  let presencia: PresenceEnMemoria
   let app: INestApplication
   let gateway: NotificationsGateway
   let url: string
@@ -75,8 +88,13 @@ describe('NotificationsGateway', () => {
       usuario(vendorId),
       usuario(exPlannerId),
       usuario(adminId, 'ADMIN'),
+      usuario(observadorMiembroId),
+      usuario(observadorVendorId),
+      usuario(otroVendorId),
+      ...miembrosPresencia.map((id) => usuario(id)),
     ])
     eventos = new EventRepositoryEnMemoria()
+    presencia = new PresenceEnMemoria()
     eventos.eventos.push({ id: eventId, ownerId: parejaId })
     eventos.membresias.push(
       { eventId, userId: parejaId, role: 'COUPLE', status: 'ACTIVE' },
@@ -89,6 +107,24 @@ describe('NotificationsGateway', () => {
       vendorProfileId: 'perfil-vendor',
       status: 'BOOKED',
     })
+    eventos.eventos.push({ id: eventoPresenciaId, ownerId: observadorMiembroId })
+    for (const userId of [observadorMiembroId, ...miembrosPresencia]) {
+      eventos.membresias.push({
+        eventId: eventoPresenciaId,
+        userId,
+        role: 'PLANNER',
+        status: 'ACTIVE',
+      })
+    }
+    for (const userId of [observadorVendorId, otroVendorId]) {
+      eventos.perfiles.push({ id: `perfil-${userId}`, userId })
+      eventos.eventVendors.push({
+        id: randomUUID(),
+        eventId: eventoPresenciaId,
+        vendorProfileId: `perfil-${userId}`,
+        status: 'BOOKED',
+      })
+    }
 
     const modulo = await Test.createTestingModule({
       providers: [
@@ -97,6 +133,8 @@ describe('NotificationsGateway', () => {
         { provide: TokenService, useValue: tokens },
         { provide: USER_REPOSITORY, useValue: usuarios },
         { provide: EVENT_REPOSITORY, useValue: eventos },
+        { provide: PRESENCE_PORT, useValue: presencia },
+        { provide: PRESENCIA_GRACIA_MS, useValue: GRACIA_DE_TEST_MS },
       ],
     }).compile()
     app = modulo.createNestApplication({ logger: false })
@@ -337,6 +375,105 @@ describe('NotificationsGateway', () => {
 
       expect(salasDe(socket)).not.toContain(salaDeEvento(eventId))
       expect(salasDe(socket)).toContain(salaDeUsuario(parejaId))
+    })
+  })
+
+  describe('presencia', () => {
+    interface Presencia {
+      userId: string
+      online: boolean
+    }
+
+    /** Lo que `socket` oye de la presencia de `userId`, desde ya. */
+    function oirPresenciaDe(socket: SocketCliente, userId: string): Presencia[] {
+      const oidas: Presencia[] = []
+      socket.on('presence.changed', (p: Presencia) => {
+        if (p.userId === userId) oidas.push(p)
+      })
+      return oidas
+    }
+
+    async function observador(userId: string): Promise<SocketCliente> {
+      const socket = await conectarComo(userId)
+      expect(await emitirYEsperar(socket, 'join', { eventId: eventoPresenciaId })).toEqual({
+        ok: true,
+      })
+      return socket
+    }
+
+    const esperar = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+    it('un miembro que conecta se anuncia online al proveedor del evento', async () => {
+      const [miembro] = miembrosPresencia as [string]
+      const oidas = oirPresenciaDe(await observador(observadorVendorId), miembro)
+
+      await conectarComo(miembro)
+
+      await vi.waitFor(() => expect(oidas).toEqual([{ userId: miembro, online: true }]))
+    })
+
+    it('un proveedor se anuncia a los miembros, pero no a otro proveedor', async () => {
+      const deMiembro = oirPresenciaDe(await observador(observadorMiembroId), otroVendorId)
+      const deVendor = oirPresenciaDe(await observador(observadorVendorId), otroVendorId)
+
+      await conectarComo(otroVendorId)
+
+      await vi.waitFor(() => expect(deMiembro).toEqual([{ userId: otroVendorId, online: true }]))
+      await esperar(200)
+      expect(deVendor).toEqual([])
+    })
+
+    it('al irse el último socket se anuncia offline, tras la gracia', async () => {
+      const miembro = miembrosPresencia[1] ?? ''
+      const oidas = oirPresenciaDe(await observador(observadorMiembroId), miembro)
+      const socket = await conectarComo(miembro)
+      await vi.waitFor(() => expect(oidas).toHaveLength(1))
+
+      socket.disconnect()
+      // Dentro de la gracia aún no se ha anunciado nada.
+      await esperar(GRACIA_DE_TEST_MS / 3)
+      expect(oidas).toHaveLength(1)
+
+      await vi.waitFor(() =>
+        expect(oidas).toEqual([
+          { userId: miembro, online: true },
+          { userId: miembro, online: false },
+        ]),
+      )
+      expect(await presencia.enLinea([miembro], new Date())).toEqual(new Set())
+    })
+
+    it('reconectar dentro de la gracia no anuncia ni offline ni online', async () => {
+      // Review Focus 4: así reconecta el cliente cuando el gateway le echa al
+      // caducar el token cada 15 minutos.
+      const miembro = miembrosPresencia[2] ?? ''
+      const oidas = oirPresenciaDe(await observador(observadorMiembroId), miembro)
+      const primero = await conectarComo(miembro)
+      await vi.waitFor(() => expect(oidas).toHaveLength(1))
+
+      primero.disconnect()
+      await conectarComo(miembro)
+      await esperar(GRACIA_DE_TEST_MS * 3)
+
+      expect(oidas).toEqual([{ userId: miembro, online: true }])
+      expect(await presencia.enLinea([miembro], new Date())).toEqual(new Set([miembro]))
+    })
+
+    it('si la presencia falla, el socket conecta igual y entra en su sala', async () => {
+      const miembro = miembrosPresencia[3] ?? ''
+      presencia.fallar = new Error('Redis caído')
+      try {
+        const socket = await conectarComo(miembro)
+
+        expect(salasDe(socket)).toContain(salaDeUsuario(miembro))
+        expect(await emitirYEsperar(socket, 'join', { eventId: eventoPresenciaId })).toEqual({
+          ok: true,
+        })
+        socket.disconnect()
+        await esperar(GRACIA_DE_TEST_MS * 2)
+      } finally {
+        presencia.fallar = null
+      }
     })
   })
 })

@@ -1,9 +1,10 @@
 import { componerDocumento } from './pdf-cronograma'
 import type { ItemConAsignaciones, NotaDeItem } from './schedule-item.repository'
 
+/** `weddingDate` es una fecha de calendario: Prisma la entrega a medianoche UTC. */
 const EVENTO = {
   name: 'Boda de Ana y Luis',
-  weddingDate: new Date('2027-06-13T03:00:00Z'),
+  weddingDate: new Date('2027-06-12T00:00:00Z'),
   timezone: 'America/Bogota',
 }
 
@@ -67,8 +68,51 @@ describe('componerDocumento', () => {
   it('pone la fecha y el título del evento', () => {
     const doc = componerDocumento(EVENTO, [], null)
     expect(doc.titulo).toBe('Boda de Ana y Luis')
-    expect(doc.fecha).toContain('June 12, 2027')
     expect(componerDocumento({ ...EVENTO, weddingDate: null }, [], null).fecha).toBe('')
+  })
+
+  it('la fecha de la boda es la de calendario aunque la zona esté al oeste de UTC', () => {
+    // Medianoche UTC del 12 es el 11 a las 19:00 en Bogotá: leída en la zona del
+    // evento, la cabecera diría "Friday, June 11".
+    expect(componerDocumento(EVENTO, [], null).fecha).toBe('Saturday, June 12, 2027')
+    expect(componerDocumento({ ...EVENTO, timezone: 'Pacific/Honolulu' }, [], null).fecha).toBe(
+      'Saturday, June 12, 2027',
+    )
+    expect(componerDocumento({ ...EVENTO, timezone: 'Asia/Tokyo' }, [], null).fecha).toBe(
+      'Saturday, June 12, 2027',
+    )
+  })
+
+  it('subtítulo de día sólo cuando la fecha local cambia respecto al ítem anterior', () => {
+    const doc = componerDocumento(
+      EVENTO,
+      [
+        // 23:00Z del 11 = 18:00 del 11 en Bogotá: la víspera.
+        item({ id: 'ensayo', startsAt: new Date('2027-06-11T23:00:00Z') }),
+        // 04:30Z del 12 = 23:30 del 11 en Bogotá: sigue siendo la víspera.
+        item({ id: 'cena', startsAt: new Date('2027-06-12T04:30:00Z') }),
+        item({ id: 'ceremonia', startsAt: new Date('2027-06-12T21:00:00Z') }),
+        item({ id: 'baile', startsAt: new Date('2027-06-12T23:00:00Z') }),
+        // 05:30Z del 13 = 00:30 del 13 en Bogotá.
+        item({ id: 'despedida', startsAt: new Date('2027-06-13T05:30:00Z') }),
+      ],
+      null,
+    )
+    expect(doc.items.map((i) => i.dia)).toEqual([
+      'Friday, June 11',
+      null,
+      'Saturday, June 12',
+      null,
+      'Sunday, June 13',
+    ])
+  })
+
+  it('el primer ítem del día de la boda no repite la fecha; sin weddingDate sí lleva subtítulo', () => {
+    const items = [item(), item({ id: 'item-2', startsAt: new Date('2027-06-12T23:00:00Z') })]
+    expect(componerDocumento(EVENTO, items, null).items.map((i) => i.dia)).toEqual([null, null])
+    expect(
+      componerDocumento({ ...EVENTO, weddingDate: null }, items, null).items.map((i) => i.dia),
+    ).toEqual(['Saturday, June 12', null])
   })
 
   it('marca con ✓ sólo a los proveedores confirmados', () => {

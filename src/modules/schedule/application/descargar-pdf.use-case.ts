@@ -6,7 +6,7 @@ import {
 } from '@/modules/events/application/event.repository'
 import { NotFoundError } from '@/shared/domain'
 
-import { componerDocumento, fechaIsoLocal } from './pdf-cronograma'
+import { componerDocumento, fechaDeBodaIso } from './pdf-cronograma'
 import { GENERADOR_PDF, type GeneradorPdf } from './pdf.port'
 import { SCHEDULE_ITEM_REPOSITORY, type ScheduleItemRepository } from './schedule-item.repository'
 
@@ -25,7 +25,9 @@ export class DescargarPdfUseCase {
    * no una por ítem. El 404 repite el código y el mensaje del guard de eventos
    * (`NOT_FOUND`), que no distingue "no existe" de "no es tuyo"; en la práctica
    * el guard ya lo habrá frenado antes. Sin `weddingDate` el fichero se llama
-   * `timeline.pdf`.
+   * `timeline.pdf`; con ella, `timeline-<YYYY-MM-DD>.pdf` con la fecha de
+   * calendario tal cual (en UTC, ver `fechaDeBodaIso`), nunca en la zona del
+   * evento, que la adelantaría un día al oeste de UTC.
    */
   async ejecutar(
     eventId: string,
@@ -39,7 +41,7 @@ export class DescargarPdfUseCase {
     const filename =
       evento.weddingDate === null
         ? 'timeline.pdf'
-        : `timeline-${fechaIsoLocal(evento.weddingDate, evento.timezone)}.pdf`
+        : `timeline-${fechaDeBodaIso(evento.weddingDate)}.pdf`
     return { buffer, filename }
   }
 }

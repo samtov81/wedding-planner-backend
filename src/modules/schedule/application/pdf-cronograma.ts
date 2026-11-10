@@ -10,9 +10,23 @@ import type { ItemConAsignaciones, NotaDeItem } from './schedule-item.repository
  */
 export interface DocumentoCronograma {
   titulo: string
-  /** Fecha de la boda en texto largo, en la zona del evento; `''` si el evento no la tiene. */
+  /**
+   * Fecha de la boda en texto largo (`Saturday, June 12, 2027`); `''` si el
+   * evento no la tiene. Se formatea en UTC, NO en la zona del evento: ver
+   * `fechaDeBodaIso`.
+   */
   fecha: string
   items: {
+    /**
+     * Subtítulo de día (`Friday, June 11`) que va ANTES de este ítem cuando su
+     * fecha local (zona del evento) cambia respecto a la del ítem anterior;
+     * `null` si es el mismo día. Para el primer ítem, "el anterior" es el día
+     * de la boda: un cronograma que empieza el día de la boda no repite la
+     * fecha de la cabecera, y uno sin `weddingDate` lleva siempre subtítulo en
+     * el primero. Alternativa descartada: un subtítulo en cada ítem, que en
+     * el caso normal (todo el mismo día) repite la cabecera una y otra vez.
+     */
+    dia: string | null
     /** `HH:mm` en la zona del evento, o `HH:mm–HH:mm` si hay fin. */
     hora: string
     titulo: string
@@ -50,8 +64,8 @@ function horaLocal(instante: Date, timezone: string): string {
   return f.format(instante)
 }
 
-/** `YYYY-MM-DD` del instante en esa zona: la fecha del nombre del fichero. */
-export function fechaIsoLocal(instante: Date, timezone: string): string {
+/** `YYYY-MM-DD` del instante en esa zona: la fecha LOCAL de un ítem, para agruparlo por día. */
+function fechaIsoLocal(instante: Date, timezone: string): string {
   // `en-CA` formatea como `YYYY-MM-DD` sin tener que recomponer las partes.
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: timezone,
@@ -61,10 +75,28 @@ export function fechaIsoLocal(instante: Date, timezone: string): string {
   }).format(instante)
 }
 
-function fechaLarga(instante: Date, timezone: string): string {
-  return new Intl.DateTimeFormat('en-US', { timeZone: timezone, dateStyle: 'full' }).format(
-    instante,
-  )
+/**
+ * `YYYY-MM-DD` de la boda. `weddingDate` es una FECHA de calendario (columna
+ * `date`), que Prisma entrega como la medianoche UTC de ese día: leerla en la
+ * zona del evento la adelantaría un día al oeste de UTC (2027-06-12 00:00Z es
+ * el 11 a las 19:00 en Bogotá). Por eso se lee en UTC, y sólo las HORAS de los
+ * ítems, que sí son instantes, van en la zona del evento. La usan la cabecera
+ * y el nombre del fichero (`descargar-pdf.use-case.ts`).
+ */
+export function fechaDeBodaIso(weddingDate: Date): string {
+  return weddingDate.toISOString().slice(0, 10)
+}
+
+const fechaLargaUtc = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', dateStyle: 'full' })
+
+/** `Friday, June 11`: el subtítulo de día, en la zona del evento (los ítems son instantes). */
+function diaLocal(instante: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  }).format(instante)
 }
 
 function lugarDe(item: ItemConAsignaciones): string | null {
@@ -84,12 +116,17 @@ export function componerDocumento(
   items: ItemConAsignaciones[],
   notasPorItem: Map<string, NotaDeItem[]> | null,
 ): DocumentoCronograma {
+  let diaAnterior = evento.weddingDate === null ? null : fechaDeBodaIso(evento.weddingDate)
   return {
     titulo: evento.name,
-    fecha: evento.weddingDate === null ? '' : fechaLarga(evento.weddingDate, evento.timezone),
+    fecha: evento.weddingDate === null ? '' : fechaLargaUtc.format(evento.weddingDate),
     items: items.map((i) => {
       const inicio = horaLocal(i.startsAt, evento.timezone)
+      const dia = fechaIsoLocal(i.startsAt, evento.timezone)
+      const cambiaDeDia = dia !== diaAnterior
+      diaAnterior = dia
       return {
+        dia: cambiaDeDia ? diaLocal(i.startsAt, evento.timezone) : null,
         hora: i.endsAt === null ? inicio : `${inicio}–${horaLocal(i.endsAt, evento.timezone)}`,
         titulo: i.title,
         lugar: lugarDe(i),

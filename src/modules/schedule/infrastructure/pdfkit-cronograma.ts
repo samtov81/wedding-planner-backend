@@ -12,9 +12,17 @@ import type { GeneradorPdf } from '../application/pdf.port'
 // eslint-disable-next-line no-control-regex -- los controles también quedan fuera de Helvetica
 const FUERA_DE_WINANSI = /[^\u0000-ÿ–—‘’“”•…€™]/gu
 
-/** ✓ (confirmado) no existe en Helvetica: se escribe con palabras, en inglés como el resto del PDF. */
+/**
+ * ✓ (confirmado) no existe en Helvetica: se escribe con palabras, en inglés
+ * como el resto del PDF.
+ *
+ * `normalize('NFC')` ANTES de filtrar: un texto que llega descompuesto (una
+ * "é" escrita como `e` + U+0301, lo que mandan algunos teclados de macOS e
+ * iOS) tiene el acento como carácter aparte, fuera de WinAnsi, y saldría
+ * `e?`. Compuesto es una sola `é`, que Latin-1 sí tiene.
+ */
 export function aWinAnsi(texto: string): string {
-  return texto.replaceAll(' ✓', ' [confirmed]').replace(FUERA_DE_WINANSI, '?')
+  return texto.normalize('NFC').replaceAll(' ✓', ' [confirmed]').replace(FUERA_DE_WINANSI, '?')
 }
 
 const ESTADOS: Record<string, string> = {
@@ -53,6 +61,10 @@ export class PdfkitCronograma implements GeneradorPdf {
         pdf.moveDown()
 
         for (const item of doc.items) {
+          if (item.dia !== null) {
+            pdf.font('Helvetica-Bold').fontSize(15).text(aWinAnsi(item.dia))
+            pdf.moveDown(0.5)
+          }
           pdf
             .font('Helvetica-Bold')
             .fontSize(13)

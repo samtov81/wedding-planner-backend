@@ -216,6 +216,11 @@ export class ScheduleController {
    * El PDF lleva notas SÓLO si quien lo pide es planner: el caso de uso ni
    * las lee en otro caso. `passthrough` para fijar las cabeceras y seguir
    * devolviendo el cuerpo por Nest (y sus filtros de excepción).
+   *
+   * `Cache-Control: private, no-store`: el PDF cambia según QUIÉN lo pide (el
+   * del planner lleva notas) y la URL es la misma para todos. Una caché
+   * compartida (proxy, CDN) que lo guardara podría servir el del planner a la
+   * pareja; `no-store` además evita que quede en disco en un equipo compartido.
    */
   @RequireEventAccess(...TODOS)
   @Get('pdf')
@@ -231,6 +236,7 @@ export class ScheduleController {
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'private, no-store',
     })
     return new StreamableFile(buffer)
   }

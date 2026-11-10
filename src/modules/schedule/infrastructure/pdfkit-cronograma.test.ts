@@ -7,6 +7,7 @@ const DOC: DocumentoCronograma = {
   fecha: 'Saturday, June 12, 2027',
   items: [
     {
+      dia: null,
       hora: '16:00–17:30',
       titulo: 'Ceñida ceremonia',
       lugar: 'Iglesia, Calle 1',
@@ -43,5 +44,34 @@ describe('PdfkitCronograma', () => {
   it('aWinAnsi escribe ✓ con palabras y sustituye lo que Helvetica no tiene', () => {
     expect(aWinAnsi('Banda (Música) ✓')).toBe('Banda (Música) [confirmed]')
     expect(aWinAnsi('Niño 😀 – ok')).toBe('Niño ? – ok')
+  })
+
+  it('aWinAnsi compone una "é" descompuesta (e + U+0301) en vez de dejar "e?"', () => {
+    const descompuesta = 'Caf' + 'e\u0301'
+    expect(descompuesta).toHaveLength(5)
+    expect(aWinAnsi(descompuesta)).toBe('Café')
+  })
+
+  it('pinta el subtítulo de día antes del ítem que lo lleva, y no en los que no', async () => {
+    const [primero] = DOC.items
+    if (primero === undefined) throw new Error('DOC sin ítems')
+    const dosDias: DocumentoCronograma = {
+      ...DOC,
+      items: [
+        { ...primero, dia: 'Friday, June 11', titulo: 'Ensayo' },
+        { ...primero, dia: null, titulo: 'Cena de ensayo' },
+        { ...primero, dia: 'Saturday, June 12', titulo: 'Ceremonia' },
+      ],
+    }
+    const texto = textoDelPdf(await new PdfkitCronograma({ compress: false }).generar(dosDias))
+    const lineas = texto.split('\n')
+    // Línea EXACTA: la cabecera (`Saturday, June 12, 2027`) también contiene el día.
+    const posicion = (linea: string) => lineas.indexOf(linea)
+    const titulo = (t: string) => lineas.findIndex((l) => l.endsWith(`  ${t}`))
+    expect(posicion('Friday, June 11')).toBeGreaterThan(-1)
+    expect(posicion('Friday, June 11')).toBeLessThan(titulo('Ensayo'))
+    expect(posicion('Saturday, June 12')).toBeGreaterThan(titulo('Cena de ensayo'))
+    expect(posicion('Saturday, June 12')).toBeLessThan(titulo('Ceremonia'))
+    expect(lineas.filter((l) => /^\w+day, June \d+$/.test(l))).toHaveLength(2)
   })
 })

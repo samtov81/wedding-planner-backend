@@ -612,7 +612,7 @@ describe('cronograma con proveedores e2e', () => {
       }
     })
 
-    it('GET /pdf → 200 application/pdf con Content-Disposition timeline-<fecha>.pdf', async () => {
+    it('GET /pdf → 200 application/pdf, timeline-<fecha>.pdf y sin caché compartida', async () => {
       await crearItem({ title: 'Ceremonia', startsAt: '2027-06-12T21:00:00Z' })
       const r = await request(server)
         .get(`${base()}/pdf`)
@@ -621,9 +621,11 @@ describe('cronograma con proveedores e2e', () => {
         .parse(binario)
         .expect(200)
       expect(r.headers['content-type']).toBe('application/pdf')
+      // Boda el 2027-06-12 en America/Bogota: la fecha de calendario, no el 11.
       expect(r.headers['content-disposition']).toBe(
-        'attachment; filename="timeline-2027-06-11.pdf"',
+        'attachment; filename="timeline-2027-06-12.pdf"',
       )
+      expect(r.headers['cache-control']).toBe('private, no-store')
       expect((r.body as Buffer).subarray(0, 5).toString('latin1')).toBe('%PDF-')
     })
   })

@@ -104,7 +104,12 @@ export interface MoodboardRepository {
    * frenar las subidas ni las acciones sobre el resto de fotos del tablero.
    */
   bloquearImagen(eventId: string, imageId: string): Promise<void>
-  categoriaActiva(categoryId: string): Promise<boolean>
+  /**
+   * Id de la categoría ACTIVA con ese `slug`, o `null` si no existe o está
+   * inactiva. El cliente sólo conoce slugs (`GET /vendor-categories` no expone
+   * ids), así que el alta de foto los resuelve aquí.
+   */
+  categoriaActivaPorSlug(slug: string): Promise<string | null>
   crearImagen(datos: DatosNuevaImagen): Promise<ImagenDeMoodboard>
   /** `createdAt desc, id desc`. `archivadas = true` con visor proveedor devuelve `[]`. */
   listarImagenes(eventId: string, visor: Visor, archivadas: boolean): Promise<ImagenDeMoodboard[]>

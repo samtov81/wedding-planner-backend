@@ -29,7 +29,7 @@ export const crearImagenSchema = z
   .object({
     key: z.string().min(1),
     title: z.string(),
-    categoryId: z.guid(),
+    categorySlug: z.string().min(1),
     width: dimension,
     height: dimension,
   })

@@ -72,12 +72,12 @@ export class PrismaMoodboardRepository implements MoodboardRepository {
       FOR UPDATE`
   }
 
-  async categoriaActiva(categoryId: string): Promise<boolean> {
+  async categoriaActivaPorSlug(slug: string): Promise<string | null> {
     const categoria = await clienteDe(this.prisma).vendorCategory.findUnique({
-      where: { id: categoryId },
-      select: { active: true },
+      where: { slug },
+      select: { id: true, active: true },
     })
-    return categoria?.active === true
+    return categoria?.active === true ? categoria.id : null
   }
 
   /**

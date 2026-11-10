@@ -743,13 +743,14 @@ describe('Paridad: MoodboardRepositoryFake vs PrismaMoodboardRepository', () => 
     })
   })
 
-  it('categoriaActiva distingue activas, inactivas y desconocidas', async () => {
+  it('categoriaActivaPorSlug devuelve el id de las activas y null para inactivas y desconocidas', async () => {
     await conAmbos(
       async (m) => ({ viva: await m.categoria(true), muerta: await m.categoria(false) }),
       async (m, d, nombre) => {
-        expect(await m.repo.categoriaActiva(d.viva), nombre).toBe(true)
-        expect(await m.repo.categoriaActiva(d.muerta), nombre).toBe(false)
-        expect(await m.repo.categoriaActiva(randomUUID()), nombre).toBe(false)
+        // En ambos mundos el slug sembrado es `cat-<id>`.
+        expect(await m.repo.categoriaActivaPorSlug(`cat-${d.viva}`), nombre).toBe(d.viva)
+        expect(await m.repo.categoriaActivaPorSlug(`cat-${d.muerta}`), nombre).toBeNull()
+        expect(await m.repo.categoriaActivaPorSlug(`cat-${randomUUID()}`), nombre).toBeNull()
       },
     )
   })

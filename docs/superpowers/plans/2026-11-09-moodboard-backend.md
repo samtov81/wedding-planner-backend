@@ -30,7 +30,7 @@ Todas bajo `@UseGuards(JwtAuthGuard, EventAccessGuard)` y `events/:eventId/moodb
 | Método y ruta | Acceso | Cuerpo / query | Respuesta |
 |---|---|---|---|
 | `POST /upload-url` | M | `{ contentType, bytes }` | 201 `{ key, uploadUrl }` |
-| `POST /images` | M | `{ key, title, categoryId, width, height }` | 201 `ImageJson` |
+| `POST /images` | M | `{ key, title, categorySlug, width, height }` (slug, no id: `GET /vendor-categories` sólo expone slugs) | 201 `ImageJson` |
 | `GET /images` | T | `?archived=true` (sólo M; proveedor → 403) | 200 `ImageJson[]` (más nuevas primero) |
 | `GET /images/:imageId` | T | — | 200 `ImageJson` |
 | `PATCH /images/:imageId` | M | `{ archived: boolean }` | 200 `ImageJson` |
@@ -139,7 +139,7 @@ export interface ContratacionCompartible { eventVendorId: string; name: string; 
 export interface MoodboardRepository {
   /** `SELECT … FOR UPDATE` de la fila del evento + cuenta de TODAS sus imágenes. Dentro de UnidadDeTrabajo. */
   bloquearYContar(eventId: string): Promise<number>
-  categoriaActiva(categoryId: string): Promise<boolean>
+  categoriaActivaPorSlug(slug: string): Promise<string | null>
   crearImagen(datos: DatosNuevaImagen): Promise<ImagenDeMoodboard>
   listarImagenes(eventId: string, visor: Visor, archivadas: boolean): Promise<ImagenDeMoodboard[]>
   /** null si no existe en ese evento o el visor no la ve (proveedor: compartida vigente y activa). */
@@ -320,7 +320,7 @@ export const EVENTO_PRESENCIA = 'presence.changed'
   - jobIds: `moodboard-img-<imageId>-<epochMs>` y `moodboard-note-<noteId>`.
 - Produces (casos de uso; `Visor` de Task 1):
   - `PrepararSubidaUseCase.ejecutar(eventId, contentType: string, bytes: number): Promise<SubidaPreparada>`
-  - `CrearImagenUseCase.ejecutar(eventId, userId, datos: { key; title; categoryId; width; height }): Promise<ImagenDeMoodboard>` — en `UnidadDeTrabajo`: `bloquearYContar` → `exigirCupo` → `categoriaActiva` (si no, `CategoriaInvalidaError`) → `confirmar(prefijo, key)` → `crearImagen`; tras el commit, encola `image.changed`.
+  - `CrearImagenUseCase.ejecutar(eventId, userId, datos: { key; title; categorySlug; width; height }): Promise<ImagenDeMoodboard>` — en `UnidadDeTrabajo`: `bloquearYContar` → `exigirCupo` → `categoriaActivaPorSlug` (si `null`, `CategoriaInvalidaError`) → `confirmar(prefijo, key)` → `crearImagen`; tras el commit, encola `image.changed`.
   - `ListarImagenesUseCase.ejecutar(eventId, visor, archivadas: boolean)`; `ObtenerImagenUseCase.ejecutar(eventId, imageId, visor)` → `ImagenNoEncontradaError` si null.
   - `ArchivarImagenUseCase.ejecutar(eventId, imageId, userId, archivada: boolean)` — idempotente; al archivar, `ocultarA = proveedoresQueVen` **antes** del cambio.
   - `CompartirImagenUseCase.ejecutar(eventId, imageId, userId, eventVendorIds: string[])` — exige foto activa; ids fuera de `listarCompartibles` → `ProveedorNoCompartibleError(ids)`; en `UnidadDeTrabajo` `fijarComparticion` + `crearParaUsuarios(eventId, usuariosDeContrataciones(altas), 'moodboard.image.shared', { imageId })`. `ocultarA` = usuarios de `bajas` que ya no ven la foto por otra contratación (`proveedoresQueVen` después del cambio).
@@ -353,7 +353,7 @@ export const EVENTO_PRESENCIA = 'presence.changed'
 - `visorDe(acceso: EventAccess | undefined, userId: string): Visor` en `moodboard.json.ts` o un `visor.ts` de `interfaces/` (no en `domain/`: no puede importar `events/domain`). `vendor` → proveedor; `member`/`admin` → miembro.
 - DTO Zod:
   - `uploadUrlSchema { contentType: string, bytes: int > 0 }`;
-  - `crearImagenSchema { key: string min 1, title: string, categoryId: z.guid(), width/height: int 1..20000 }`;
+  - `crearImagenSchema { key: string min 1, title: string, categorySlug: string min 1, width/height: int 1..20000 }`;
   - `archivarSchema { archived: boolean }`;
   - `compartirSchema { eventVendorIds: z.array(z.guid()).max(50) }` + refine sin repetidos;
   - `notaSchema { body: string }`;

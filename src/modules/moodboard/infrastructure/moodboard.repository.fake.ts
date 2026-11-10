@@ -124,8 +124,9 @@ export class MoodboardRepositoryFake implements MoodboardRepository {
     return Promise.resolve()
   }
 
-  categoriaActiva(categoryId: string): Promise<boolean> {
-    return Promise.resolve(this.categorias.get(categoryId)?.active === true)
+  categoriaActivaPorSlug(slug: string): Promise<string | null> {
+    const categoria = [...this.categorias.values()].find((c) => c.slug === slug)
+    return Promise.resolve(categoria?.active === true ? categoria.id : null)
   }
 
   crearImagen(datos: DatosNuevaImagen): Promise<ImagenDeMoodboard> {

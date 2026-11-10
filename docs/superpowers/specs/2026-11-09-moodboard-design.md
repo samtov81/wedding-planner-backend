@@ -176,9 +176,10 @@ de rutas y respuestas es del builder; lo que debe existir:
 1. **Preparar subida** (miembros) → `{ key, uploadUrl }`, reutilizando
    `SubidaDeImagenes.preparar` con un prefijo por evento
    (p. ej. `events/<eventId>/moodboard`). Mismas reglas: JPG/PNG/WebP ≤ 10 MB.
-2. **Crear foto** (miembros) con `{ key, title, categoryId, width, height }`:
-   `SubidaDeImagenes.confirmar` contra ese prefijo, `categoryId` de una
-   categoría activa, tope de §5.
+2. **Crear foto** (miembros) con `{ key, title, categorySlug, width, height }`:
+   `SubidaDeImagenes.confirmar` contra ese prefijo, `categorySlug` de una
+   categoría activa (slug y no id porque el catálogo `GET /vendor-categories`
+   sólo expone slugs, como en event-vendor y vendor-profile), tope de §5.
 3. **Listar fotos** (todos, filtrado por quien pide): activas por defecto;
    archivadas sólo para miembros. Cada foto lleva URL de lectura firmada
    (`firmarLectura`), categoría, título, dimensiones, autor, fecha, nº de notas

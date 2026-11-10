@@ -111,7 +111,7 @@ function escenario(opciones: { cola?: QueuePort } = {}) {
     return await crear.ejecutar(eventId, PAREJA, {
       key,
       title: titulo,
-      categoryId: CATEGORIA,
+      categorySlug: 'flowers',
       width: 800,
       height: 600,
     })
@@ -165,6 +165,8 @@ describe('casos de uso del moodboard', () => {
       const { subir, memoria, uow, jobsImagen } = escenario()
       const imagen = await subir('  Peonías  ')
       expect(imagen.title).toBe('Peonías')
+      // Guarda el id que resuelve el slug, no el slug.
+      expect(imagen.category.id).toBe(CATEGORIA)
       expect(imagen.uploadedBy.id).toBe(PAREJA)
       expect(uow.transacciones).toBe(1)
       expect(jobsImagen()).toEqual([
@@ -195,7 +197,7 @@ describe('casos de uso del moodboard', () => {
         crear.ejecutar(EVENTO, PAREJA, {
           key,
           title: 'x',
-          categoryId: CATEGORIA,
+          categorySlug: 'flowers',
           width: 1,
           height: 1,
         }),
@@ -211,7 +213,7 @@ describe('casos de uso del moodboard', () => {
         crear.ejecutar(EVENTO, PAREJA, {
           key,
           title: 'x',
-          categoryId: INACTIVA,
+          categorySlug: 'old',
           width: 1,
           height: 1,
         }),
@@ -220,7 +222,7 @@ describe('casos de uso del moodboard', () => {
         crear.ejecutar(EVENTO, PAREJA, {
           key,
           title: 'x',
-          categoryId: 'no-existe',
+          categorySlug: 'no-existe',
           width: 1,
           height: 1,
         }),
@@ -236,7 +238,7 @@ describe('casos de uso del moodboard', () => {
         crear.ejecutar(EVENTO, PAREJA, {
           key,
           title: 'x',
-          categoryId: CATEGORIA,
+          categorySlug: 'flowers',
           width: 1,
           height: 1,
         }),
@@ -254,7 +256,7 @@ describe('casos de uso del moodboard', () => {
         crear.ejecutar(EVENTO, PAREJA, {
           key,
           title: 'x',
-          categoryId: CATEGORIA,
+          categorySlug: 'flowers',
           width: 1,
           height: 1,
         }),
@@ -272,7 +274,7 @@ describe('casos de uso del moodboard', () => {
         crear.ejecutar(EVENTO, PAREJA, {
           key,
           title: '   ',
-          categoryId: CATEGORIA,
+          categorySlug: 'flowers',
           width: 1,
           height: 1,
         }),

@@ -84,7 +84,7 @@ type Metodo = 'get' | 'post' | 'patch' | 'put'
 interface Contexto {
   eventId: string
   fotoId: string
-  categoryId: string
+  categorySlug: string
   contratacionA1: string
   /** Una key ya "subida" al almacén falso, válida para `POST /images`. */
   keySubida: string
@@ -151,7 +151,13 @@ const RUTAS: ReadonlyArray<
     (ctx) => [
       'post',
       `/events/${ctx.eventId}/moodboard/images`,
-      { key: ctx.keySubida, title: 'Nueva', categoryId: ctx.categoryId, width: 800, height: 600 },
+      {
+        key: ctx.keySubida,
+        title: 'Nueva',
+        categorySlug: ctx.categorySlug,
+        width: 800,
+        height: 600,
+      },
     ],
     soloMiembros(201),
   ],
@@ -255,7 +261,7 @@ describe('moodboard e2e', () => {
 
   let eventId: string
   let eventoAjenoId: string
-  let categoryId: string
+  let categorySlug: string
   const tokens = new Map<Actor, string>()
   let id: Record<Actor, string>
   /** A contratado dos veces: Decor & Floral (A1) y Venue (A2). */
@@ -288,7 +294,7 @@ describe('moodboard e2e', () => {
     const r = await request(server)
       .post(`${base()}/images`)
       .set(como(quien))
-      .send({ key: await keySubida(), title, categoryId, width: 800, height: 600 })
+      .send({ key: await keySubida(), title, categorySlug, width: 800, height: 600 })
       .expect(201)
     return r.body as ImagenCuerpo
   }
@@ -467,7 +473,7 @@ describe('moodboard e2e', () => {
     const decor = await categoriaId(prisma, 'decor-floral')
     const venue = await categoriaId(prisma, 'venue')
     const foto = await categoriaId(prisma, 'photography')
-    categoryId = decor
+    categorySlug = 'decor-floral'
     const ficha = async (userId: string, businessName: string, cat: string) =>
       (
         await prisma.vendorProfile.create({
@@ -520,7 +526,7 @@ describe('moodboard e2e', () => {
     beforeEach(async () => {
       const foto = await subirFoto('Foto de la matriz')
       await compartir(foto.id, [contratacionA1])
-      ctx = { eventId, fotoId: foto.id, categoryId, contratacionA1, keySubida: await keySubida() }
+      ctx = { eventId, fotoId: foto.id, categorySlug, contratacionA1, keySubida: await keySubida() }
     })
 
     it.each(CASOS)('$ruta como $nombre → $esperado.status', async (caso) => {
@@ -781,7 +787,7 @@ describe('moodboard e2e', () => {
         await request(server)
           .post(`${base()}/images`)
           .set(como('creador'))
-          .send({ key: await keySubida(), title: 'x', categoryId, ...dims })
+          .send({ key: await keySubida(), title: 'x', categorySlug, ...dims })
           .expect(400)
       }
     })
@@ -790,7 +796,7 @@ describe('moodboard e2e', () => {
       const cuerpo = {
         key: await keySubida(),
         title: 'Reintento',
-        categoryId,
+        categorySlug,
         width: 800,
         height: 600,
       }

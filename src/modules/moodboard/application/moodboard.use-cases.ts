@@ -81,14 +81,14 @@ export class PrepararSubidaUseCase {
 export interface DatosCrearImagen {
   key: string
   title: string
-  categoryId: string
+  categorySlug: string
   width: number
   height: number
 }
 
 /**
  * Da de alta la foto ya subida, en este orden: comprobar en R2 → (unidad de
- * trabajo: bloquear el evento y contar → tope → categoría activa → insertar).
+ * trabajo: bloquear el evento y contar → tope → categoría activa por slug → insertar).
  * El tope sólo es fiable bajo el `FOR UPDATE`: dos altas concurrentes con 499
  * fotos se serializan y la segunda ve 500.
  *
@@ -126,10 +126,11 @@ export class CrearImagenUseCase {
     await this.subidas.confirmar(prefijoMoodboard(eventId), datos.key)
     const imagen = await this.unidadDeTrabajo.ejecutar(async () => {
       exigirCupo(await this.repo.bloquearYContar(eventId))
-      if (!(await this.repo.categoriaActiva(datos.categoryId))) throw new CategoriaInvalidaError()
+      const categoryId = await this.repo.categoriaActivaPorSlug(datos.categorySlug)
+      if (categoryId === null) throw new CategoriaInvalidaError()
       return await this.repo.crearImagen({
         eventId,
-        categoryId: datos.categoryId,
+        categoryId,
         title,
         storageKey: datos.key,
         width: datos.width,

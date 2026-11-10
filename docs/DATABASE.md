@@ -46,6 +46,21 @@ CHECK constraints:
 - `schedule_items_rango` — `endsAt`, when set, cannot be earlier than `startsAt`.
 - `schedule_items_coords` — same both-or-neither / range rule as `events_venue_coords`, applied to `locationLat`/`locationLng`.
 
+### `schedule_item_vendors`
+
+Assigns a hiring (`EventVendor`) to a timeline item. Belongs to a `ScheduleItem` (`onDelete: Cascade`) and an `EventVendor` (`onDelete: Cascade` — deleting a hiring must not fail with a 500 and its assignments go with it); `assignedById` points to `users` (`onDelete: Restrict`). UNIQUE `(scheduleItemId, eventVendorId)`; indexed by `eventVendorId`. `confirmedAt` is the vendor's confirmation of this assignment: `NULL` means pending, and a new assignment is born pending. Unassigning deletes the row; there is no history.
+
+Enforced by the use cases, not by the database: the `EventVendor` belongs to the same event as the item, is `BOOKED` and has a `vendorProfileId`; and a change to the item's `startsAt` or `endsAt` resets `confirmedAt` to `NULL` on all of its assignments.
+
+### `schedule_item_notes`
+
+A planner-only note on a timeline item. Belongs to a `ScheduleItem` (`onDelete: Cascade`); `authorId` points to `users` (`onDelete: Restrict`). No `updatedAt`: notes are never edited or deleted. Indexed by `(scheduleItemId, createdAt)`.
+
+CHECK constraints:
+- `schedule_item_notes_cuerpo` — `body`, trimmed, is 1 to 2000 characters.
+
+Enforced by the use cases, not by the database: only the planner (ADMIN or `PLANNER` member) reads or writes notes.
+
 ### `expenses`
 
 Belongs to an `Event` (`onDelete: Cascade`) and optionally to an `EventVendor` (`onDelete: Restrict` — an `EventVendor` with expenses cannot be deleted). Tracks `ExpenseStatus` (`PENDING` \| `PAID`).

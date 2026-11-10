@@ -83,6 +83,19 @@ export function permisosDe(acceso: EventAccess): PermisoDeEvento[] {
  * depende del CUERPO y la toma el caso de uso con este booleano.
  */
 export function puedeCambiarEstadoDelCronograma(acceso: EventAccess): boolean {
+  return esPlannerDelEvento(acceso)
+}
+
+/**
+ * "Planner" a efectos de producto: ADMIN, o miembro ACTIVE con rol `PLANNER`
+ * (creador o invitado). Es la regla de quién ve y escribe las notas del
+ * cronograma, asigna proveedores y mueve el estado (spec 2026-11-10 §3).
+ *
+ * Es un predicado y NO `@RequireEventAccess('PLANNER')`: `permisosDe(admin)`
+ * es `[]`, así que el guard por permiso dejaría fuera al admin, y la decisión
+ * a veces depende del cuerpo de la petición y la toma el caso de uso.
+ */
+export function esPlannerDelEvento(acceso: EventAccess): boolean {
   if (acceso.kind === 'admin') return true
   return acceso.kind === 'member' && acceso.role === 'PLANNER'
 }

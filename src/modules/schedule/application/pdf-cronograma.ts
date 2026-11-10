@@ -62,7 +62,7 @@ export function fechaIsoLocal(instante: Date, timezone: string): string {
 }
 
 function fechaLarga(instante: Date, timezone: string): string {
-  return new Intl.DateTimeFormat('es-ES', { timeZone: timezone, dateStyle: 'full' }).format(
+  return new Intl.DateTimeFormat('en-US', { timeZone: timezone, dateStyle: 'full' }).format(
     instante,
   )
 }

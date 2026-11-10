@@ -67,7 +67,7 @@ describe('componerDocumento', () => {
   it('pone la fecha y el título del evento', () => {
     const doc = componerDocumento(EVENTO, [], null)
     expect(doc.titulo).toBe('Boda de Ana y Luis')
-    expect(doc.fecha).toContain('12 de junio de 2027')
+    expect(doc.fecha).toContain('June 12, 2027')
     expect(componerDocumento({ ...EVENTO, weddingDate: null }, [], null).fecha).toBe('')
   })
 

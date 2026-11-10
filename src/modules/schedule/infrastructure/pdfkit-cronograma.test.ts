@@ -4,7 +4,7 @@ import { aWinAnsi, PdfkitCronograma } from './pdfkit-cronograma'
 
 const DOC: DocumentoCronograma = {
   titulo: 'Boda de Ana y Luis',
-  fecha: 'sábado, 12 de junio de 2027',
+  fecha: 'Saturday, June 12, 2027',
   items: [
     {
       hora: '16:00–17:30',
@@ -30,18 +30,18 @@ describe('PdfkitCronograma', () => {
     const buffer = await new PdfkitCronograma({ compress: false }).generar(DOC)
     expect(textoDelPdf(buffer)).toContain('- Marta: Llamar al DJ')
     expect(textoDelPdf(buffer)).toContain('Ceñida ceremonia')
-    expect(textoDelPdf(buffer)).toContain('Banda Sol (Música) [confirmado]')
+    expect(textoDelPdf(buffer)).toContain('Banda Sol (Música) [confirmed]')
   })
 
   it('sin notas en el documento, el texto de la nota no está', async () => {
     const sinNotas = { ...DOC, items: DOC.items.map((i) => ({ ...i, notas: [] })) }
     const buffer = await new PdfkitCronograma({ compress: false }).generar(sinNotas)
     expect(textoDelPdf(buffer)).not.toContain('Llamar al DJ')
-    expect(textoDelPdf(buffer)).not.toContain('Notas')
+    expect(textoDelPdf(buffer)).not.toContain('Notes')
   })
 
   it('aWinAnsi escribe ✓ con palabras y sustituye lo que Helvetica no tiene', () => {
-    expect(aWinAnsi('Banda (Música) ✓')).toBe('Banda (Música) [confirmado]')
+    expect(aWinAnsi('Banda (Música) ✓')).toBe('Banda (Música) [confirmed]')
     expect(aWinAnsi('Niño 😀 – ok')).toBe('Niño ? – ok')
   })
 })

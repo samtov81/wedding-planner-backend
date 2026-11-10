@@ -12,15 +12,15 @@ import type { GeneradorPdf } from '../application/pdf.port'
 // eslint-disable-next-line no-control-regex -- los controles también quedan fuera de Helvetica
 const FUERA_DE_WINANSI = /[^\u0000-ÿ–—‘’“”•…€™]/gu
 
-/** ✓ (confirmado) no existe en Helvetica: se escribe con palabras. */
+/** ✓ (confirmado) no existe en Helvetica: se escribe con palabras, en inglés como el resto del PDF. */
 export function aWinAnsi(texto: string): string {
-  return texto.replaceAll(' ✓', ' [confirmado]').replace(FUERA_DE_WINANSI, '?')
+  return texto.replaceAll(' ✓', ' [confirmed]').replace(FUERA_DE_WINANSI, '?')
 }
 
 const ESTADOS: Record<string, string> = {
-  PENDING: 'Pendiente',
-  IN_PROGRESS: 'En curso',
-  DONE: 'Hecho',
+  PENDING: 'Pending',
+  IN_PROGRESS: 'In progress',
+  DONE: 'Done',
 }
 
 /**
@@ -58,14 +58,14 @@ export class PdfkitCronograma implements GeneradorPdf {
             .fontSize(13)
             .text(aWinAnsi(`${item.hora}  ${item.titulo}`))
           pdf.font('Helvetica').fontSize(10)
-          pdf.text(`Estado: ${ESTADOS[item.estado] ?? aWinAnsi(item.estado)}`)
-          if (item.lugar !== null) pdf.text(aWinAnsi(`Lugar: ${item.lugar}`))
+          pdf.text(`Status: ${ESTADOS[item.estado] ?? aWinAnsi(item.estado)}`)
+          if (item.lugar !== null) pdf.text(aWinAnsi(`Location: ${item.lugar}`))
           if (item.descripcion !== null) pdf.text(aWinAnsi(item.descripcion))
           if (item.proveedores.length > 0) {
-            pdf.text(aWinAnsi(`Proveedores: ${item.proveedores.join(', ')}`))
+            pdf.text(aWinAnsi(`Vendors: ${item.proveedores.join(', ')}`))
           }
           if (item.notas.length > 0) {
-            pdf.text('Notas:')
+            pdf.text('Notes:')
             for (const nota of item.notas) pdf.text(aWinAnsi(`- ${nota}`), { indent: 10 })
           }
           pdf.moveDown()

@@ -865,23 +865,26 @@ describe('cronograma con proveedores e2e', () => {
       })
       const primero = esperar(socketA, 'notification.created', esDeTipo('schedule.item.reminder'))
 
-      const startsAt = dentroDe(3)
+      // 8 s de margen calculados JUSTO antes de cada alta: con la suite entera
+      // en paralelo, crear y desasignar puede tardar más de los 3 s de antes y
+      // el job se dispararía antes de la desasignación.
       const avisa = await crearItem({
         title: 'Entrada del DJ',
-        startsAt,
+        startsAt: dentroDe(8),
         eventVendorIds: [contratacionA1],
       })
       const desasignado = await crearItem({
         title: 'Ya no es de A',
-        startsAt,
+        startsAt: dentroDe(8),
         eventVendorIds: [contratacionA1],
       })
       await asignar(desasignado.id, [])
 
       expect(await primero).toEqual({ eventId, type: 'schedule.item.reminder' })
-      const hora = new Date(avisa.startsAt)
-      await jobTerminado(jobIdDeRecordatorio(avisa.id, contratacionA1, hora))
-      await jobTerminado(jobIdDeRecordatorio(desasignado.id, contratacionA1, hora))
+      await jobTerminado(jobIdDeRecordatorio(avisa.id, contratacionA1, new Date(avisa.startsAt)))
+      await jobTerminado(
+        jobIdDeRecordatorio(desasignado.id, contratacionA1, new Date(desasignado.startsAt)),
+      )
 
       const avisos = await campana('provA', 'schedule.item.reminder')
       expect(avisos.map((a) => a.payload)).toEqual([
@@ -930,7 +933,7 @@ describe('cronograma con proveedores e2e', () => {
 
       // Mientras está cancelada se cambia la hora: no se programa nada para A1
       // (no es vigente). Volver a BOOKED es lo que tiene que reponer el aviso.
-      const startsAt = dentroDe(4)
+      const startsAt = dentroDe(8)
       await request(server)
         .patch(`${base()}/${item.id}`)
         .set(como('creador'))
@@ -960,8 +963,10 @@ describe('cronograma con proveedores e2e', () => {
           startsAt: new Date(startsAt).toISOString(),
         },
       ])
-      // A2 nunca estuvo asignada: sigue sin contar.
-      expect(contratacionA2).not.toBe(contratacionA1)
+      // A2 (la otra contratación de A) nunca estuvo asignada: sigue sin asignaciones.
+      expect(
+        await prisma.scheduleItemVendor.count({ where: { eventVendorId: contratacionA2 } }),
+      ).toBe(0)
     }, 30_000)
   })
 })

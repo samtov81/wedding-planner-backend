@@ -284,6 +284,15 @@ export class ScheduleItemRepositoryEnMemoria implements ScheduleItemRepository {
     )
   }
 
+  listarNotasDeEvento(eventId: string): Promise<Map<string, NotaDeItem[]>> {
+    const porItem = new Map<string, NotaDeItem[]>()
+    for (const n of this.notas) {
+      if (this.items.find((i) => i.id === n.itemId)?.eventId !== eventId) continue
+      porItem.set(n.itemId, [...(porItem.get(n.itemId) ?? []), { ...n, author: { ...n.author } }])
+    }
+    return Promise.resolve(porItem)
+  }
+
   /** Autor desconocido: en Postgres sería la FK; el doble lo rechaza igual. */
   crearNota(itemId: string, authorId: string, body: string): Promise<NotaDeItem> {
     const autor = this.usuarios.get(authorId)

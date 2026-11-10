@@ -15,6 +15,7 @@ import { UsersModule } from '@/modules/users/users.module'
 import { COLA_CRONOGRAMA } from './application/avisos-cronograma'
 import { CreateScheduleItemUseCase } from './application/create-schedule-item.use-case'
 import { DeleteScheduleItemUseCase } from './application/delete-schedule-item.use-case'
+import { DescargarPdfUseCase } from './application/descargar-pdf.use-case'
 import { ListScheduleItemsUseCase } from './application/list-schedule-items.use-case'
 import {
   AsignarProveedoresUseCase,
@@ -24,11 +25,13 @@ import {
   ListarAsignablesUseCase,
   ListarNotasUseCase,
 } from './application/participacion.use-cases'
+import { GENERADOR_PDF } from './application/pdf.port'
 import {
   SCHEDULE_ITEM_REPOSITORY,
   type ScheduleItemRepository,
 } from './application/schedule-item.repository'
 import { UpdateScheduleItemUseCase } from './application/update-schedule-item.use-case'
+import { PdfkitCronograma } from './infrastructure/pdfkit-cronograma'
 import { PrismaScheduleItemRepository } from './infrastructure/prisma-schedule-item.repository'
 import { ScheduleController } from './interfaces/schedule.controller'
 import { ScheduleProcessor } from './interfaces/schedule.processor'
@@ -86,6 +89,9 @@ import { ScheduleRemindersModule } from './schedule-reminders.module'
     CrearNotaUseCase,
     ConfirmacionesUseCase,
     AvisarProveedoresUseCase,
+    DescargarPdfUseCase,
+    // `useFactory`: el generador no es inyectable por clase (puerto, no adaptador).
+    { provide: GENERADOR_PDF, useFactory: () => new PdfkitCronograma() },
     {
       provide: ScheduleProcessor,
       useFactory: (

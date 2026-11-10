@@ -122,6 +122,40 @@ describe('Paridad: notas y recordatorios del cronograma', () => {
     expect(resultados[1]).toEqual(resultados[0])
   })
 
+  it('listarNotasDeEvento agrupa por ítem, en orden, y deja fuera ítems sin notas y otros eventos', async () => {
+    const resultados: unknown[] = []
+    await conAmbos(async (m) => {
+      const eventId = await m.evento()
+      const otroEvento = await m.evento()
+      const ana = await m.usuario('Ana')
+      const a = await item(m, eventId, 'Ceremonia', '2027-06-12T18:00:00Z')
+      const b = await item(m, eventId, 'Fiesta', '2027-06-12T22:00:00Z')
+      await item(m, eventId, 'Brindis', '2027-06-12T23:00:00Z')
+      const ajeno = await item(m, otroEvento, 'Otra', '2027-06-12T18:00:00Z')
+      await m.repo.crearNota(a.id, ana, 'a1')
+      await pausa()
+      await m.repo.crearNota(b.id, ana, 'b1')
+      await pausa()
+      await m.repo.crearNota(a.id, ana, 'a2')
+      await m.repo.crearNota(ajeno.id, ana, 'x')
+
+      const porItem = await m.repo.listarNotasDeEvento(eventId)
+      resultados.push({
+        total: porItem.size,
+        a: porItem.get(a.id)?.map((n) => `${n.body}/${n.author.name}`),
+        b: porItem.get(b.id)?.map((n) => n.body),
+        ajeno: porItem.get(ajeno.id),
+      })
+    })
+    expect(resultados[0]).toEqual({
+      total: 2,
+      a: ['a1/Ana', 'a2/Ana'],
+      b: ['b1'],
+      ajeno: undefined,
+    })
+    expect(resultados[1]).toEqual(resultados[0])
+  })
+
   it('eliminar el ítem se lleva sus notas', async () => {
     await conAmbos(async (m) => {
       const eventId = await m.evento()

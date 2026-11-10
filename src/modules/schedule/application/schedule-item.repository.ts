@@ -159,6 +159,13 @@ export interface ScheduleItemRepository {
 
   /** Notas del ítem, de la más antigua a la más reciente (desempate por id). */
   listarNotas(itemId: string): Promise<NotaDeItem[]>
+  /**
+   * Notas de TODOS los ítems del evento en una sola consulta, agrupadas por
+   * ítem y cada lista en el orden de `listarNotas`; los ítems sin notas no
+   * aparecen. Existe para el PDF del planner (spec 2026-11-10 §8): alternativa
+   * descartada, llamar a `listarNotas` por ítem (N+1 consultas).
+   */
+  listarNotasDeEvento(eventId: string): Promise<Map<string, NotaDeItem[]>>
   /** El caso de uso ya recortó (`trim`) y validó 1..2000; la base lo vuelve a exigir con un CHECK. */
   crearNota(itemId: string, authorId: string, body: string): Promise<NotaDeItem>
   /** itemId → número de notas de los ítems del evento; los ítems sin notas no aparecen. */

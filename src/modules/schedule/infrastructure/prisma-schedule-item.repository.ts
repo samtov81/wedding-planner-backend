@@ -374,6 +374,20 @@ export class PrismaScheduleItemRepository implements ScheduleItemRepository {
     return filas.map(aNota)
   }
 
+  async listarNotasDeEvento(eventId: string): Promise<Map<string, NotaDeItem[]>> {
+    const filas = await clienteDe(this.prisma).scheduleItemNote.findMany({
+      where: { scheduleItem: { eventId } },
+      include: INCLUIR_AUTOR,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    })
+    const porItem = new Map<string, NotaDeItem[]>()
+    for (const fila of filas) {
+      const nota = aNota(fila)
+      porItem.set(nota.itemId, [...(porItem.get(nota.itemId) ?? []), nota])
+    }
+    return porItem
+  }
+
   async crearNota(itemId: string, authorId: string, body: string): Promise<NotaDeItem> {
     const fila = await clienteDe(this.prisma).scheduleItemNote.create({
       data: { scheduleItemId: itemId, authorId, body },

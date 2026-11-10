@@ -60,6 +60,28 @@ export interface PendienteDeProveedor {
   endsAt: Date | null
 }
 
+/** Una nota del planner sobre un ítem (spec 2026-11-10 §7). Sin editar ni borrar. */
+export interface NotaDeItem {
+  id: string
+  itemId: string
+  body: string
+  createdAt: Date
+  author: { id: string; name: string; avatarKey: string | null }
+}
+
+/**
+ * A quién y de qué avisar en un recordatorio, tal como está AHORA (spec
+ * 2026-11-10 §5): el worker lo pide justo antes de avisar para descartar los
+ * jobs obsoletos.
+ */
+export interface DestinoRecordatorio {
+  userId: string
+  eventId: string
+  title: string
+  status: ScheduleItemStatus
+  startsAt: Date
+}
+
 /**
  * Asignaciones (ítem × contratación) y confirmaciones (spec 2026-11-10 §3–§4).
  *
@@ -109,6 +131,27 @@ export interface ScheduleItemRepository {
   confirmar(eventId: string, userId: string, vistos: PendienteDeProveedor[]): Promise<void>
   /** userIds con alguna asignación vigente sin confirmar en el evento, ordenados. */
   usuariosConPendientes(eventId: string): Promise<string[]>
+
+  /** Notas del ítem, de la más antigua a la más reciente (desempate por id). */
+  listarNotas(itemId: string): Promise<NotaDeItem[]>
+  /** El caso de uso ya recortó (`trim`) y validó 1..2000; la base lo vuelve a exigir con un CHECK. */
+  crearNota(itemId: string, authorId: string, body: string): Promise<NotaDeItem>
+  /** itemId → número de notas de los ítems del evento; los ítems sin notas no aparecen. */
+  contarNotas(eventId: string): Promise<Map<string, number>>
+  /**
+   * null si el ítem no existe, la asignación no está, la contratación ya no es
+   * vigente (`BOOKED` con ficha) o el evento no está `ACTIVE`. Comprueba el
+   * estado de la base, no el del job que lo pide (spec 2026-11-10 §5).
+   */
+  destinoRecordatorio(itemId: string, eventVendorId: string): Promise<DestinoRecordatorio | null>
+  /**
+   * Asignaciones vigentes de esa contratación con `startsAt > ahora`, por hora
+   * y luego por ítem: lo que hay que reprogramar al recontratarla.
+   */
+  asignacionesFuturas(
+    eventVendorId: string,
+    ahora: Date,
+  ): Promise<{ itemId: string; startsAt: Date }[]>
 }
 
 export const SCHEDULE_ITEM_REPOSITORY = Symbol('SCHEDULE_ITEM_REPOSITORY')

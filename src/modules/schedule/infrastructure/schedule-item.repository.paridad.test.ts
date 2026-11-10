@@ -10,42 +10,19 @@ import type {
   ScheduleItemRepository,
 } from '../application/schedule-item.repository'
 import { ItemDeCronogramaNoEncontradoError } from '../domain/schedule-errors'
+import {
+  CATEGORIA,
+  conAmbos as conAmbosEn,
+  contratado,
+  item,
+  type Mundo,
+} from './schedule-item.paridad.support'
 import { ScheduleItemRepositoryEnMemoria } from './schedule-item.repository.fake'
 import { PrismaScheduleItemRepository } from './prisma-schedule-item.repository'
 
 const LUGAR = { name: 'Salón', address: 'Cra 7 #1', lat: 4.6, lng: -74.07, mapboxId: 'poi.2' }
 
-type EstadoContratacion = 'SHORTLISTED' | 'BOOKED' | 'CANCELLED'
-
-/** Categoría de todas las contrataciones de estos tests: `categoryName` se compara literal. */
-const CATEGORIA = 'Cronograma Paridad'
-
 const porTexto = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
-
-/**
- * Lo que un test de asignaciones necesita sembrar, igual para el doble (que lo
- * guarda en memoria) y para Postgres (que lo escribe en las tablas de otros
- * módulos). Mismo patrón que la paridad del moodboard.
- */
-interface Mundo {
-  repo: ScheduleItemRepository
-  evento(): Promise<string>
-  /** Usuario sin ficha: quien asigna (`assignedById` es FK a users). */
-  usuario(nombre: string): Promise<string>
-  /** Usuario con ficha de proveedor; en Postgres, `businessName` = `nombre`. */
-  proveedor(nombre: string, avatarKey?: string): Promise<string>
-  /**
-   * Con `userId`, `name` debe ser el del proveedor (en Postgres el nombre sale
-   * de su ficha); con `userId: null`, es una contratación externa.
-   */
-  contratacion(datos: {
-    eventId: string
-    userId: string | null
-    name: string
-    status: EstadoContratacion
-  }): Promise<string>
-  cambiarContratacion(id: string, status: EstadoContratacion): Promise<void>
-}
 
 /**
  * Cada caso corre contra el doble y contra Postgres y compara lo que devuelve
@@ -89,6 +66,10 @@ describe('Paridad: ScheduleItemRepositoryEnMemoria vs PrismaScheduleItemReposito
       ['prisma', new PrismaScheduleItemRepository(prisma as unknown as PrismaService)],
     ]
   }
+
+  /** Los dos sujetos, cada uno con su propio mundo sembrado desde cero. */
+  const conAmbos = (caso: (m: Mundo, nombre: string) => Promise<void>) =>
+    conAmbosEn(() => ({ prisma, categoryId }), caso)
 
   const sinVolatiles = ({
     id: _id,
@@ -269,123 +250,6 @@ describe('Paridad: ScheduleItemRepositoryEnMemoria vs PrismaScheduleItemReposito
   })
 
   // --- Asignaciones y confirmaciones (spec 2026-11-10 §3–§4) ---
-
-  function mundoDoble(): Mundo {
-    const repo = new ScheduleItemRepositoryEnMemoria()
-    const contrataciones = new Map<string, Parameters<Mundo['contratacion']>[0]>()
-    return {
-      repo,
-      evento: () => {
-        const id = randomUUID()
-        repo.sembrarEvento(id, { status: 'ACTIVE' })
-        return Promise.resolve(id)
-      },
-      usuario: (nombre) => {
-        const id = randomUUID()
-        repo.sembrarUsuario({ id, name: nombre })
-        return Promise.resolve(id)
-      },
-      proveedor: (nombre, avatarKey) => {
-        const id = randomUUID()
-        repo.sembrarUsuario({ id, name: nombre, ...(avatarKey === undefined ? {} : { avatarKey }) })
-        return Promise.resolve(id)
-      },
-      contratacion: (datos) => {
-        const id = randomUUID()
-        contrataciones.set(id, datos)
-        repo.sembrarContratacion({ id, ...datos, categoryName: CATEGORIA })
-        return Promise.resolve(id)
-      },
-      cambiarContratacion: (id, status) => {
-        const previa = contrataciones.get(id)
-        if (previa === undefined) throw new Error('contratación desconocida')
-        repo.sembrarContratacion({ id, ...previa, status, categoryName: CATEGORIA })
-        return Promise.resolve()
-      },
-    }
-  }
-
-  function mundoPrisma(): Mundo {
-    const repo = new PrismaScheduleItemRepository(prisma as unknown as PrismaService)
-    const fichas = new Map<string, string>()
-    const crearUsuario = (nombre: string, avatarKey?: string) =>
-      prisma.user.create({
-        data: {
-          email: `${randomUUID()}@par-schedule.test`,
-          passwordHash: 'x',
-          fullName: nombre,
-          ...(avatarKey === undefined ? {} : { avatarKey }),
-        },
-      })
-    return {
-      repo,
-      evento: async () => {
-        const owner = await crearUsuario('Owner')
-        const e = await prisma.event.create({
-          data: {
-            name: 'Boda',
-            ownerId: owner.id,
-            status: 'ACTIVE',
-            weddingDate: new Date('2027-06-12'),
-          },
-        })
-        return e.id
-      },
-      usuario: async (nombre) => (await crearUsuario(nombre)).id,
-      proveedor: async (nombre, avatarKey) => {
-        const u = await crearUsuario(nombre, avatarKey)
-        const perfil = await prisma.vendorProfile.create({
-          data: { userId: u.id, businessName: nombre, categoryId },
-        })
-        fichas.set(u.id, perfil.id)
-        return u.id
-      },
-      contratacion: async (datos) => {
-        const ficha = datos.userId === null ? undefined : fichas.get(datos.userId)
-        const e = await prisma.eventVendor.create({
-          data: {
-            eventId: datos.eventId,
-            categoryId,
-            status: datos.status,
-            ...(ficha === undefined ? { externalName: datos.name } : { vendorProfileId: ficha }),
-          },
-        })
-        return e.id
-      },
-      cambiarContratacion: async (id, status) => {
-        await prisma.eventVendor.update({ where: { id }, data: { status } })
-      },
-    }
-  }
-
-  /** Los dos sujetos, cada uno con su propio mundo sembrado desde cero. */
-  async function conAmbos(caso: (m: Mundo, nombre: string) => Promise<void>): Promise<void> {
-    for (const [nombre, m] of [
-      ['doble', mundoDoble()],
-      ['prisma', mundoPrisma()],
-    ] as const) {
-      await caso(m, nombre)
-    }
-  }
-
-  function item(m: Mundo, eventId: string, title: string, startsAt: string, endsAt?: string) {
-    return m.repo.crear({
-      eventId,
-      title,
-      description: null,
-      startsAt: new Date(startsAt),
-      endsAt: endsAt === undefined ? null : new Date(endsAt),
-      location: null,
-      status: 'PENDING',
-    })
-  }
-
-  /** Un proveedor con su contratación BOOKED en `eventId`. */
-  async function contratado(m: Mundo, eventId: string, nombre: string, avatarKey?: string) {
-    const userId = await m.proveedor(nombre, avatarKey)
-    const eventVendorId = await m.contratacion({ eventId, userId, name: nombre, status: 'BOOKED' })
-    return { userId, eventVendorId }
-  }
 
   /** Lo comparable de un ítem con asignaciones: sin ids ni timestamps. */
   const vistaDe = (i: ItemConAsignaciones) => ({

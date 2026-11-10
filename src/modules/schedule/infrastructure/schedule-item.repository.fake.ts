@@ -5,8 +5,10 @@ import type {
   AsignacionVista,
   CambiosItem,
   DatosNuevoItem,
+  DestinoRecordatorio,
   EstadoProveedor,
   ItemConAsignaciones,
+  NotaDeItem,
   PendienteDeProveedor,
   ScheduleItemRepository,
 } from '../application/schedule-item.repository'
@@ -58,6 +60,7 @@ const mismoInstante = (a: Date | null, b: Date | null): boolean =>
 export class ScheduleItemRepositoryEnMemoria implements ScheduleItemRepository {
   readonly items: ScheduleItem[] = []
   readonly asignaciones: AsignacionGuardada[] = []
+  readonly notas: NotaDeItem[] = []
   readonly eventos = new Map<string, { status: EstadoEvento }>()
   readonly usuarios = new Map<string, { id: string; name: string; avatarKey: string | null }>()
   readonly contrataciones = new Map<string, ContratacionGuardada>()
@@ -110,12 +113,14 @@ export class ScheduleItemRepositoryEnMemoria implements ScheduleItemRepository {
     return Promise.resolve({ ...item })
   }
 
-  /** Borra también sus asignaciones: en Postgres es la cascada de la FK. */
+  /** Borra también sus asignaciones y notas: en Postgres son las cascadas de la FK. */
   eliminar(eventId: string, itemId: string): Promise<boolean> {
     const indice = this.items.findIndex((i) => i.id === itemId && i.eventId === eventId)
     if (indice === -1) return Promise.resolve(false)
     this.items.splice(indice, 1)
     this.quitarAsignaciones((a) => a.scheduleItemId === itemId)
+    const quedan = this.notas.filter((n) => n.itemId !== itemId)
+    this.notas.splice(0, this.notas.length, ...quedan)
     return Promise.resolve(true)
   }
 
@@ -261,6 +266,64 @@ export class ScheduleItemRepositoryEnMemoria implements ScheduleItemRepository {
       (a) => a.confirmedAt === null && this.itemDe(a)?.eventId === eventId,
     ).map((v) => v.contratacion.userId)
     return Promise.resolve([...new Set(usuarios)].sort(porTexto))
+  }
+
+  /** Orden de inserción: es el cronológico (en Postgres, `createdAt` y luego id). */
+  listarNotas(itemId: string): Promise<NotaDeItem[]> {
+    return Promise.resolve(
+      this.notas.filter((n) => n.itemId === itemId).map((n) => ({ ...n, author: { ...n.author } })),
+    )
+  }
+
+  /** Autor desconocido: en Postgres sería la FK; el doble lo rechaza igual. */
+  crearNota(itemId: string, authorId: string, body: string): Promise<NotaDeItem> {
+    const autor = this.usuarios.get(authorId)
+    if (autor === undefined) return Promise.reject(new Error('autor desconocido'))
+    const nota: NotaDeItem = {
+      id: randomUUID(),
+      itemId,
+      body,
+      createdAt: new Date(),
+      author: { id: autor.id, name: autor.name, avatarKey: autor.avatarKey },
+    }
+    this.notas.push(nota)
+    return Promise.resolve({ ...nota, author: { ...nota.author } })
+  }
+
+  contarNotas(eventId: string): Promise<Map<string, number>> {
+    const cuentas = new Map<string, number>()
+    for (const n of this.notas) {
+      if (this.items.find((i) => i.id === n.itemId)?.eventId !== eventId) continue
+      cuentas.set(n.itemId, (cuentas.get(n.itemId) ?? 0) + 1)
+    }
+    return Promise.resolve(cuentas)
+  }
+
+  destinoRecordatorio(itemId: string, eventVendorId: string): Promise<DestinoRecordatorio | null> {
+    const [vigente] = this.vigentes(
+      (a) => a.scheduleItemId === itemId && a.eventVendorId === eventVendorId,
+    )
+    const item = this.items.find((i) => i.id === itemId)
+    if (vigente === undefined || item === undefined) return Promise.resolve(null)
+    if (this.eventos.get(item.eventId)?.status !== 'ACTIVE') return Promise.resolve(null)
+    return Promise.resolve({
+      userId: vigente.contratacion.userId,
+      eventId: item.eventId,
+      title: item.title,
+      status: item.status,
+      startsAt: item.startsAt,
+    })
+  }
+
+  asignacionesFuturas(
+    eventVendorId: string,
+    ahora: Date,
+  ): Promise<{ itemId: string; startsAt: Date }[]> {
+    const futuras = this.vigentes((a) => a.eventVendorId === eventVendorId)
+      .map((v) => this.itemDe(v.fila))
+      .filter((i): i is ScheduleItem => i !== undefined && i.startsAt.getTime() > ahora.getTime())
+      .sort(porHora)
+    return Promise.resolve(futuras.map((i) => ({ itemId: i.id, startsAt: i.startsAt })))
   }
 
   /**

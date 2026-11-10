@@ -10,8 +10,10 @@ import type {
   AsignacionVista,
   CambiosItem,
   DatosNuevoItem,
+  DestinoRecordatorio,
   EstadoProveedor,
   ItemConAsignaciones,
+  NotaDeItem,
   PendienteDeProveedor,
   ScheduleItemRepository,
 } from '../application/schedule-item.repository'
@@ -79,6 +81,12 @@ const INCLUIR_ASIGNACIONES = {
     },
   },
 } satisfies Prisma.ScheduleItemInclude
+
+const INCLUIR_AUTOR = {
+  author: { select: { id: true, fullName: true, avatarKey: true } },
+} satisfies Prisma.ScheduleItemNoteInclude
+
+type FilaDeNota = Prisma.ScheduleItemNoteGetPayload<{ include: typeof INCLUIR_AUTOR }>
 
 type FilaConAsignaciones = Prisma.ScheduleItemGetPayload<{ include: typeof INCLUIR_ASIGNACIONES }>
 
@@ -338,6 +346,87 @@ export class PrismaScheduleItemRepository implements ScheduleItemRepository {
       select: { eventVendor: { select: { vendorProfile: { select: { userId: true } } } } },
     })
     return usuariosDe(filas)
+  }
+
+  /**
+   * Cronológico por `createdAt` (ms) y, en empate, por id: dos notas del mismo
+   * milisegundo salen en orden estable pero no necesariamente el de inserción.
+   * Alternativa descartada: una columna serie sólo para desempatar.
+   */
+  async listarNotas(itemId: string): Promise<NotaDeItem[]> {
+    const filas = await clienteDe(this.prisma).scheduleItemNote.findMany({
+      where: { scheduleItemId: itemId },
+      include: INCLUIR_AUTOR,
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    })
+    return filas.map(aNota)
+  }
+
+  async crearNota(itemId: string, authorId: string, body: string): Promise<NotaDeItem> {
+    const fila = await clienteDe(this.prisma).scheduleItemNote.create({
+      data: { scheduleItemId: itemId, authorId, body },
+      include: INCLUIR_AUTOR,
+    })
+    return aNota(fila)
+  }
+
+  async contarNotas(eventId: string): Promise<Map<string, number>> {
+    const grupos = await clienteDe(this.prisma).scheduleItemNote.groupBy({
+      by: ['scheduleItemId'],
+      where: { scheduleItem: { eventId } },
+      _count: { _all: true },
+    })
+    return new Map(grupos.map((g) => [g.scheduleItemId, g._count._all]))
+  }
+
+  /**
+   * Un solo SELECT con la regla de "vigente" (`VIGENTE`) más el evento
+   * `ACTIVE`: el ítem inexistente, la asignación ausente, la contratación
+   * cancelada o el evento en borrador dan todos null sin distinguirse, porque
+   * el worker sólo necesita saber si avisar (spec 2026-11-10 §5).
+   */
+  async destinoRecordatorio(
+    itemId: string,
+    eventVendorId: string,
+  ): Promise<DestinoRecordatorio | null> {
+    const fila = await clienteDe(this.prisma).scheduleItemVendor.findFirst({
+      where: {
+        scheduleItemId: itemId,
+        eventVendorId,
+        ...VIGENTE,
+        scheduleItem: { event: { status: 'ACTIVE' } },
+      },
+      select: {
+        scheduleItem: { select: { eventId: true, title: true, status: true, startsAt: true } },
+        eventVendor: { select: { vendorProfile: { select: { userId: true } } } },
+      },
+    })
+    const ficha = fila?.eventVendor.vendorProfile
+    if (fila === null || ficha === null || ficha === undefined) return null
+    return { userId: ficha.userId, ...fila.scheduleItem }
+  }
+
+  async asignacionesFuturas(
+    eventVendorId: string,
+    ahora: Date,
+  ): Promise<{ itemId: string; startsAt: Date }[]> {
+    const filas = await clienteDe(this.prisma).scheduleItemVendor.findMany({
+      where: { eventVendorId, ...VIGENTE, scheduleItem: { startsAt: { gt: ahora } } },
+      select: { scheduleItemId: true, scheduleItem: { select: { startsAt: true } } },
+    })
+    return filas
+      .map((f) => ({ itemId: f.scheduleItemId, startsAt: f.scheduleItem.startsAt }))
+      .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime() || porTexto(a.itemId, b.itemId))
+  }
+}
+
+function aNota(fila: FilaDeNota): NotaDeItem {
+  return {
+    id: fila.id,
+    itemId: fila.scheduleItemId,
+    body: fila.body,
+    createdAt: fila.createdAt,
+    author: { id: fila.author.id, name: fila.author.fullName, avatarKey: fila.author.avatarKey },
   }
 }
 

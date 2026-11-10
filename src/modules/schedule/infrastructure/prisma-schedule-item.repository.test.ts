@@ -100,4 +100,37 @@ describe('PrismaScheduleItemRepository (Postgres real)', () => {
     expect(await filas({ eventVendorId })).toBe(0)
     expect(await prisma.scheduleItem.count({ where: { id: itemId } })).toBe(1)
   })
+
+  /**
+   * El CHECK de la nota (1..2000 caracteres tras `btrim`) es la última defensa
+   * si un caso de uso olvida validar. `$executeRaw` etiquetado: parametrizado,
+   * nunca `$executeRawUnsafe` (prohibido por ESLint).
+   */
+  describe('CHECK de las notas', () => {
+    async function insertar(cuerpo: string): Promise<unknown> {
+      const { id } = await repo.crear({
+        eventId,
+        title: 'Con nota',
+        description: null,
+        startsAt: new Date('2027-06-12T18:00:00Z'),
+        endsAt: null,
+        location: null,
+        status: 'PENDING',
+      })
+      return prisma.$executeRaw`INSERT INTO schedule_item_notes ("id", "scheduleItemId", "authorId", "body")
+          VALUES (gen_random_uuid(), ${id}::uuid, ${plannerId}::uuid, ${cuerpo})`.catch(
+        (e: unknown) => e,
+      )
+    }
+
+    it('rechaza la nota vacía y la de sólo espacios', async () => {
+      expect(String(await insertar(''))).toContain('schedule_item_notes_cuerpo')
+      expect(String(await insertar('   '))).toContain('schedule_item_notes_cuerpo')
+    })
+
+    it('rechaza 2.001 caracteres y acepta 2.000', async () => {
+      expect(String(await insertar('a'.repeat(2001)))).toContain('schedule_item_notes_cuerpo')
+      expect(await insertar('a'.repeat(2000))).toBe(1)
+    })
+  })
 })

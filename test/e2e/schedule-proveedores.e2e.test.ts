@@ -818,7 +818,7 @@ describe('cronograma con proveedores e2e', () => {
   })
 
   describe('Notify Vendors (spec 2026-11-10 §6)', () => {
-    it('avisa a A en vivo y en la campana; la sexta pulsación en una hora → 429', async () => {
+    it('avisa a A en vivo y en la campana; la sexta pulsación en una hora → 429, sólo para ese usuario', async () => {
       await crearItem({
         title: 'Llegada de flores',
         startsAt: '2027-06-12T18:00:00Z',
@@ -845,7 +845,14 @@ describe('cronograma con proveedores e2e', () => {
       for (let i = 2; i <= 5; i++) {
         await request(server).post(`${base()}/notify-vendors`).set(como('creador')).expect(200)
       }
-      await request(server).post(`${base()}/notify-vendors`).set(como('creador')).expect(429)
+      const cortada = await request(server)
+        .post(`${base()}/notify-vendors`)
+        .set(como('creador'))
+        .expect(429)
+      expect(cortada.headers['retry-after-schedule-notify']).toBeDefined()
+      // El cupo es por usuario y evento, no por IP: el otro planner, desde la
+      // misma IP y en el mismo evento, sigue pudiendo avisar.
+      await request(server).post(`${base()}/notify-vendors`).set(como('planner')).expect(200)
     })
   })
 

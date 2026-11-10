@@ -50,10 +50,19 @@ import { UnauthorizedError } from '@/shared/domain'
  *
  * `shared/` no importa módulos: el tipo del usuario es local.
  *
+ * `porParametro` (opcional) parte además el cupo por un parámetro de ruta:
+ * `schedule-notify` cuenta por usuario Y evento (`eventId`), como pide la spec
+ * 2026-11-10 §6 ("5 por hora por evento"), así que un planner con dos bodas
+ * tiene un cupo en cada una. Si la ruta no trae ese parámetro falla CERRADO
+ * con un `Error` de programación, por lo mismo que sin metadatos: contar bajo
+ * "sin evento" juntaría en un cupo lo que debía ir separado.
+ *
  * Quien quiera migrar `messages`/`invite` a por-usuario: pasar de
  * `@LimiteDeRuta` a `@LimitePorUsuario` y quitar su entrada de `limitadores.ts`.
  */
 export const LIMITE_CONTACT_REQUESTS = 'contact-requests'
+/** "Notify Vendors" del cronograma: 5 por hora por usuario y evento (spec 2026-11-10 §6). */
+export const LIMITE_SCHEDULE_NOTIFY = 'schedule-notify'
 
 const CLAVE = 'limite-por-usuario'
 
@@ -61,10 +70,12 @@ interface ConfiguracionDeLimite {
   nombre: string
   limit: number
   ttl: number
+  porParametro?: string | undefined
 }
 
 interface PeticionConUsuario {
   user?: { id: string }
+  params?: Record<string, string | undefined>
 }
 
 /** Lo único que el guard usa de la respuesta de Express (lo mismo que `ThrottlerGuard`). */
@@ -88,11 +99,21 @@ export class LimitePorUsuarioGuard implements CanActivate {
       throw new Error('LimitePorUsuarioGuard sin @LimitePorUsuario: usa el decorador, no el guard')
     }
     const http = contexto.switchToHttp()
-    const id = http.getRequest<PeticionConUsuario>().user?.id
+    const peticion = http.getRequest<PeticionConUsuario>()
+    const id = peticion.user?.id
     if (id === undefined) throw new UnauthorizedError('Falta el token de acceso')
 
+    let clave = `usuario:${id}`
+    if (config.porParametro !== undefined) {
+      const valor = new Map(Object.entries(peticion.params ?? {})).get(config.porParametro)
+      if (valor === undefined) {
+        throw new Error(`@LimitePorUsuario: la ruta no tiene el parámetro ${config.porParametro}`)
+      }
+      clave += `:${config.porParametro}:${valor}`
+    }
+
     const registro = await this.almacen.increment(
-      `usuario:${id}`,
+      clave,
       config.ttl,
       config.limit,
       config.ttl,
@@ -110,10 +131,13 @@ export class LimitePorUsuarioGuard implements CanActivate {
   }
 }
 
-/** Limita la ruta a `limit` peticiones por `ttl` ms y por usuario autenticado. */
+/**
+ * Limita la ruta a `limit` peticiones por `ttl` ms y por usuario autenticado
+ * (y por el valor de `porParametro`, si se da).
+ */
 export function LimitePorUsuario(
   nombre: string,
-  opciones: { limit: number; ttl: number },
+  opciones: { limit: number; ttl: number; porParametro?: string },
 ): MethodDecorator {
   return applyDecorators(
     SetMetadata(CLAVE, { nombre, ...opciones } satisfies ConfiguracionDeLimite),

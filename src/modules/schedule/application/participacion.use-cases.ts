@@ -232,7 +232,8 @@ export class ConfirmacionesUseCase {
  * vigente sin confirmar. Sólo el planner. Sin pendientes no escribe ni encola
  * nada y responde `{ notified: 0 }` (la pantalla lo dice). Las filas se crean
  * en la transacción; el empuje en vivo, tras el commit. El límite de ritmo es
- * de la ruta (`@LimiteDeRuta('schedule-notify')`), no de aquí.
+ * de la ruta (`@LimitePorUsuario('schedule-notify')`, por usuario y evento), no
+ * de aquí.
  */
 @Injectable()
 export class AvisarProveedoresUseCase {

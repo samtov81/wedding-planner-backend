@@ -26,7 +26,7 @@ import { RequireEventAccess } from '@/modules/events/interfaces/require-event-ac
 import { SubidaDeImagenes } from '@/modules/storage/application/subida-de-imagenes'
 import { UnauthorizedError } from '@/shared/domain'
 import { idDeRuta } from '@/shared/http/id-de-ruta'
-import { LIMITADOR_SCHEDULE_NOTIFY, LimiteDeRuta } from '@/shared/http/limitadores'
+import { LIMITE_SCHEDULE_NOTIFY, LimitePorUsuario } from '@/shared/http/limite-por-usuario'
 import { validarCon } from '@/shared/http/validar-con'
 
 import { CreateScheduleItemUseCase } from '../application/create-schedule-item.use-case'
@@ -204,15 +204,21 @@ export class ScheduleController {
   }
 
   /**
-   * Límite propio `schedule-notify` (5 por hora por IP, spec 2026-11-10 §6):
-   * cada pulsación crea una campana por proveedor pendiente. Se cuenta aunque
-   * la respuesta sea 403 (el limitador corre antes que el caso de uso), igual
-   * que `moodboard-notes`.
+   * Límite propio `schedule-notify`: 5 por hora por USUARIO Y EVENTO (spec
+   * 2026-11-10 §6), con `@LimitePorUsuario` + `porParametro: 'eventId'`. Cada
+   * pulsación crea una campana por proveedor pendiente. El guard va en el
+   * método, así que corre DESPUÉS de `JwtAuthGuard` y `EventAccessGuard`: el
+   * 403 del guard de eventos (un proveedor) no gasta cupo; el 403 del caso de
+   * uso (la pareja) sí, porque llega al limitador antes que al caso de uso.
+   * Alternativa descartada: `@LimiteDeRuta`, que cuenta por IP (el
+   * `ThrottlerGuard` global corre antes de la autenticación) y juntaba en un
+   * cupo a todos los planners tras la misma IP y todas sus bodas. El global
+   * de 120/min por IP sigue sumándose.
    */
   @RequireEventAccess(...MIEMBRO)
   @Post('notify-vendors')
   @HttpCode(200)
-  @LimiteDeRuta(LIMITADOR_SCHEDULE_NOTIFY, { ttl: 3_600_000, limit: 5 })
+  @LimitePorUsuario(LIMITE_SCHEDULE_NOTIFY, { limit: 5, ttl: 3_600_000, porParametro: 'eventId' })
   async avisarProveedores(
     @Param('eventId') eventId: string,
     @EventAccessOf() acceso: EventAccess | undefined,

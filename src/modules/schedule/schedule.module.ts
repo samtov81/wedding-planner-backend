@@ -10,6 +10,7 @@ import {
 } from '@/modules/notifications/application/notification.port'
 import { REALTIME_PORT, type RealtimePort } from '@/modules/notifications/application/realtime.port'
 import { NotificationsModule } from '@/modules/notifications/notifications.module'
+import { StorageModule } from '@/modules/storage/storage.module'
 import { UsersModule } from '@/modules/users/users.module'
 
 import { COLA_CRONOGRAMA } from './application/avisos-cronograma'
@@ -54,6 +55,9 @@ import { ScheduleRemindersModule } from './schedule-reminders.module'
  * worker se cablea con `useFactory` para que su `reloj` quede en el valor por
  * defecto (ver su docblock).
  *
+ * `StorageModule` aporta `SubidaDeImagenes`: el controlador firma los
+ * avatares de notas y de "Vendors Ready" al responder, como el moodboard.
+ *
  * `ScheduleRemindersModule` (el que exporta `RECORDATORIOS_PORT` a `vendors`)
  * se importa para que el cronograma tenga a mano su propio puerto público;
  * hoy ningún proveedor de aquí lo inyecta, porque los casos de uso encolan
@@ -69,6 +73,7 @@ import { ScheduleRemindersModule } from './schedule-reminders.module'
     UsersModule,
     EventsModule,
     NotificationsModule,
+    StorageModule,
     ScheduleRemindersModule,
     BullModule.registerQueue({ name: COLA_CRONOGRAMA }),
   ],

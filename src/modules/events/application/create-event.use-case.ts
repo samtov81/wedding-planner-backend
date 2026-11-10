@@ -15,7 +15,7 @@ export class CreateEventUseCase {
    * después, invitada. Antes nacía COUPLE; los eventos ya creados conservan
    * ese rol a propósito —sin migración de datos— y en ellos el estado del
    * cronograma sólo lo mueve un planner invitado o ADMIN
-   * (`puedeCambiarEstadoDelCronograma`).
+   * (`esPlannerDelEvento`).
    *
    * El evento y la membresía PLANNER del creador nacen juntos, en una sola
    * transacción: un evento sin membresía es un evento al que ni su dueño puede

@@ -33,8 +33,8 @@ import {
  * llega ya decidida, sin que el cronograma conozca roles.
  *
  * `esPlanner` gobierna a la vez el estado del ítem (lo que antes era
- * `puedeCambiarEstado`: `puedeCambiarEstadoDelCronograma` es exactamente
- * `esPlannerDelEvento`), las asignaciones, las notas y "Notify Vendors" (spec
+ * `puedeCambiarEstado`, calculado con `puedeCambiarEstadoDelCronograma`, ya
+ * borrada por ser exactamente `esPlannerDelEvento`), las asignaciones, las notas y "Notify Vendors" (spec
  * 2026-11-10 §3). Alternativa descartada: conservar `puedeCambiarEstado` junto
  * a `esPlanner`, dos booleanos que hoy significan lo mismo y que el
  * controlador podría desalinear. Ambos campos son obligatorios a propósito:

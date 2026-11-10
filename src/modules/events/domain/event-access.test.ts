@@ -1,4 +1,4 @@
-import { esPlannerDelEvento, permisosDe, puedeCambiarEstadoDelCronograma } from './event-access'
+import { esPlannerDelEvento, permisosDe } from './event-access'
 
 describe('esPlannerDelEvento', () => {
   it('lo son el admin y el PLANNER, sea o no el creador', () => {
@@ -16,41 +16,6 @@ describe('esPlannerDelEvento', () => {
     ).toBe(false)
     expect(esPlannerDelEvento({ kind: 'vendor', eventVendorId: 'x' })).toBe(false)
     expect(esPlannerDelEvento({ kind: 'none' })).toBe(false)
-  })
-})
-
-describe('puedeCambiarEstadoDelCronograma', () => {
-  it('lo cambian el PLANNER (creador o invitado) y el admin', () => {
-    expect(
-      puedeCambiarEstadoDelCronograma({
-        kind: 'member',
-        role: 'PLANNER',
-        owner: true,
-        budgetView: false,
-      }),
-    ).toBe(true)
-    expect(
-      puedeCambiarEstadoDelCronograma({
-        kind: 'member',
-        role: 'PLANNER',
-        owner: false,
-        budgetView: false,
-      }),
-    ).toBe(true)
-    expect(puedeCambiarEstadoDelCronograma({ kind: 'admin' })).toBe(true)
-  })
-
-  it('no lo cambia un COUPLE, aunque sea el creador de un evento antiguo', () => {
-    expect(
-      puedeCambiarEstadoDelCronograma({
-        kind: 'member',
-        role: 'COUPLE',
-        owner: true,
-        budgetView: true,
-      }),
-    ).toBe(false)
-    expect(puedeCambiarEstadoDelCronograma({ kind: 'vendor', eventVendorId: 'x' })).toBe(false)
-    expect(puedeCambiarEstadoDelCronograma({ kind: 'none' })).toBe(false)
   })
 })
 

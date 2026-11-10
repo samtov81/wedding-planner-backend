@@ -3,6 +3,7 @@ import { Logger } from '@nestjs/common'
 import { UnidadDeTrabajoEnMemoria } from '@/modules/database/infrastructure/unidad-de-trabajo.fake'
 import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
+import { RecordatoriosPortEnMemoria } from '@/modules/schedule/infrastructure/recordatorios.port.fake'
 
 import {
   categoriaSembrada,
@@ -22,14 +23,16 @@ const PROVEEDOR = '44444444-4444-4444-8444-444444444444'
 function armar(vendors: EventVendorRepositoryEnMemoria) {
   const notificaciones = new NotificationPortEnMemoria()
   const cola = new InMemoryQueueAdapter()
+  const recordatorios = new RecordatoriosPortEnMemoria()
   const caso = new UpdateEventVendorUseCase(
     vendors,
     categorias(),
     notificaciones,
     new UnidadDeTrabajoEnMemoria(),
     cola,
+    recordatorios,
   )
-  return { caso, notificaciones, cola }
+  return { caso, notificaciones, cola, recordatorios }
 }
 
 async function contratacion(
@@ -255,6 +258,7 @@ describe('UpdateEventVendorUseCase', () => {
         notificaciones,
         new UnidadDeTrabajoEnMemoria(),
         cola,
+        new RecordatoriosPortEnMemoria(),
       )
 
       const r = await casoConCola.ejecutar(EVENTO, vista.id, { status: 'BOOKED' }, 'ana')
@@ -263,6 +267,70 @@ describe('UpdateEventVendorUseCase', () => {
       expect(notificaciones.creadas).toHaveLength(1)
       expect(aviso).toHaveBeenCalled()
       aviso.mockRestore()
+    })
+  })
+  describe('recordatorios del cronograma al recontratar (spec 2026-11-10 §5)', () => {
+    const enlazado = { kind: 'linked', vendorProfileId: PERFIL } as const
+
+    it('Review Focus 3: CANCELLED → BOOKED pide reprogramar los recordatorios de la contratación', async () => {
+      const vendors = conPerfil()
+      const { caso, recordatorios } = armar(vendors)
+      const vista = await contratacion(vendors, enlazado)
+      await caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED' }, 'ana')
+      await caso.ejecutar(EVENTO, vista.id, { status: 'CANCELLED' }, 'ana')
+      recordatorios.reprogramadas.length = 0
+
+      await caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED' }, 'ana')
+
+      expect(recordatorios.reprogramadas).toEqual([vista.id])
+    })
+
+    it('pasar a CANCELLED no reprograma nada: el worker descarta sus jobs', async () => {
+      const vendors = conPerfil()
+      const { caso, recordatorios } = armar(vendors)
+      const vista = await contratacion(vendors, enlazado)
+      await caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED' }, 'ana')
+      recordatorios.reprogramadas.length = 0
+
+      await caso.ejecutar(EVENTO, vista.id, { status: 'CANCELLED' }, 'ana')
+
+      expect(recordatorios.reprogramadas).toEqual([])
+    })
+
+    it('BOOKED → BOOKED y un PATCH sin status no reprograman', async () => {
+      const vendors = conPerfil()
+      const { caso, recordatorios } = armar(vendors)
+      const vista = await contratacion(vendors, enlazado)
+      await caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED' }, 'ana')
+      recordatorios.reprogramadas.length = 0
+
+      await caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED' }, 'ana')
+      await caso.ejecutar(EVENTO, vista.id, { assignedBudget: '10.00' }, 'ana')
+
+      expect(recordatorios.reprogramadas).toEqual([])
+    })
+
+    it('reprograma aunque quien contrata sea el propio proveedor (no hay aviso, sí recordatorios)', async () => {
+      const vendors = conPerfil()
+      const { caso, recordatorios } = armar(vendors)
+      const vista = await contratacion(vendors, enlazado)
+
+      await caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED' }, PROVEEDOR)
+
+      expect(recordatorios.reprogramadas).toEqual([vista.id])
+    })
+
+    it('si la transacción falla, no se reprograma nada', async () => {
+      const vendors = conPerfil()
+      const { caso, notificaciones, recordatorios } = armar(vendors)
+      const vista = await contratacion(vendors, enlazado)
+      notificaciones.fallarProximaCreacion(new Error('base de datos caída'))
+
+      await expect(caso.ejecutar(EVENTO, vista.id, { status: 'BOOKED' }, 'ana')).rejects.toThrow(
+        'base de datos caída',
+      )
+
+      expect(recordatorios.reprogramadas).toEqual([])
     })
   })
 })

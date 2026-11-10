@@ -9,6 +9,10 @@ import {
   type NotificationPort,
 } from '@/modules/notifications/application/notification.port'
 import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
+import {
+  RECORDATORIOS_PORT,
+  type RecordatoriosPort,
+} from '@/modules/schedule/application/recordatorios.port'
 
 import { EventVendorNoEncontradoError } from '../domain/vendor-errors'
 import { encolarAvisoProveedor } from './aviso-proveedor-contratado'
@@ -40,6 +44,16 @@ export interface CambiosPedidos extends Omit<CambiosEventVendor, 'category'> {
  * transición es la escritura condicionada del repositorio (`contratado`), no
  * una lectura previa, así que dos PATCH a `BOOKED` avisan una sola vez. La
  * cola se encola DESPUÉS de confirmar y su fallo no tumba el PATCH.
+ *
+ * La misma transición (`contratado`) pide al cronograma que reprograme los
+ * recordatorios de las asignaciones futuras (spec 2026-11-10 §5,
+ * "Recontratación"): mientras estuvo cancelada, el worker descartó sus jobs.
+ * Va tras el commit, sin mirar quién contrata (el proveedor que se contrata a
+ * sí mismo no recibe aviso, pero sí sus recordatorios), y el puerto nunca
+ * lanza. Pasar a `CANCELLED` no hace nada: el worker descarta los jobs al
+ * releer el estado. Alternativa descartada: llamar sólo en `CANCELLED →
+ * BOOKED`; `contratado` ya es "no estaba `BOOKED` y ahora sí", y una
+ * contratación sin asignaciones futuras no encola nada.
  */
 @Injectable()
 export class UpdateEventVendorUseCase {
@@ -51,6 +65,7 @@ export class UpdateEventVendorUseCase {
     @Inject(NOTIFICATION_PORT) private readonly notificaciones: NotificationPort,
     @Inject(UNIDAD_DE_TRABAJO) private readonly unidadDeTrabajo: UnidadDeTrabajo,
     @Inject(QUEUE_PORT) private readonly cola: QueuePort,
+    @Inject(RECORDATORIOS_PORT) private readonly recordatorios: RecordatoriosPort,
   ) {}
 
   async ejecutar(
@@ -90,6 +105,9 @@ export class UpdateEventVendorUseCase {
         { eventId, userId: avisado },
         eventVendorId,
       )
+    }
+    if (resultado.contratado !== null) {
+      await this.recordatorios.reprogramarContratacion(eventVendorId)
     }
     return resultado.vista
   }

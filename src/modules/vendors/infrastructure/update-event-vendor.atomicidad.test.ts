@@ -4,6 +4,7 @@ import type { PrismaService } from '@/modules/database/prisma.service'
 import { PrismaUnidadDeTrabajo } from '@/modules/database/transaccion'
 import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
+import { RecordatoriosPortEnMemoria } from '@/modules/schedule/infrastructure/recordatorios.port.fake'
 
 import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
@@ -61,12 +62,14 @@ describe('Contratar a un proveedor — atomicidad contra Postgres', () => {
     const notificaciones = new NotificationPortEnMemoria()
     notificaciones.fallarProximaCreacion(new Error('base de datos caída'))
     const cola = new InMemoryQueueAdapter()
+    const recordatorios = new RecordatoriosPortEnMemoria()
     const caso = new UpdateEventVendorUseCase(
       new PrismaEventVendorRepository(servicio),
       new CategoriasDeProveedor(new VendorCategoryRepositoryEnMemoria()),
       notificaciones,
       new PrismaUnidadDeTrabajo(servicio),
       cola,
+      recordatorios,
     )
 
     await expect(
@@ -78,5 +81,6 @@ describe('Contratar a un proveedor — atomicidad contra Postgres', () => {
     expect(await prisma.auditLog.count({ where: { action: 'event_vendor.updated' } })).toBe(0)
     expect(notificaciones.creadas).toEqual([])
     expect(cola.encolados).toEqual([])
+    expect(recordatorios.reprogramadas).toEqual([])
   })
 })

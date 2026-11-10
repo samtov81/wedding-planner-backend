@@ -87,9 +87,16 @@ function motivo(error: unknown): string {
 
 /**
  * Encola el recordatorio de cada asignación cuyo momento (`startsAt − 15 min`)
- * aún no ha pasado; el resto no se programa (spec 2026-11-10 §5). Cada job va
- * por separado: si Redis falla en uno, se registra y se intenta el siguiente.
- * Nunca lanza.
+ * aún no ha pasado; el resto no se programa (spec 2026-11-10 §5). Nunca lanza.
+ *
+ * Al PRIMER fallo de Redis se deja de intentar: se registra UNA vez, con
+ * cuántos quedaron sin encolar, y se vuelve. Con Redis caído cada `enqueue`
+ * espera su propio timeout de conexión, así que seguir con los N restantes
+ * dejaría colgada N veces la petición HTTP que ya guardó el cambio (un
+ * "Notify Vendors" o una asignación de 50 proveedores). Lo que se omite no se
+ * pierde: el barrido periódico (`ReconstruirRecordatorios`) lo repone en
+ * cuanto Redis vuelve. Alternativa descartada: seguir job a job, que sólo
+ * acierta si el fallo es de UN job y no de la conexión, el caso raro.
  */
 export async function encolarRecordatorios(
   cola: QueuePort,
@@ -97,8 +104,8 @@ export async function encolarRecordatorios(
   asignaciones: readonly AsignacionAProgramar[],
   ahora: Date,
 ): Promise<void> {
-  for (const a of asignaciones) {
-    if (!debeProgramarse(a.startsAt, ahora)) continue
+  const programables = asignaciones.filter((a) => debeProgramarse(a.startsAt, ahora))
+  for (const [indice, a] of programables.entries()) {
     const job: JobRecordatorio = {
       itemId: a.itemId,
       eventVendorId: a.eventVendorId,
@@ -110,10 +117,13 @@ export async function encolarRecordatorios(
         delayMs: momentoDelRecordatorio(a.startsAt).getTime() - ahora.getTime(),
       })
     } catch (error) {
+      const omitidos = programables.length - indice - 1
       registro.warn(
-        `Recordatorio no encolado itemId=${a.itemId} eventVendorId=${a.eventVendorId}: ` +
+        `Recordatorio no encolado itemId=${a.itemId} eventVendorId=${a.eventVendorId}; ` +
+          `se omiten ${omitidos} más hasta el próximo barrido: ` +
           motivo(error),
       )
+      return
     }
   }
 }

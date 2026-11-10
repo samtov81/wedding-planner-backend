@@ -762,12 +762,18 @@ describe('cronograma con proveedores e2e', () => {
           startsAt: '2027-06-12T22:15:00Z',
           eventVendorIds: [contratacion.id],
         })
+        // La pantalla lee lo pendiente de GET, no de un cuerpo armado a mano.
+        const antes = await request(server)
+          .get(`${base()}/confirmations`)
+          .set(comoMixto)
+          .expect(200)
+        expect((antes.body as { mine: unknown }).mine).toEqual({
+          pending: [{ itemId: item.id, startsAt: '2027-06-12T22:15:00.000Z', endsAt: null }],
+        })
         const r = await request(server)
           .post(`${base()}/confirmations`)
           .set(comoMixto)
-          .send({
-            items: [{ itemId: item.id, startsAt: '2027-06-12T22:15:00.000Z', endsAt: null }],
-          })
+          .send({ items: (antes.body as { mine: { pending: unknown[] } }).mine.pending })
           .expect(200)
         expect(r.body).toMatchObject({
           ready: 1,
@@ -798,8 +804,9 @@ describe('cronograma con proveedores e2e', () => {
       expect(await confirmar('pareja', vistos)).toMatchObject({
         ready: 0,
         total: 1,
-        mine: { pending: [] },
+        mine: null,
       })
+      expect((await confirmaciones('pareja')).mine).toBeNull()
       expect((await confirmaciones('provA')).mine?.pending).toEqual(vistos)
     })
 

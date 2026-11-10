@@ -272,6 +272,23 @@ describe('casos de uso de participación de proveedores', () => {
   })
 
   describe('confirmaciones', () => {
+    it('estado: `mine` para el proveedor puro, para el miembro que además es proveedor y null para el resto', async () => {
+      const { nuevoItem, asignar, confirmaciones } = escenario()
+      const ceremonia = await nuevoItem('Ceremonia', new Date('2027-06-12T18:00:00Z'))
+      await asignar.ejecutar(EVENTO, ceremonia.id, PLANIFICADOR, [EV_A])
+
+      // Proveedor puro (acceso `vendor`) sin asignaciones vigentes, como tras cancelar: lista vacía.
+      expect((await confirmaciones.estado(EVENTO, PROV_B, true)).mine).toEqual({ pending: [] })
+      // Miembro con acceso `member` que además tiene asignaciones: ve sus pendientes.
+      expect((await confirmaciones.estado(EVENTO, PROV_A, false)).mine).toEqual({
+        pending: [
+          { itemId: ceremonia.id, startsAt: new Date('2027-06-12T18:00:00Z'), endsAt: null },
+        ],
+      })
+      // Miembro sin asignaciones: null.
+      expect((await confirmaciones.estado(EVENTO, PLANNER_ID, false)).mine).toBeNull()
+    })
+
     it('estado: X de Y por usuario, y `mine` sólo para el proveedor', async () => {
       const { nuevoItem, asignar, confirmaciones } = escenario()
       const ceremonia = await nuevoItem('Ceremonia', new Date('2027-06-12T18:00:00Z'))
@@ -279,7 +296,7 @@ describe('casos de uso de participación de proveedores', () => {
       await asignar.ejecutar(EVENTO, ceremonia.id, PLANIFICADOR, [EV_A, EV_B])
       await asignar.ejecutar(EVENTO, fiesta.id, PLANIFICADOR, [EV_A2])
 
-      const deLaPareja = await confirmaciones.estado(EVENTO, null)
+      const deLaPareja = await confirmaciones.estado(EVENTO, PLANNER_ID, false)
       expect(deLaPareja).toEqual({
         ready: 0,
         total: 2,
@@ -290,7 +307,7 @@ describe('casos de uso de participación de proveedores', () => {
         mine: null,
       })
 
-      const deA = await confirmaciones.estado(EVENTO, PROV_A)
+      const deA = await confirmaciones.estado(EVENTO, PROV_A, true)
       expect(deA.mine).toEqual({
         pending: [
           { itemId: ceremonia.id, startsAt: new Date('2027-06-12T18:00:00Z'), endsAt: null },
@@ -305,10 +322,10 @@ describe('casos de uso de participación de proveedores', () => {
       const fiesta = await nuevoItem('Fiesta')
       await asignar.ejecutar(EVENTO, ceremonia.id, PLANIFICADOR, [EV_A, EV_B])
       await asignar.ejecutar(EVENTO, fiesta.id, PLANIFICADOR, [EV_A2])
-      const vistos = (await confirmaciones.estado(EVENTO, PROV_A)).mine?.pending ?? []
+      const vistos = (await confirmaciones.estado(EVENTO, PROV_A, true)).mine?.pending ?? []
       const antes = unidad.transacciones
 
-      const despues = await confirmaciones.confirmar(EVENTO, PROV_A, vistos)
+      const despues = await confirmaciones.confirmar(EVENTO, PROV_A, vistos, true)
 
       expect(unidad.transacciones).toBe(antes + 1)
       expect(despues).toMatchObject({ ready: 1, total: 2, mine: { pending: [] } })
@@ -322,11 +339,11 @@ describe('casos de uso de participación de proveedores', () => {
       const { nuevoItem, asignar, editar, confirmaciones } = escenario()
       const item = await nuevoItem()
       await asignar.ejecutar(EVENTO, item.id, PLANIFICADOR, [EV_A])
-      const vistos = (await confirmaciones.estado(EVENTO, PROV_A)).mine?.pending ?? []
+      const vistos = (await confirmaciones.estado(EVENTO, PROV_A, true)).mine?.pending ?? []
       const nueva = new Date('2027-06-12T23:00:00Z')
       await editar.ejecutar(EVENTO, item.id, { startsAt: nueva }, PLANIFICADOR)
 
-      const despues = await confirmaciones.confirmar(EVENTO, PROV_A, vistos)
+      const despues = await confirmaciones.confirmar(EVENTO, PROV_A, vistos, true)
 
       expect(despues.ready).toBe(0)
       expect(despues.mine).toEqual({
@@ -351,7 +368,8 @@ describe('casos de uso de participación de proveedores', () => {
       await confirmaciones.confirmar(
         EVENTO,
         PROV_A,
-        (await confirmaciones.estado(EVENTO, PROV_A)).mine?.pending ?? [],
+        (await confirmaciones.estado(EVENTO, PROV_A, true)).mine?.pending ?? [],
+        true,
       )
       cola.encolados.length = 0
 

@@ -189,19 +189,27 @@ export class ConfirmacionesUseCase {
   ) {}
 
   /**
-   * `userIdDelProveedor` es null para quien no es proveedor (pareja, planner,
-   * admin): `mine` sale null y no se consulta `pendientesDe`. Lo decide el
-   * controlador según el acceso, no este caso de uso.
+   * `mine` sale cuando quien mira es proveedor del evento: su acceso resolvió
+   * `vendor` (`esProveedorDelEvento`, lo decide el controlador) O aparece en
+   * `vendors`, es decir, tiene asignaciones vigentes. Lo segundo cubre al
+   * miembro (pareja/planner) que además está contratado: su acceso es
+   * `member` y sin esto la UI nunca vería sus pendientes. Lo primero conserva
+   * `{ pending: [] }` para un proveedor puro cuya contratación se canceló (ya
+   * no está en `vendors`). Pareja, planner o admin sin asignaciones: `mine`
+   * null y no se consulta `pendientesDe`. Alternativa descartada: calcular
+   * `mine` siempre; devolvería `{ pending: [] }` a quien no es proveedor y la
+   * pantalla no distinguiría "no soy proveedor" de "nada pendiente".
    */
   async estado(
     eventId: string,
-    userIdDelProveedor: string | null,
+    userId: string,
+    esProveedorDelEvento: boolean,
   ): Promise<EstadoDeConfirmaciones> {
     const vendors = await this.items.estadoConfirmaciones(eventId)
     const mine =
-      userIdDelProveedor === null
-        ? null
-        : { pending: await this.items.pendientesDe(eventId, userIdDelProveedor) }
+      esProveedorDelEvento || vendors.some((v) => v.userId === userId)
+        ? { pending: await this.items.pendientesDe(eventId, userId) }
+        : null
     return { ready: vendors.filter((v) => v.ready).length, total: vendors.length, vendors, mine }
   }
 
@@ -211,18 +219,19 @@ export class ConfirmacionesUseCase {
    * §4). `bloquearItems` antes de `confirmar` es lo que hace cierta esa regla
    * bajo concurrencia: si el planner está cambiando la hora, esta transacción
    * espera a su commit y el UPDATE de `confirmar` ya compara con la hora
-   * nueva. Devuelve el estado tras confirmar, con `mine` del proveedor.
+   * nueva. Devuelve el estado tras confirmar, con `mine` según `estado`.
    */
   async confirmar(
     eventId: string,
     userId: string,
     vistos: PendienteDeProveedor[],
+    esProveedorDelEvento: boolean,
   ): Promise<EstadoDeConfirmaciones> {
     await this.unidadDeTrabajo.ejecutar(async () => {
       await this.items.bloquearItems(eventId, [...new Set(vistos.map((v) => v.itemId))])
       await this.items.confirmar(eventId, userId, vistos)
     })
-    return await this.estado(eventId, userId)
+    return await this.estado(eventId, userId, esProveedorDelEvento)
   }
 }
 

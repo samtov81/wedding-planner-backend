@@ -166,7 +166,12 @@ describe('PrismaScheduleItemRepository (Postgres real)', () => {
         await esperarAQueAlguienEspere()
       })
       await bloqueada
-      const confirmar = new ConfirmacionesUseCase(repo, unidad).confirmar(ev, proveedorId, vistos)
+      const confirmar = new ConfirmacionesUseCase(repo, unidad).confirmar(
+        ev,
+        proveedorId,
+        vistos,
+        true,
+      )
 
       const [a, b] = await Promise.all([cambiarHora, confirmar])
       expect(a).toBeUndefined()

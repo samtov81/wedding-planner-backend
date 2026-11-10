@@ -324,7 +324,7 @@ describe('Cronograma del evento e2e', () => {
       .set(comoAna)
       .send({ items: (antes.body as { mine: { pending: unknown[] } }).mine.pending })
       .expect(200)
-    expect(deAna.body).toMatchObject({ ready: 0, total: 1, mine: { pending: [] } })
+    expect(deAna.body).toMatchObject({ ready: 0, total: 1, mine: null })
     const despues = await request(url)
       .post(`${base}/confirmations`)
       .set(comoDj)

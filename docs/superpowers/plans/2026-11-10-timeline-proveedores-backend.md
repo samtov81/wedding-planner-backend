@@ -51,8 +51,8 @@ Base `events/:eventId/schedule`, con `@UseGuards(JwtAuthGuard, EventAccessGuard)
 | `GET /:itemId/notes` | P (si no es planner, 404) | — | 200 `NoteJson[]` (cronológico) |
 | `POST /:itemId/notes` | P (si no es planner, 404) | `{ body }` | 201 `NoteJson` |
 | `GET /confirmations` | T | — | 200 `ConfirmacionesJson` |
-| `POST /confirmations` | V | `{ items: { itemId, startsAt, endsAt }[] }` | 200 `ConfirmacionesJson` |
-| `POST /notify-vendors` | P, `@LimiteDeRuta('schedule-notify')`, 5 por hora | — | 200 `{ notified: number }` |
+| `POST /confirmations` | T | `{ items: { itemId, startsAt, endsAt }[] }` | 200 `ConfirmacionesJson` |
+| `POST /notify-vendors` | P, `@LimitePorUsuario('schedule-notify')` (por usuario y evento), 5 por hora | — | 200 `{ notified: number }` |
 | `GET /pdf` | T | — | 200 `application/pdf`, `Content-Disposition: attachment; filename="timeline-<YYYY-MM-DD>.pdf"` |
 
 ```ts
@@ -66,7 +66,7 @@ type NoteJson = { id; itemId; body; createdAt; author: { id; name; avatarUrl: st
 type ConfirmacionesJson = {
   ready: number; total: number
   vendors: { userId: string; name: string; avatarUrl: string | null; ready: boolean }[] // por nombre
-  mine: { pending: { itemId: string; startsAt: string; endsAt: string | null }[] } | null // sólo proveedor
+  mine: { pending: { itemId: string; startsAt: string; endsAt: string | null }[] } | null // sólo proveedor, incluido un miembro que además es proveedor
 }
 ```
 

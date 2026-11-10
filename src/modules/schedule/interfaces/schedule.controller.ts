@@ -162,8 +162,8 @@ export class ScheduleController {
 
   /**
    * "Vendors Ready X of Y" para todos; `mine` (lo que le falta confirmar)
-   * sólo si quien mira es un proveedor. Lo decide el acceso que resolvió el
-   * guard, no el rol del usuario en otra parte.
+   * si quien mira es proveedor del evento: acceso `vendor` o, siendo miembro,
+   * con asignaciones vigentes (lo decide `ConfirmacionesUseCase.estado`).
    */
   @RequireEventAccess(...TODOS)
   @Get('confirmations')
@@ -172,8 +172,11 @@ export class ScheduleController {
     @EventAccessOf() acceso: EventAccess | undefined,
     @CurrentUser() usuario: UsuarioAutenticado | undefined,
   ): Promise<ConfirmacionesJson> {
-    const proveedor = accesoDe(acceso).kind === 'vendor' ? exigirUsuario(usuario).id : null
-    return await this.confirmacionesJson(await this.confirmaciones.estado(eventId, proveedor))
+    const yo = exigirUsuario(usuario)
+    const esProveedor = accesoDe(acceso).kind === 'vendor'
+    return await this.confirmacionesJson(
+      await this.confirmaciones.estado(eventId, yo.id, esProveedor),
+    )
   }
 
   /**
@@ -195,12 +198,16 @@ export class ScheduleController {
   @HttpCode(200)
   async confirmar(
     @Param('eventId') eventId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
     @CurrentUser() usuario: UsuarioAutenticado | undefined,
     @Body() body: unknown,
   ): Promise<ConfirmacionesJson> {
     const yo = exigirUsuario(usuario)
     const { items } = validarCon(confirmarSchema, body)
-    return await this.confirmacionesJson(await this.confirmaciones.confirmar(eventId, yo.id, items))
+    const esProveedor = accesoDe(acceso).kind === 'vendor'
+    return await this.confirmacionesJson(
+      await this.confirmaciones.confirmar(eventId, yo.id, items, esProveedor),
+    )
   }
 
   /**

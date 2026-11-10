@@ -627,6 +627,20 @@ describe('cronograma con proveedores e2e', () => {
       expect(r.headers['cache-control']).toBe('private, no-store')
       expect((r.body as Buffer).subarray(0, 5).toString('latin1')).toBe('%PDF-')
     })
+
+    it('GET /pdf desde el origen del frontend expone Content-Disposition por CORS', async () => {
+      await crearItem({ title: 'Ceremonia', startsAt: '2027-06-12T21:00:00Z' })
+      const r = await request(server)
+        .get(`${base()}/pdf`)
+        .set(como('pareja'))
+        .set('Origin', 'http://localhost:5173')
+        .buffer(true)
+        .parse(binario)
+        .expect(200)
+      // Sin `exposedHeaders` el navegador oculta la cabecera a `fetch` y se pierde el nombre.
+      expect(r.headers['access-control-allow-origin']).toBe('http://localhost:5173')
+      expect(r.headers['access-control-expose-headers']).toContain('Content-Disposition')
+    })
   })
 
   describe('asignar', () => {

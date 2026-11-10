@@ -1,6 +1,6 @@
 import { encodeCursor, type CursorPage } from '@/shared/domain'
 
-import { TIPO_PROVEEDOR_CONTRATADO, TIPOS_MOODBOARD } from '../application/notification.port'
+import { TIPO_PROVEEDOR_CONTRATADO, TIPOS_PARA_PROVEEDOR } from '../application/notification.port'
 import type {
   NotificationRepository,
   OpcionesListado,
@@ -140,7 +140,7 @@ export class NotificationRepositoryEnMemoria implements NotificationRepository {
 
   /**
    * Del usuario y de un evento donde es miembro ACTIVO (cualquier tipo) o, sólo
-   * para `event.vendor.booked` y los tipos de moodboard, proveedor BOOKED de un
+   * para `event.vendor.booked` y los tipos de moodboard y cronograma, proveedor BOOKED de un
    * evento publicado (la tercera rama de `visiblesDe` en Prisma).
    */
   private visiblesDe(userId: string): NotificacionEnMemoria[] {
@@ -149,7 +149,7 @@ export class NotificationRepositoryEnMemoria implements NotificationRepository {
         n.userId === userId &&
         ((this.miembros.get(n.eventId) ?? []).includes(userId) ||
           ((n.type === TIPO_PROVEEDOR_CONTRATADO ||
-            (TIPOS_MOODBOARD as readonly string[]).includes(n.type)) &&
+            (TIPOS_PARA_PROVEEDOR as readonly string[]).includes(n.type)) &&
             this.publicados.has(n.eventId) &&
             (this.proveedores.get(n.eventId) ?? []).includes(userId))),
     )

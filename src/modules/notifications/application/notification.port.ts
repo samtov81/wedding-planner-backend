@@ -97,4 +97,26 @@ export const TIPOS_MOODBOARD = [
   TIPO_MOODBOARD_NOTA_ANADIDA,
 ] as const
 
+/**
+ * Tipos de campana del cronograma (spec 2026-11-10). Los tres tienen como
+ * destinatario a un proveedor asignado a un ítem. Viven junto al puerto por la
+ * misma razón que los de moodboard: los importa `schedule` para crearlos.
+ */
+export const TIPO_CRONOGRAMA_RECORDATORIO = 'schedule.item.reminder'
+export const TIPO_CRONOGRAMA_REPROGRAMADO = 'schedule.item.rescheduled'
+export const TIPO_CRONOGRAMA_CONFIRMACION = 'schedule.confirmation.requested'
+export const TIPOS_CRONOGRAMA = [
+  TIPO_CRONOGRAMA_RECORDATORIO,
+  TIPO_CRONOGRAMA_REPROGRAMADO,
+  TIPO_CRONOGRAMA_CONFIRMACION,
+] as const
+
+/**
+ * Tipos que `visiblesDe` deja ver al proveedor BOOKED (además de a miembros
+ * ACTIVE): los que pueden tener a un proveedor como destinatario. Alternativa
+ * descartada: ampliar `TIPOS_MOODBOARD`, que seguiría siendo la lista exacta
+ * para el código del moodboard que sólo quiere sus dos tipos.
+ */
+export const TIPOS_PARA_PROVEEDOR = [...TIPOS_MOODBOARD, ...TIPOS_CRONOGRAMA] as const
+
 export const NOTIFICATION_PORT = Symbol('NOTIFICATION_PORT')

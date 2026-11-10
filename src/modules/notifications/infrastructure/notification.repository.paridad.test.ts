@@ -686,6 +686,39 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
         }
       })
 
+      /**
+       * Avisos del cronograma (spec 2026-11-10): el destinatario es el proveedor
+       * asignado, así que `visiblesDe` los trata como los de moodboard.
+       */
+      it.each([
+        'schedule.item.reminder',
+        'schedule.item.rescheduled',
+        'schedule.confirmation.requested',
+      ])('un proveedor BOOKED ve y cuenta %s en los dos', async (tipo) => {
+        await contratar(eventId)
+        await real.crearParaUsuarios(eventId, [provId], tipo, {})
+        await copiarAlDoble()
+
+        for (const [, repo] of implementaciones()) {
+          expect((await repo.listarDeUsuario(provId, todas)).items.map((n) => n.type)).toEqual([
+            tipo,
+          ])
+          expect(await repo.contarNoLeidasDeUsuario(provId)).toBe(1)
+        }
+      })
+
+      it('con la contratación CANCELLED el proveedor deja de ver un aviso del cronograma', async () => {
+        const ev = await contratar(eventId)
+        await real.crearParaUsuarios(eventId, [provId], 'schedule.item.reminder', {})
+        await copiarAlDoble()
+        await cancelar(ev, eventId)
+
+        for (const [, repo] of implementaciones()) {
+          expect((await repo.listarDeUsuario(provId, todas)).items).toEqual([])
+          expect(await repo.contarNoLeidasDeUsuario(provId)).toBe(0)
+        }
+      })
+
       it('una lista vacía no crea nada en los dos', async () => {
         const puerto = new NotificationPortEnMemoria()
 

@@ -7,7 +7,7 @@ import { encodeCursor, type CursorPage } from '@/shared/domain'
 
 import {
   TIPO_PROVEEDOR_CONTRATADO,
-  TIPOS_MOODBOARD,
+  TIPOS_PARA_PROVEEDOR,
   type NotificationPort,
 } from '../application/notification.port'
 import type {
@@ -43,7 +43,7 @@ const MIEMBRO_ACTIVO = { status: 'ACTIVE' } satisfies Prisma.EventMembershipWher
  * acceso no pueden discrepar. La rama de proveedor va filtrada por tipo: un
  * miembro revocado que luego es contratado no recupera sus avisos de miembro,
  * que llevan a páginas que el proveedor no puede abrir. Los tipos de moodboard
- * (`TIPOS_MOODBOARD`) son la tercera rama: miembro ACTIVE o proveedor BOOKED
+ * y del cronograma (`TIPOS_PARA_PROVEEDOR`) son la tercera rama: miembro ACTIVE o proveedor BOOKED
  * (evento publicado), porque su destinatario puede ser un proveedor y el
  * moodboard es una pantalla que ambos abren (spec 2026-11-09 §7). Un aviso de un evento
  * en borrador aparece cuando éste se publica. Un usuario que es las dos cosas
@@ -72,10 +72,10 @@ const visiblesDe = (userId: string): Prisma.NotificationWhereInput => ({
       },
     },
     {
-      // Avisos de moodboard: miembro ACTIVE (ya cubierto arriba) o proveedor
+      // Avisos de moodboard y cronograma: miembro ACTIVE (ya cubierto arriba) o proveedor
       // BOOKED del evento publicado. Sólo estos tipos: un proveedor sigue sin
       // ver los avisos de miembro. La foto concreta la re-comprueba el REST.
-      type: { in: [...TIPOS_MOODBOARD] },
+      type: { in: [...TIPOS_PARA_PROVEEDOR] },
       event: {
         OR: [
           { memberships: { some: { userId, ...MIEMBRO_ACTIVO } } },

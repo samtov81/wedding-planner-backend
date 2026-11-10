@@ -71,7 +71,8 @@ const TODOS = ['COUPLE', 'PLANNER', 'VENDOR'] as const
 /**
  * Quien planifica ("M"). Las rutas "P" del contrato también usan esto y el
  * caso de uso exige `esPlanner`: `@RequireEventAccess('PLANNER')` a secas
- * dejaría fuera al ADMIN (`permisosDe(admin)` es `[]`).
+ * dejaría fuera al ADMIN (`permisosDe(admin)` es `[]`). Las notas son la
+ * excepción: usan `TODOS` para que el proveedor reciba 404 y no 403.
  */
 const MIEMBRO = ['COUPLE', 'PLANNER'] as const
 
@@ -279,8 +280,15 @@ export class ScheduleController {
     return itemJson(await this.asignar.ejecutar(eventId, id, actor, eventVendorIds))
   }
 
-  /** Para quien no es planner las notas no existen: 404 (lo decide el caso de uso). */
-  @RequireEventAccess(...MIEMBRO)
+  /**
+   * Para quien no es planner las notas no existen: 404 (lo decide el caso de
+   * uso). La ruta admite a TODOS en el guard, proveedores incluidos, porque
+   * con `MIEMBRO` un proveedor recibiría el 403 del guard y distinguiría la
+   * ruta de una que no existe (spec 2026-11-10 §3: "no existen para él").
+   * Alternativa descartada: dejar `MIEMBRO` y aceptar el 403, que es lo que
+   * la Task 8 cableó y el e2e de la Task 9 cazó.
+   */
+  @RequireEventAccess(...TODOS)
   @Get(':itemId/notes')
   async verNotas(
     @Param('eventId') eventId: string,
@@ -299,9 +307,10 @@ export class ScheduleController {
    * la regla —el booleano es el mismo `esPlannerDelEvento` que recibe el caso
    * de uso, que repite el 404 por su cuenta—, sólo el orden de los errores.
    * Alternativa descartada: validar el cuerpo dentro del caso de uso, que
-   * metería la forma HTTP (400) en `application/`.
+   * metería la forma HTTP (400) en `application/`. `TODOS` en el guard por
+   * lo mismo que `GET`: el proveedor también tiene que recibir el 404.
    */
-  @RequireEventAccess(...MIEMBRO)
+  @RequireEventAccess(...TODOS)
   @Post(':itemId/notes')
   @HttpCode(201)
   async escribirNota(

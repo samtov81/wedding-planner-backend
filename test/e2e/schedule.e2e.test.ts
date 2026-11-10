@@ -294,6 +294,15 @@ describe('Cronograma del evento e2e', () => {
       expect(respuesta.body).toMatchObject({ code: 'SCHEDULE_ITEM_NOT_FOUND' })
     }
 
+    // Para el proveedor las notas tampoco existen: 404 del caso de uso, no 403 del guard.
+    for (const peticion of [
+      request(url).get(`${base}/${itemId}/notes`).set(comoDj),
+      request(url).post(`${base}/${itemId}/notes`).set(comoDj).send({}),
+    ]) {
+      const respuesta = await peticion.expect(404)
+      expect(respuesta.body).toMatchObject({ code: 'SCHEDULE_ITEM_NOT_FOUND' })
+    }
+
     // El proveedor ve el cronograma y confirma lo que tenía delante.
     const listaDj = await request(url).get(base).set(comoDj).expect(200)
     expect(JSON.stringify(listaDj.body)).not.toContain('noteCount')

@@ -180,8 +180,17 @@ export class ScheduleController {
    * Confirma lo que el proveedor tenía delante (spec 2026-11-10 §4): el
    * `userId` sale de la sesión, nunca del cuerpo. 200 y no 201: no crea un
    * recurso, cambia el estado de asignaciones que ya existían.
+   *
+   * `TODOS` y no `'VENDOR'`: un usuario que es miembro del evento Y proveedor
+   * contratado resuelve su acceso como `member` (el guard no ve el permiso
+   * `VENDOR`), y con `'VENDOR'` recibiría 403 al confirmar lo suyo. No abre
+   * nada: el caso de uso sólo confirma asignaciones VIGENTES DEL usuario de la
+   * sesión, así que quien no tiene ninguna recibe el estado sin cambios.
+   * Alternativa descartada: añadir `VENDOR` a los permisos de un miembro que
+   * además tiene contratación, que tocaría `permisosDe` (la regla única de
+   * acceso a eventos) por una sola ruta.
    */
-  @RequireEventAccess('VENDOR')
+  @RequireEventAccess(...TODOS)
   @Post('confirmations')
   @HttpCode(200)
   async confirmar(

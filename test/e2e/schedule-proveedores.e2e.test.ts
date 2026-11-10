@@ -179,14 +179,8 @@ const RUTAS: ReadonlyArray<
   [
     'POST /confirmations',
     (c) => ['post', `/events/${c.eventId}/schedule/confirmations`, { items: [] }],
-    {
-      creador: { status: 403 },
-      pareja: { status: 403 },
-      planner: { status: 403 },
-      provA: { status: 200 },
-      provB: { status: 200 },
-      extrano: { status: 404 },
-    },
+    // "T": quien no tiene asignaciones propias recibe el estado sin cambios.
+    todos(200),
   ],
   [
     'POST /notify-vendors',
@@ -729,6 +723,84 @@ describe('cronograma con proveedores e2e', () => {
         ready: 1,
         total: 1,
       })
+    })
+
+    it('un miembro que además es proveedor contratado confirma lo suyo (acceso member, no vendor)', async () => {
+      const mixto = await prisma.user.create({
+        data: {
+          email: `mixto-${randomUUID()}@schedule-proveedores.test`,
+          passwordHash: 'x',
+          fullName: 'Mixto',
+        },
+      })
+      const token = app
+        .get(TokenService)
+        .firmarAccess({ id: mixto.id, systemRole: mixto.systemRole })
+      const comoMixto = { Authorization: `Bearer ${token}` }
+      const membresia = await prisma.eventMembership.create({
+        data: { eventId, userId: mixto.id, role: 'COUPLE' },
+      })
+      const ficha = await prisma.vendorProfile.create({
+        data: {
+          userId: mixto.id,
+          businessName: 'Mixto Música',
+          categoryId: await categoriaId(prisma, 'venue'),
+          status: 'PUBLISHED',
+        },
+      })
+      const contratacion = await prisma.eventVendor.create({
+        data: {
+          eventId,
+          vendorProfileId: ficha.id,
+          categoryId: ficha.categoryId,
+          status: 'BOOKED',
+        },
+      })
+      try {
+        const item = await crearItem({
+          title: 'Música del cóctel',
+          startsAt: '2027-06-12T22:15:00Z',
+          eventVendorIds: [contratacion.id],
+        })
+        const r = await request(server)
+          .post(`${base()}/confirmations`)
+          .set(comoMixto)
+          .send({
+            items: [{ itemId: item.id, startsAt: '2027-06-12T22:15:00.000Z', endsAt: null }],
+          })
+          .expect(200)
+        expect(r.body).toMatchObject({
+          ready: 1,
+          total: 1,
+          vendors: [{ userId: mixto.id, ready: true }],
+          mine: { pending: [] },
+        })
+        expect((await lista('creador'))[0]?.vendors).toEqual([
+          expect.objectContaining({ eventVendorId: contratacion.id, confirmed: true }),
+        ])
+      } finally {
+        await prisma.scheduleItemVendor.deleteMany({ where: { eventVendorId: contratacion.id } })
+        await prisma.eventVendor.delete({ where: { id: contratacion.id } })
+        await prisma.vendorProfile.delete({ where: { id: ficha.id } })
+        await prisma.eventMembership.delete({ where: { id: membresia.id } })
+      }
+    })
+
+    it('un miembro sin asignaciones propias que confirma no cambia nada', async () => {
+      await crearItem({
+        title: 'Brindis',
+        startsAt: '2027-06-12T23:15:00Z',
+        eventVendorIds: [contratacionA1],
+      })
+      const vistos = (await confirmaciones('provA')).mine?.pending ?? []
+      expect(vistos).toHaveLength(1)
+      // La pareja manda lo que vio A: no es suyo, no se confirma.
+      expect(await confirmar('pareja', vistos)).toMatchObject({
+        ready: 0,
+        total: 1,
+        mine: { pending: [] },
+      })
+      expect((await confirmaciones('provA')).mine?.pending).toEqual(vistos)
     })
 
     it('más de 500 ítems en POST /confirmations → 400', async () => {

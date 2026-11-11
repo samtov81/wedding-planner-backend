@@ -27,7 +27,7 @@ import { CreateExpenseUseCase } from '../application/create-expense.use-case'
 import { DeleteExpenseUseCase } from '../application/delete-expense.use-case'
 import { ListExpensesUseCase } from '../application/list-expenses.use-case'
 import { UpdateExpenseUseCase } from '../application/update-expense.use-case'
-import type { Expense, ResumenPresupuesto } from '../domain/expense'
+import { hoyEnZona, type Expense, type ResumenPresupuesto } from '../domain/expense'
 import { GastoNoEncontradoError } from '../domain/expense-errors'
 import { createExpenseSchema, listExpensesQuerySchema, updateExpenseSchema } from './expenses.dto'
 
@@ -75,6 +75,9 @@ export class ExpensesController {
         status: q.status ?? null,
         origin: q.origin ?? null,
         eventVendorId: q.eventVendorId ?? null,
+        q: null,
+        // Provisional: la Tarea 7 lo sustituye por la zona horaria del evento.
+        hoy: hoyEnZona(new Date(), 'UTC'),
       },
       q.cursor === undefined ? null : decodeCursor(q.cursor),
       q.limit,
@@ -102,6 +105,9 @@ export class ExpensesController {
           dueDate: d.dueDate ?? null,
           notes: d.notes ?? null,
           status: d.status,
+          invoiceNumber: null,
+          subtotal: null,
+          invoiceFile: null,
         },
         yo.id,
       ),

@@ -21,6 +21,7 @@ function montar() {
     name: 'DJ Max',
     assignedBudget: '500.00',
     status: 'BOOKED',
+    userId: null,
   })
   return {
     gastos,
@@ -35,6 +36,9 @@ const base = {
   amount: '200.00',
   dueDate: null,
   notes: null,
+  invoiceNumber: null,
+  subtotal: null,
+  invoiceFile: null,
 }
 
 describe('casos de uso de gastos', () => {
@@ -118,6 +122,7 @@ describe('casos de uso de gastos', () => {
       name: 'Cancelado',
       assignedBudget: '999.00',
       status: 'CANCELLED',
+      userId: null,
     })
     await crear.ejecutar(
       EVENTO,

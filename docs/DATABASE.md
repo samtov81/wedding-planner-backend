@@ -70,6 +70,18 @@ CHECK constraints:
 - `expenses_origen_exclusivo` — exactly one of `eventVendorId` or `payeeName` must be set (an expense is either billed to a booked vendor or to an external payee, never both, never neither).
 - `expenses_pagado_con_fecha` — `status = 'PAID'` if and only if `paidAt` is set.
 
+Invoice columns (all nullable; an expense may have no invoice): `invoiceNumber`, `subtotal` (`Decimal(12,2)`, the amount before taxes; taxes are `amount − subtotal`, derived and not stored), and the file's `invoiceFileKey` (R2 object key), `invoiceFileName`, `invoiceFileType` and `invoiceFileBytes`.
+
+Invoice CHECK constraints:
+- `expenses_subtotal_valido` — `subtotal`, when set, is `> 0` and `<= amount`.
+- `expenses_archivo_completo` — the four `invoiceFile*` columns are either all set or all null.
+- `expenses_numero_no_vacio` — `invoiceNumber`, when set, is not blank (`length(btrim(...)) > 0`).
+
+Invoice UNIQUE index (a partial expression index, written by hand in the migration; `schema.prisma` cannot express it, so it only carries a `///` comment):
+- `expenses_invoice_number_unique` — on `(eventId, COALESCE(eventVendorId::text, lower(payeeName)), invoiceNumber) WHERE invoiceNumber IS NOT NULL`. The same invoice number cannot repeat for the same vendor within an event; an external payee is compared case-insensitively (`Ana` = `ANA`). Expenses without a number are unconstrained.
+
+Enforced by the use cases, not by the database: that the invoice file exists in R2, and that `subtotal <= amount` still holds when an update changes only one of the two (the CHECK would reject it, but the use case answers with a domain error first).
+
 ### `seating_tables`
 
 Belongs to an `Event` (`onDelete: Cascade`). A round **or rectangular** table of the seating chart (`shape`, enum `SeatingTableShape`: `ROUND` | `RECTANGULAR`, default `ROUND`; it can be changed later and the table keeps its assignments). The shape only changes the drawing: the seat range rules are the same for both. Its seats are the indexes `0..seatCount-1`; there is no row per seat. `x`/`y` are the table's position on the canvas. Tables are listed by `createdAt, id`; the repository writes strictly increasing `createdAt` values so bulk-created tables keep their order.

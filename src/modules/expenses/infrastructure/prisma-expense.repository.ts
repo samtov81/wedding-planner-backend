@@ -201,6 +201,10 @@ function aDominio(fila: Fila): Expense {
     dueDate: fila.dueDate,
     paidAt: fila.paidAt,
     notes: fila.notes,
+    // Las columnas de factura llegan con la Tarea 2; la Tarea 4 las lee de verdad.
+    invoiceNumber: null,
+    subtotal: null,
+    invoiceFile: null,
     createdById: fila.createdById,
     createdAt: fila.createdAt,
     updatedAt: fila.updatedAt,

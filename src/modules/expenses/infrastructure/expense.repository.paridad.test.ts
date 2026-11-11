@@ -123,6 +123,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         dueDate: null,
         paidAt: null,
         notes: null,
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
       })
 
       const externo = await repo.crear({
@@ -146,6 +149,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         dueDate: null,
         paidAt: new Date('2026-03-05T00:00:00Z'),
         notes: null,
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
       })
     }
   })
@@ -205,6 +211,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
             dueDate: null,
             paidAt: g.status === 'PAID' ? createdAt : null,
             notes: null,
+            invoiceNumber: null,
+            subtotal: null,
+            invoiceFile: null,
             createdById,
             createdAt,
             updatedAt: createdAt,

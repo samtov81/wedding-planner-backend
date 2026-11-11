@@ -44,7 +44,16 @@ export class ExpenseRepositoryEnMemoria implements ExpenseRepository {
 
   crear(datos: DatosNuevoGasto): Promise<Expense> {
     const ahora = new Date()
-    const gasto: GastoEnMemoria = { ...datos, id: randomUUID(), createdAt: ahora, updatedAt: ahora }
+    // Los campos de factura empiezan en null hasta que la Tarea 4 los cablee al puerto.
+    const gasto: GastoEnMemoria = {
+      ...datos,
+      invoiceNumber: null,
+      subtotal: null,
+      invoiceFile: null,
+      id: randomUUID(),
+      createdAt: ahora,
+      updatedAt: ahora,
+    }
     this.gastos.push(gasto)
     return Promise.resolve(this.aDominio(gasto))
   }

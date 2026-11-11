@@ -603,6 +603,10 @@ describe('cronograma con proveedores e2e', () => {
       const delPlanner = await pdfDe('planner')
       expect(delPlanner).toContain('Cena de bienvenida')
       expect(delPlanner).toContain(NOTA)
+      // Sin esta etiqueta en el PDF del planner, el `not.toContain('Notes:')` de
+      // abajo no podría fallar nunca: probaría que no se encuentra algo que
+      // quizá ni se sabe leer.
+      expect(delPlanner).toContain('Notes:')
       for (const quien of ['pareja', 'provA', 'provB'] as const) {
         const texto = await pdfDe(quien)
         expect(texto).toContain('Cena de bienvenida')
@@ -961,6 +965,10 @@ describe('cronograma con proveedores e2e', () => {
         .send({ startsAt })
         .expect(200)
       expect(await campana('provA', 'schedule.item.rescheduled')).toEqual([])
+      // Y no queda ningún job de recordatorio para la asignación cancelada con
+      // la hora nueva: el jobId es determinista (itemId, contratación, hora).
+      const jobIdCancelada = jobIdDeRecordatorio(item.id, contratacionA1, new Date(startsAt))
+      expect(await cola.getJob(jobIdCancelada)).toBeUndefined()
 
       const socketA = await conectarComo('provA')
       const recordatorio = esperar(
@@ -976,6 +984,8 @@ describe('cronograma con proveedores e2e', () => {
       })
 
       expect(await recordatorio).toEqual({ eventId, type: 'schedule.item.reminder' })
+      // Al volver a BOOKED sí se programó, con el mismo jobId determinista.
+      expect(await cola.getJob(jobIdCancelada)).toBeDefined()
       const avisos = await campana('provA', 'schedule.item.reminder')
       expect(avisos.map((a) => a.payload)).toEqual([
         {

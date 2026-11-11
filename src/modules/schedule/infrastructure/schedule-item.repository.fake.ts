@@ -293,8 +293,15 @@ export class ScheduleItemRepositoryEnMemoria implements ScheduleItemRepository {
     return Promise.resolve(porItem)
   }
 
-  /** Autor desconocido: en Postgres sería la FK; el doble lo rechaza igual. */
+  /**
+   * Autor o ítem desconocidos: en Postgres sería la FK; el doble lo rechaza
+   * igual. Sin lo del ítem, el doble aceptaba una nota huérfana que Postgres
+   * jamás guardaría.
+   */
   crearNota(itemId: string, authorId: string, body: string): Promise<NotaDeItem> {
+    if (!this.items.some((i) => i.id === itemId)) {
+      return Promise.reject(new Error('ítem desconocido'))
+    }
     const autor = this.usuarios.get(authorId)
     if (autor === undefined) return Promise.reject(new Error('autor desconocido'))
     const nota: NotaDeItem = {

@@ -5,7 +5,12 @@ import { decodeCursor } from '@/shared/domain'
 
 import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
-import { TIPO_PROVEEDOR_CONTRATADO } from '../application/notification.port'
+import {
+  TIPO_CRONOGRAMA_CONFIRMACION,
+  TIPO_CRONOGRAMA_RECORDATORIO,
+  TIPO_CRONOGRAMA_REPROGRAMADO,
+  TIPO_PROVEEDOR_CONTRATADO,
+} from '../application/notification.port'
 import type { NotificationRepository } from '../application/notification.repository'
 import { NotificationPortEnMemoria } from './notification.port.fake'
 import { NotificationRepositoryEnMemoria } from './notification.repository.fake'
@@ -690,11 +695,13 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
        * Avisos del cronograma (spec 2026-11-10): el destinatario es el proveedor
        * asignado, así que `visiblesDe` los trata como los de moodboard.
        */
-      it.each([
-        'schedule.item.reminder',
-        'schedule.item.rescheduled',
-        'schedule.confirmation.requested',
-      ])('un proveedor BOOKED ve y cuenta %s en los dos', async (tipo) => {
+      const TIPOS_CRONOGRAMA = [
+        TIPO_CRONOGRAMA_RECORDATORIO,
+        TIPO_CRONOGRAMA_REPROGRAMADO,
+        TIPO_CRONOGRAMA_CONFIRMACION,
+      ]
+
+      it.each(TIPOS_CRONOGRAMA)('un proveedor BOOKED ve y cuenta %s en los dos', async (tipo) => {
         await contratar(eventId)
         await real.crearParaUsuarios(eventId, [provId], tipo, {})
         await copiarAlDoble()
@@ -707,9 +714,37 @@ describe('Paridad: NotificationRepositoryEnMemoria vs PrismaNotificationReposito
         }
       })
 
+      it.each(TIPOS_CRONOGRAMA)(
+        'un proveedor BOOKED de un evento sin publicar (DRAFT) no ve ni cuenta %s en los dos',
+        async (tipo) => {
+          await prisma.event.update({ where: { id: eventId }, data: { status: 'DRAFT' } })
+          // `contratar` registra el evento como publicado en el doble: se
+          // despublica DESPUÉS.
+          await contratar(eventId)
+          doble.fijarPublicado(eventId, false)
+          await real.crearParaUsuarios(eventId, [provId], tipo, {})
+          await copiarAlDoble()
+
+          for (const [, repo] of implementaciones()) {
+            expect((await repo.listarDeUsuario(provId, todas)).items).toEqual([])
+            expect(await repo.contarNoLeidasDeUsuario(provId)).toBe(0)
+          }
+
+          // Al publicarse, el aviso aparece: estaba guardado, sólo oculto.
+          await prisma.event.update({ where: { id: eventId }, data: { status: 'ACTIVE' } })
+          doble.fijarPublicado(eventId, true)
+          for (const [, repo] of implementaciones()) {
+            expect((await repo.listarDeUsuario(provId, todas)).items.map((n) => n.type)).toEqual([
+              tipo,
+            ])
+            expect(await repo.contarNoLeidasDeUsuario(provId)).toBe(1)
+          }
+        },
+      )
+
       it('con la contratación CANCELLED el proveedor deja de ver un aviso del cronograma', async () => {
         const ev = await contratar(eventId)
-        await real.crearParaUsuarios(eventId, [provId], 'schedule.item.reminder', {})
+        await real.crearParaUsuarios(eventId, [provId], TIPO_CRONOGRAMA_RECORDATORIO, {})
         await copiarAlDoble()
         await cancelar(ev, eventId)
 

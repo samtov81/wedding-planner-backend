@@ -47,8 +47,16 @@ export class R2ObjectStorage implements ObjectStorage {
     })
   }
 
-  firmarLectura(key: string): Promise<string | null> {
-    const comando = new GetObjectCommand({ Bucket: this.config.bucket, Key: key })
+  firmarLectura(key: string, descargarComo?: string): Promise<string | null> {
+    const comando = new GetObjectCommand({
+      Bucket: this.config.bucket,
+      Key: key,
+      ...(descargarComo === undefined
+        ? {}
+        : {
+            ResponseContentDisposition: `attachment; filename*=UTF-8''${encodeURIComponent(descargarComo)}`,
+          }),
+    })
     return getSignedUrl(this.client, comando, { expiresIn: VIDA_DE_FIRMA_S })
   }
 

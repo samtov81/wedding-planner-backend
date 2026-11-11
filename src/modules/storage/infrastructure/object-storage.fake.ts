@@ -13,8 +13,11 @@ export class ObjectStorageEnMemoria implements ObjectStorage {
     return Promise.resolve(`https://almacen.test/put/${key}?ct=${contentType}&len=${bytes}`)
   }
 
-  firmarLectura(key: string): Promise<string | null> {
-    return Promise.resolve(`https://almacen.test/get/${key}`)
+  firmarLectura(key: string, descargarComo?: string): Promise<string | null> {
+    const base = `https://almacen.test/get/${key}`
+    return Promise.resolve(
+      descargarComo === undefined ? base : `${base}?as=${encodeURIComponent(descargarComo)}`,
+    )
   }
 
   inspeccionar(key: string): Promise<ObjetoAlmacenado | null> {

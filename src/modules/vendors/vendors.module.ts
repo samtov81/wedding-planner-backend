@@ -4,6 +4,7 @@ import { AuthModule } from '@/modules/auth/auth.module'
 import { PrismaService } from '@/modules/database/prisma.service'
 import { EventsModule } from '@/modules/events/events.module'
 import { NotificationWriterModule } from '@/modules/notifications/notification-writer.module'
+import { ScheduleRemindersModule } from '@/modules/schedule/schedule-reminders.module'
 import { StorageModule } from '@/modules/storage/storage.module'
 import { UsersModule } from '@/modules/users/users.module'
 
@@ -52,9 +53,22 @@ import { VendorCategoriesController } from './interfaces/vendor-categories.contr
  * usuario, y ese provider sólo lo expone `UsersModule`, no `AuthModule`.
  *
  * `StorageModule` aporta las fotos del portfolio (subida y URLs de lectura).
+ *
+ * `ScheduleRemindersModule` aporta `RECORDATORIOS_PORT`: al recontratar, el
+ * cronograma reprograma los recordatorios (spec 2026-11-10 §5). Se importa ése
+ * y no `ScheduleModule`, que no importa `vendors` hoy pero arrastra
+ * controlador, worker y cola; el módulo pequeño no importa nada y no puede
+ * cerrar un ciclo.
  */
 @Module({
-  imports: [AuthModule, UsersModule, EventsModule, StorageModule, NotificationWriterModule],
+  imports: [
+    AuthModule,
+    UsersModule,
+    EventsModule,
+    StorageModule,
+    NotificationWriterModule,
+    ScheduleRemindersModule,
+  ],
   controllers: [
     EventVendorsController,
     VendorCatalogController,

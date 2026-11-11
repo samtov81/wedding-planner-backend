@@ -27,9 +27,10 @@ import { Throttle, type ThrottlerOptions } from '@nestjs/throttler'
  * ajeno.
  *
  * Los límites de abajo que dicen "por IP" (`vendor-catalog`, `invite`,
- * `messages`, `moodboard-notes`) cuentan así por el DESIGN-GAP de que este
- * guard corre antes que `JwtAuthGuard`. Para contar por usuario existe `limite-por-usuario.ts`
- * (`@LimitePorUsuario`, usado por `contact-requests`); migrarlos es cosa aparte.
+ * `messages`, `moodboard-notes`) cuentan así por el DESIGN-GAP de que este guard corre
+ * antes que `JwtAuthGuard`. Para contar por usuario existe `limite-por-usuario.ts`
+ * (`@LimitePorUsuario`, usado por `contact-requests` y por `schedule-notify`, que
+ * además cuenta por evento); migrar los demás es cosa aparte.
  */
 export const LIMITADOR_GLOBAL = 'global'
 export const LIMITADOR_RSVP = 'rsvp'

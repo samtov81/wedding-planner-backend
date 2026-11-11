@@ -4,10 +4,18 @@
  * marca completado, así que un worker sobre una cola compartida se come los
  * jobs de los demás productores. Cada tipo con worker propio, su cola. Lo mismo
  * vale para `messaging` (mensajes y recibos en tiempo real, ver `avisos-mensajeria.ts`)
- * y para `moodboard` (fotos, comparticiones y notas, ver `avisos-moodboard.ts`).
+ * y para `moodboard` (fotos, comparticiones y notas, ver `avisos-moodboard.ts`) y
+ * `schedule` (recordatorios y campanas del cronograma, ver `avisos-cronograma.ts`).
  */
 export type QueueName =
-  'email' | 'invitations' | 'notifications' | 'maintenance' | 'members' | 'messaging' | 'moodboard'
+  | 'email'
+  | 'invitations'
+  | 'notifications'
+  | 'maintenance'
+  | 'members'
+  | 'messaging'
+  | 'moodboard'
+  | 'schedule'
 
 export interface EnqueueOptions {
   /**

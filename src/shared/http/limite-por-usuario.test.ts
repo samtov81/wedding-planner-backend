@@ -41,6 +41,9 @@ class Ruta {
 
   /** El guard puesto a mano, sin `@LimitePorUsuario`: un error de cableado. */
   sinLimite(this: void): void {}
+
+  @LimitePorUsuario('por-evento', { limit: 2, ttl: 3_600_000, porParametro: 'eventId' })
+  porEvento(this: void): void {}
 }
 
 /** Las cabeceras que el guard pone en la respuesta, como `res.header` de Express. */
@@ -50,12 +53,13 @@ function contexto(
   user: { id: string } | undefined,
   cabeceras: Cabeceras = new Map(),
   manejador: (this: void) => void = Ruta.prototype.manejar,
+  params: Record<string, string> = {},
 ): ExecutionContext {
   return {
     getHandler: () => manejador,
     getClass: () => Ruta,
     switchToHttp: () => ({
-      getRequest: () => (user === undefined ? {} : { user }),
+      getRequest: () => (user === undefined ? { params } : { user, params }),
       getResponse: () => ({
         header: (nombre: string, valor: string | number) => cabeceras.set(nombre, valor),
       }),
@@ -118,5 +122,35 @@ describe('LimitePorUsuarioGuard', () => {
     await expect(intento).rejects.toThrow(/@LimitePorUsuario/)
     await expect(intento).rejects.not.toBeInstanceOf(DomainError)
     expect(almacen.claves).toEqual([])
+  })
+
+  describe('con porParametro', () => {
+    const enEvento = (userId: string, eventId: string) =>
+      contexto({ id: userId }, new Map(), Ruta.prototype.porEvento, { eventId })
+
+    it('cuenta por usuario Y por el valor del parámetro', async () => {
+      const almacen = new AlmacenEnMemoria()
+      await new LimitePorUsuarioGuard(almacen, new Reflector()).canActivate(enEvento('u1', 'e1'))
+      expect(almacen.claves).toEqual(['usuario:u1:eventId:e1:por-evento'])
+    })
+
+    it('agotar el cupo en un evento no corta en otro, ni a otro usuario en el mismo', async () => {
+      const guard = new LimitePorUsuarioGuard(new AlmacenEnMemoria(), new Reflector())
+      for (let i = 0; i < 2; i++) await guard.canActivate(enEvento('u1', 'e1'))
+      await expect(guard.canActivate(enEvento('u1', 'e1'))).rejects.toBeInstanceOf(
+        ThrottlerException,
+      )
+      await expect(guard.canActivate(enEvento('u1', 'e2'))).resolves.toBe(true)
+      await expect(guard.canActivate(enEvento('u2', 'e1'))).resolves.toBe(true)
+    })
+
+    it('si la ruta no trae el parámetro falla cerrado con un error de programación', async () => {
+      const almacen = new AlmacenEnMemoria()
+      const guard = new LimitePorUsuarioGuard(almacen, new Reflector())
+      const intento = guard.canActivate(contexto({ id: 'u1' }, new Map(), Ruta.prototype.porEvento))
+      await expect(intento).rejects.toThrow(/eventId/)
+      await expect(intento).rejects.not.toBeInstanceOf(DomainError)
+      expect(almacen.claves).toEqual([])
+    })
   })
 })

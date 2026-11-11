@@ -204,4 +204,151 @@ describe('Cronograma del evento e2e', () => {
       .set('Authorization', `Bearer ${fotografo.accessToken}`)
       .expect(404)
   })
+
+  /**
+   * Cableado de la Task 8: que cada ruta nueva está montada con su nivel de
+   * acceso y responde con la forma del contrato. Los escenarios de producto
+   * (carreras, recordatorios, recontratar) son de la Task 9.
+   */
+  it('rutas de proveedores: asignar, notas sólo del planner, confirmar, avisar y PDF', async () => {
+    const comoAna = { Authorization: `Bearer ${ana.accessToken}` }
+    const pareja = await registrarYEntrar('pareja-proveedores@test.com', 'Pareja P')
+    await prisma.eventMembership.create({
+      data: { eventId: evento, userId: pareja.id, role: 'COUPLE', invitedById: ana.id },
+    })
+    const comoPareja = { Authorization: `Bearer ${pareja.accessToken}` }
+    const dj = await registrarYEntrar('dj-schedule@test.com', 'DJ')
+    const comoDj = { Authorization: `Bearer ${dj.accessToken}` }
+    const categoryId = await categoriaId(prisma, 'photography')
+    const perfil = await prisma.vendorProfile.create({
+      data: { userId: dj.id, businessName: 'Ritmo', categoryId, status: 'PUBLISHED' },
+    })
+    const contratacion = await prisma.eventVendor.create({
+      data: { eventId: evento, vendorProfileId: perfil.id, categoryId, status: 'BOOKED' },
+    })
+    const { name: categoryName } = await prisma.vendorCategory.findUniqueOrThrow({
+      where: { id: categoryId },
+    })
+    const base = `/events/${evento}/schedule`
+
+    const asignables = await request(url).get(`${base}/assignable-vendors`).set(comoAna).expect(200)
+    expect(asignables.body).toEqual([
+      { eventVendorId: contratacion.id, name: 'Ritmo', categoryName },
+    ])
+    const soloPlanner = await request(url)
+      .get(`${base}/assignable-vendors`)
+      .set(comoPareja)
+      .expect(403)
+    expect(soloPlanner.body).toMatchObject({ code: 'SCHEDULE_PLANNER_ONLY' })
+
+    const creado = await request(url)
+      .post(base)
+      .set(comoAna)
+      .send({ title: 'Primer baile', startsAt: '2027-06-12T23:30:00Z', eventVendorIds: [] })
+      .expect(201)
+    const itemId = (creado.body as { id: string }).id
+    expect(creado.body).not.toHaveProperty('noteCount')
+    const asignado = await request(url)
+      .put(`${base}/${itemId}/vendors`)
+      .set(comoAna)
+      .send({ eventVendorIds: [contratacion.id] })
+      .expect(200)
+    expect((asignado.body as { vendors: unknown }).vendors).toEqual([
+      {
+        eventVendorId: contratacion.id,
+        name: 'Ritmo',
+        categoryName,
+        confirmed: false,
+      },
+    ])
+    await request(url)
+      .put(`${base}/${itemId}/vendors`)
+      .set(comoAna)
+      .send({ eventVendorIds: [contratacion.id, contratacion.id] })
+      .expect(400)
+
+    const nota = await request(url)
+      .post(`${base}/${itemId}/notes`)
+      .set(comoAna)
+      .send({ body: '  Llevar el cable largo  ' })
+      .expect(201)
+    expect(nota.body).toMatchObject({
+      itemId,
+      body: 'Llevar el cable largo',
+      author: { id: ana.id, name: 'Ana', avatarUrl: null },
+    })
+    const notas = await request(url).get(`${base}/${itemId}/notes`).set(comoAna).expect(200)
+    expect(notas.body).toHaveLength(1)
+    const listaPlanner = await request(url).get(base).set(comoAna).expect(200)
+    expect(listaPlanner.body).toEqual([expect.objectContaining({ id: itemId, noteCount: 1 })])
+
+    // La pareja: ni notas ni `noteCount`, y el 404 llega antes que el 400 del cuerpo.
+    const listaPareja = await request(url).get(base).set(comoPareja).expect(200)
+    expect(listaPareja.body).toHaveLength(1)
+    expect(JSON.stringify(listaPareja.body)).not.toContain('noteCount')
+    for (const peticion of [
+      request(url).get(`${base}/${itemId}/notes`).set(comoPareja),
+      request(url).post(`${base}/${itemId}/notes`).set(comoPareja).send({}),
+    ]) {
+      const respuesta = await peticion.expect(404)
+      expect(respuesta.body).toMatchObject({ code: 'SCHEDULE_ITEM_NOT_FOUND' })
+    }
+
+    // Para el proveedor las notas tampoco existen: 404 del caso de uso, no 403 del guard.
+    for (const peticion of [
+      request(url).get(`${base}/${itemId}/notes`).set(comoDj),
+      request(url).post(`${base}/${itemId}/notes`).set(comoDj).send({}),
+    ]) {
+      const respuesta = await peticion.expect(404)
+      expect(respuesta.body).toMatchObject({ code: 'SCHEDULE_ITEM_NOT_FOUND' })
+    }
+
+    // El proveedor ve el cronograma y confirma lo que tenía delante.
+    const listaDj = await request(url).get(base).set(comoDj).expect(200)
+    expect(JSON.stringify(listaDj.body)).not.toContain('noteCount')
+    const antes = await request(url).get(`${base}/confirmations`).set(comoDj).expect(200)
+    expect(antes.body).toEqual({
+      ready: 0,
+      total: 1,
+      vendors: [{ userId: dj.id, name: 'Ritmo', avatarUrl: null, ready: false }],
+      mine: { pending: [{ itemId, startsAt: '2027-06-12T23:30:00.000Z', endsAt: null }] },
+    })
+    await request(url)
+      .post(`${base}/confirmations`)
+      .set(comoDj)
+      .send({ items: [{ itemId: 'no-uuid', startsAt: '2027-06-12T23:30:00Z', endsAt: null }] })
+      .expect(400)
+    // Un miembro sin asignaciones propias puede llamar (la ruta es "T"): no confirma nada.
+    const deAna = await request(url)
+      .post(`${base}/confirmations`)
+      .set(comoAna)
+      .send({ items: (antes.body as { mine: { pending: unknown[] } }).mine.pending })
+      .expect(200)
+    expect(deAna.body).toMatchObject({ ready: 0, total: 1, mine: null })
+    const despues = await request(url)
+      .post(`${base}/confirmations`)
+      .set(comoDj)
+      .send({ items: (antes.body as { mine: { pending: unknown[] } }).mine.pending })
+      .expect(200)
+    expect(despues.body).toMatchObject({ ready: 1, total: 1, mine: { pending: [] } })
+    const vistaPlanner = await request(url).get(`${base}/confirmations`).set(comoAna).expect(200)
+    expect(vistaPlanner.body).toMatchObject({ ready: 1, total: 1, mine: null })
+
+    await request(url).post(`${base}/notify-vendors`).set(comoDj).expect(403)
+    const avisoPareja = await request(url)
+      .post(`${base}/notify-vendors`)
+      .set(comoPareja)
+      .expect(403)
+    expect(avisoPareja.body).toMatchObject({ code: 'SCHEDULE_PLANNER_ONLY' })
+    const aviso = await request(url).post(`${base}/notify-vendors`).set(comoAna).expect(200)
+    expect(aviso.body).toEqual({ notified: 0 })
+
+    const pdf = await request(url).get(`${base}/pdf`).set(comoPareja).expect(200)
+    expect(pdf.headers['content-type']).toBe('application/pdf')
+    expect(pdf.headers['content-disposition']).toMatch(
+      /^attachment; filename="timeline-\d{4}-\d{2}-\d{2}\.pdf"$/,
+    )
+
+    await request(url).delete(`${base}/${itemId}`).set(comoAna).expect(204)
+  })
 })

@@ -67,8 +67,15 @@ export async function configurarApp(app: NestExpressApplication, env: Env): Prom
   app.use(cookieParser())
 
   // Una sola allowlist para el HTTP y para Socket.IO (ver `origenesPermitidos`).
+  // `exposedHeaders`: el frontend vive en otro origen y descarga el PDF del
+  // cronograma con fetch; sin esto el navegador oculta `Content-Disposition` y
+  // se pierde el nombre con fecha (`timeline-<fecha>.pdf`).
   const origenes = origenesPermitidos(env)
-  app.enableCors({ origin: origenes, credentials: true })
+  app.enableCors({
+    origin: origenes,
+    credentials: true,
+    exposedHeaders: ['Content-Disposition'],
+  })
 
   // DESIGN-GAP (brief, Paso 2): el brief añade `useGlobalPipes(new
   // ZodValidationPipe())`. No existe en el proyecto: cada ruta valida con su

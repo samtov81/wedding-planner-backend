@@ -105,6 +105,8 @@ model User {
   moodboardImagesArchived    MoodboardImage[]          @relation("MoodboardArchiver")
   moodboardShares            MoodboardShare[]
   moodboardNotes             MoodboardNote[]
+  scheduleAssignments        ScheduleItemVendor[]      @relation("ScheduleAssigner")
+  scheduleNotes              ScheduleItemNote[]        @relation("ScheduleNoteAuthor")
 
   @@map("users")
 }
@@ -274,10 +276,47 @@ model ScheduleItem {
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
 
-  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event   Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  vendors ScheduleItemVendor[]
+  notes   ScheduleItemNote[]
 
   @@index([eventId, startsAt])
   @@map("schedule_items")
+}
+
+/// Asignación de una contratación a un ítem del cronograma. La confirmación
+/// vive aquí (spec 2026-11-10 §4). `eventVendorId` en cascada: borrar la
+/// contratación no puede dar 500. Desasignar borra la fila; no hay historial.
+model ScheduleItemVendor {
+  id             String    @id @default(uuid()) @db.Uuid
+  scheduleItemId String    @db.Uuid
+  eventVendorId  String    @db.Uuid
+  assignedById   String    @db.Uuid
+  createdAt      DateTime  @default(now())
+  confirmedAt    DateTime?
+
+  scheduleItem ScheduleItem @relation(fields: [scheduleItemId], references: [id], onDelete: Cascade)
+  eventVendor  EventVendor  @relation(fields: [eventVendorId], references: [id], onDelete: Cascade)
+  assignedBy   User         @relation("ScheduleAssigner", fields: [assignedById], references: [id], onDelete: Restrict)
+
+  @@unique([scheduleItemId, eventVendorId])
+  @@index([eventVendorId])
+  @@map("schedule_item_vendors")
+}
+
+/// Nota del planner sobre un ítem. Sin `updatedAt`: no se editan ni se borran.
+model ScheduleItemNote {
+  id             String   @id @default(uuid()) @db.Uuid
+  scheduleItemId String   @db.Uuid
+  authorId       String   @db.Uuid
+  body           String
+  createdAt      DateTime @default(now())
+
+  scheduleItem ScheduleItem @relation(fields: [scheduleItemId], references: [id], onDelete: Cascade)
+  author       User         @relation("ScheduleNoteAuthor", fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([scheduleItemId, createdAt])
+  @@map("schedule_item_notes")
 }
 
 model Expense {
@@ -360,7 +399,7 @@ model EventVendor {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
 
-  event           Event            @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  event           Event                @relation(fields: [eventId], references: [id], onDelete: Cascade)
   /// `onDelete: Restrict`, no `SetNull`: si se pusiera a NULL al borrar la
   /// ficha, un EventVendor que apuntaba al marketplace se quedaría con
   /// `vendorProfileId = NULL` y `externalName = NULL` a la vez — el estado
@@ -368,10 +407,11 @@ model EventVendor {
   /// ficha con historial comercial no se borra: se marca `SUSPENDED`
   /// (VendorProfileStatus ya tiene ese valor), que no requiere tocar
   /// ninguna fila de EventVendor.
-  vendorProfile   VendorProfile?   @relation(fields: [vendorProfileId], references: [id], onDelete: Restrict)
-  category        VendorCategory   @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  vendorProfile   VendorProfile?       @relation(fields: [vendorProfileId], references: [id], onDelete: Restrict)
+  category        VendorCategory       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
   expenses        Expense[]
   moodboardShares MoodboardShare[]
+  scheduleItems   ScheduleItemVendor[]
 
   @@index([eventId])
   @@index([vendorProfileId])

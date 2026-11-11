@@ -7,32 +7,94 @@ import {
   Param,
   Patch,
   Post,
+  Put,
+  Res,
+  StreamableFile,
   UseGuards,
 } from '@nestjs/common'
+import type { Response } from 'express'
 
-import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
 import {
-  type EventAccess,
-  puedeCambiarEstadoDelCronograma,
-} from '@/modules/events/domain/event-access'
+  CurrentUser,
+  type UsuarioAutenticado,
+} from '@/modules/auth/interfaces/current-user.decorator'
+import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
+import { type EventAccess, esPlannerDelEvento } from '@/modules/events/domain/event-access'
 import { EventAccessOf } from '@/modules/events/interfaces/event-access-of.decorator'
 import { EventAccessGuard } from '@/modules/events/interfaces/event-access.guard'
 import { RequireEventAccess } from '@/modules/events/interfaces/require-event-access.decorator'
-import type { Ubicacion } from '@/shared/domain'
+import { SubidaDeImagenes } from '@/modules/storage/application/subida-de-imagenes'
+import { UnauthorizedError } from '@/shared/domain'
 import { idDeRuta } from '@/shared/http/id-de-ruta'
+import { LIMITE_SCHEDULE_NOTIFY, LimitePorUsuario } from '@/shared/http/limite-por-usuario'
 import { validarCon } from '@/shared/http/validar-con'
 
 import { CreateScheduleItemUseCase } from '../application/create-schedule-item.use-case'
 import { DeleteScheduleItemUseCase } from '../application/delete-schedule-item.use-case'
+import { DescargarPdfUseCase } from '../application/descargar-pdf.use-case'
 import { ListScheduleItemsUseCase } from '../application/list-schedule-items.use-case'
+import {
+  AsignarProveedoresUseCase,
+  AvisarProveedoresUseCase,
+  ConfirmacionesUseCase,
+  CrearNotaUseCase,
+  type EstadoDeConfirmaciones,
+  ListarAsignablesUseCase,
+  ListarNotasUseCase,
+} from '../application/participacion.use-cases'
+import type { NotaDeItem } from '../application/schedule-item.repository'
 import {
   type ActorDelCronograma,
   UpdateScheduleItemUseCase,
 } from '../application/update-schedule-item.use-case'
 import { ItemDeCronogramaNoEncontradoError } from '../domain/schedule-errors'
-import type { ScheduleItem, ScheduleItemStatus } from '../domain/schedule-item'
-import { createScheduleItemSchema, updateScheduleItemSchema } from './schedule.dto'
+import {
+  asignarProveedoresSchema,
+  confirmarSchema,
+  createScheduleItemSchema,
+  notaSchema,
+  updateScheduleItemSchema,
+} from './schedule.dto'
+import {
+  asignableJson,
+  type AssignableVendorJson,
+  type ConfirmacionesJson,
+  confirmacionesJson,
+  itemJson,
+  type ItemJson,
+  notaJson,
+  type NoteJson,
+} from './schedule.json'
 
+/** Lo ven y lo usan todos los del evento ("T" en el contrato). */
+const TODOS = ['COUPLE', 'PLANNER', 'VENDOR'] as const
+/**
+ * Quien planifica ("M"). Las rutas "P" del contrato también usan esto y el
+ * caso de uso exige `esPlanner`: `@RequireEventAccess('PLANNER')` a secas
+ * dejaría fuera al ADMIN (`permisosDe(admin)` es `[]`). Las notas son la
+ * excepción: usan `TODOS` para que el proveedor reciba 404 y no 403.
+ */
+const MIEMBRO = ['COUPLE', 'PLANNER'] as const
+
+const itemDeRuta = (itemId: string): string =>
+  idDeRuta(itemId, () => new ItemDeCronogramaNoEncontradoError())
+
+/**
+ * Cronograma del evento con sus proveedores (spec 2026-11-10, contrato de la
+ * Task 8). La autorización GRUESA es `EventAccessGuard` con
+ * `RequireEventAccess`; la FINA ("sólo el planner", "las notas no existen
+ * para los demás") la deciden los casos de uso con el `esPlanner` que aquí se
+ * traduce del acceso con `esPlannerDelEvento`, la única copia de la regla.
+ *
+ * Las rutas literales (`assignable-vendors`, `confirmations`,
+ * `notify-vendors`, `pdf`) se declaran ANTES de las de `:itemId`: Express
+ * casa las rutas en el orden en que Nest las registra, que es el de la clase.
+ * Hoy ningún par choca por método y profundidad, pero un `GET /:itemId`
+ * futuro se tragaría `GET /pdf` si estuviera debajo.
+ *
+ * Los avatares se firman AQUÍ, al responder, como en `moodboard.controller.ts`:
+ * son URLs de vida corta y no pertenecen a la entidad.
+ */
 @UseGuards(JwtAuthGuard, EventAccessGuard)
 @Controller('events/:eventId/schedule')
 export class ScheduleController {
@@ -41,23 +103,37 @@ export class ScheduleController {
     private readonly crear: CreateScheduleItemUseCase,
     private readonly actualizar: UpdateScheduleItemUseCase,
     private readonly eliminar: DeleteScheduleItemUseCase,
+    private readonly asignar: AsignarProveedoresUseCase,
+    private readonly asignables: ListarAsignablesUseCase,
+    private readonly listarNotas: ListarNotasUseCase,
+    private readonly crearNota: CrearNotaUseCase,
+    private readonly confirmaciones: ConfirmacionesUseCase,
+    private readonly avisar: AvisarProveedoresUseCase,
+    private readonly pdf: DescargarPdfUseCase,
+    private readonly imagenes: SubidaDeImagenes,
   ) {}
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  /** Todos ven los proveedores de cada ítem; `noteCount`, sólo el planner. */
+  @RequireEventAccess(...TODOS)
   @Get()
-  async listarItems(@Param('eventId') eventId: string): Promise<ItemRespuesta[]> {
-    return (await this.listar.ejecutar(eventId)).map(aRespuesta)
+  async listarItems(
+    @Param('eventId') eventId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+  ): Promise<ItemJson[]> {
+    return (await this.listar.ejecutar(eventId, esPlannerDelEvento(accesoDe(acceso)))).map(itemJson)
   }
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  /** `eventVendorIds` es sólo del planner: el caso de uso responde 403 a los demás. */
+  @RequireEventAccess(...MIEMBRO)
   @Post()
   async crearItem(
     @Param('eventId') eventId: string,
     @EventAccessOf() acceso: EventAccess | undefined,
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
     @Body() body: unknown,
-  ): Promise<ItemRespuesta> {
+  ): Promise<ItemJson> {
     const datos = validarCon(createScheduleItemSchema, body)
-    return aRespuesta(
+    return itemJson(
       await this.crear.ejecutar(
         eventId,
         {
@@ -68,74 +144,261 @@ export class ScheduleController {
           location: datos.location ?? null,
           status: datos.status,
         },
-        actorDe(acceso),
+        actorDe(acceso, usuario),
+        datos.eventVendorIds,
       ),
     )
   }
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess(...MIEMBRO)
+  @Get('assignable-vendors')
+  async verAsignables(
+    @Param('eventId') eventId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+  ): Promise<AssignableVendorJson[]> {
+    return (await this.asignables.ejecutar(eventId, actorDe(acceso, usuario))).map(asignableJson)
+  }
+
+  /**
+   * "Vendors Ready X of Y" para todos; `mine` (lo que le falta confirmar)
+   * si quien mira es proveedor del evento: acceso `vendor` o, siendo miembro,
+   * con asignaciones vigentes (lo decide `ConfirmacionesUseCase.estado`).
+   */
+  @RequireEventAccess(...TODOS)
+  @Get('confirmations')
+  async verConfirmaciones(
+    @Param('eventId') eventId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+  ): Promise<ConfirmacionesJson> {
+    const yo = exigirUsuario(usuario)
+    const esProveedor = accesoDe(acceso).kind === 'vendor'
+    return await this.confirmacionesJson(
+      await this.confirmaciones.estado(eventId, yo.id, esProveedor),
+    )
+  }
+
+  /**
+   * Confirma lo que el proveedor tenía delante (spec 2026-11-10 §4): el
+   * `userId` sale de la sesión, nunca del cuerpo. 200 y no 201: no crea un
+   * recurso, cambia el estado de asignaciones que ya existían.
+   *
+   * `TODOS` y no `'VENDOR'`: un usuario que es miembro del evento Y proveedor
+   * contratado resuelve su acceso como `member` (el guard no ve el permiso
+   * `VENDOR`), y con `'VENDOR'` recibiría 403 al confirmar lo suyo. No abre
+   * nada: el caso de uso sólo confirma asignaciones VIGENTES DEL usuario de la
+   * sesión, así que quien no tiene ninguna recibe el estado sin cambios.
+   * Alternativa descartada: añadir `VENDOR` a los permisos de un miembro que
+   * además tiene contratación, que tocaría `permisosDe` (la regla única de
+   * acceso a eventos) por una sola ruta.
+   */
+  @RequireEventAccess(...TODOS)
+  @Post('confirmations')
+  @HttpCode(200)
+  async confirmar(
+    @Param('eventId') eventId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+    @Body() body: unknown,
+  ): Promise<ConfirmacionesJson> {
+    const yo = exigirUsuario(usuario)
+    const { items } = validarCon(confirmarSchema, body)
+    const esProveedor = accesoDe(acceso).kind === 'vendor'
+    return await this.confirmacionesJson(
+      await this.confirmaciones.confirmar(eventId, yo.id, items, esProveedor),
+    )
+  }
+
+  /**
+   * Límite propio `schedule-notify`: 5 por hora por USUARIO Y EVENTO (spec
+   * 2026-11-10 §6), con `@LimitePorUsuario` + `porParametro: 'eventId'`. Cada
+   * pulsación crea una campana por proveedor pendiente. El guard va en el
+   * método, así que corre DESPUÉS de `JwtAuthGuard` y `EventAccessGuard`: el
+   * 403 del guard de eventos (un proveedor) no gasta cupo; el 403 del caso de
+   * uso (la pareja) sí, porque llega al limitador antes que al caso de uso.
+   * Alternativa descartada: `@LimiteDeRuta`, que cuenta por IP (el
+   * `ThrottlerGuard` global corre antes de la autenticación) y juntaba en un
+   * cupo a todos los planners tras la misma IP y todas sus bodas. El global
+   * de 120/min por IP sigue sumándose.
+   */
+  @RequireEventAccess(...MIEMBRO)
+  @Post('notify-vendors')
+  @HttpCode(200)
+  @LimitePorUsuario(LIMITE_SCHEDULE_NOTIFY, { limit: 5, ttl: 3_600_000, porParametro: 'eventId' })
+  async avisarProveedores(
+    @Param('eventId') eventId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+  ): Promise<{ notified: number }> {
+    return await this.avisar.ejecutar(eventId, actorDe(acceso, usuario))
+  }
+
+  /**
+   * El PDF lleva notas SÓLO si quien lo pide es planner: el caso de uso ni
+   * las lee en otro caso. `passthrough` para fijar las cabeceras y seguir
+   * devolviendo el cuerpo por Nest (y sus filtros de excepción).
+   *
+   * `Cache-Control: private, no-store`: el PDF cambia según QUIÉN lo pide (el
+   * del planner lleva notas) y la URL es la misma para todos. Una caché
+   * compartida (proxy, CDN) que lo guardara podría servir el del planner a la
+   * pareja; `no-store` además evita que quede en disco en un equipo compartido.
+   */
+  @RequireEventAccess(...TODOS)
+  @Get('pdf')
+  async descargarPdf(
+    @Param('eventId') eventId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<StreamableFile> {
+    const { buffer, filename } = await this.pdf.ejecutar(
+      eventId,
+      esPlannerDelEvento(accesoDe(acceso)),
+    )
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Cache-Control': 'private, no-store',
+    })
+    return new StreamableFile(buffer)
+  }
+
+  @RequireEventAccess(...MIEMBRO)
   @Patch(':itemId')
   async editarItem(
     @Param('eventId') eventId: string,
     @Param('itemId') itemId: string,
     @EventAccessOf() acceso: EventAccess | undefined,
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
     @Body() body: unknown,
-  ): Promise<ItemRespuesta> {
-    const id = idDeRuta(itemId, () => new ItemDeCronogramaNoEncontradoError())
-    return aRespuesta(
+  ): Promise<ItemJson> {
+    const id = itemDeRuta(itemId)
+    return itemJson(
       await this.actualizar.ejecutar(
         eventId,
         id,
         validarCon(updateScheduleItemSchema, body),
-        actorDe(acceso),
+        actorDe(acceso, usuario),
       ),
     )
   }
 
-  @RequireEventAccess('COUPLE', 'PLANNER')
+  @RequireEventAccess(...MIEMBRO)
   @Delete(':itemId')
   @HttpCode(204)
   async borrarItem(
     @Param('eventId') eventId: string,
     @Param('itemId') itemId: string,
   ): Promise<void> {
-    await this.eliminar.ejecutar(
-      eventId,
-      idDeRuta(itemId, () => new ItemDeCronogramaNoEncontradoError()),
+    await this.eliminar.ejecutar(eventId, itemDeRuta(itemId))
+  }
+
+  @RequireEventAccess(...MIEMBRO)
+  @Put(':itemId/vendors')
+  async asignarProveedores(
+    @Param('eventId') eventId: string,
+    @Param('itemId') itemId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+    @Body() body: unknown,
+  ): Promise<ItemJson> {
+    const actor = actorDe(acceso, usuario)
+    const id = itemDeRuta(itemId)
+    const { eventVendorIds } = validarCon(asignarProveedoresSchema, body)
+    return itemJson(await this.asignar.ejecutar(eventId, id, actor, eventVendorIds))
+  }
+
+  /**
+   * Para quien no es planner las notas no existen: 404 (lo decide el caso de
+   * uso). La ruta admite a TODOS en el guard, proveedores incluidos, porque
+   * con `MIEMBRO` un proveedor recibiría el 403 del guard y distinguiría la
+   * ruta de una que no existe (spec 2026-11-10 §3: "no existen para él").
+   * Alternativa descartada: dejar `MIEMBRO` y aceptar el 403, que es lo que
+   * la Task 8 cableó y el e2e de la Task 9 cazó.
+   */
+  @RequireEventAccess(...TODOS)
+  @Get(':itemId/notes')
+  async verNotas(
+    @Param('eventId') eventId: string,
+    @Param('itemId') itemId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+  ): Promise<NoteJson[]> {
+    const esPlanner = esPlannerDelEvento(accesoDe(acceso))
+    const notas = await this.listarNotas.ejecutar(eventId, itemDeRuta(itemId), esPlanner)
+    return await Promise.all(notas.map((n) => this.notaJson(n)))
+  }
+
+  /**
+   * El 404 de quien no es planner se adelanta aquí, ANTES de validar el
+   * cuerpo: si no, la pareja que manda un cuerpo roto recibiría 400 y
+   * distinguiría esta ruta de una que no existe. No es una segunda copia de
+   * la regla —el booleano es el mismo `esPlannerDelEvento` que recibe el caso
+   * de uso, que repite el 404 por su cuenta—, sólo el orden de los errores.
+   * Alternativa descartada: validar el cuerpo dentro del caso de uso, que
+   * metería la forma HTTP (400) en `application/`. `TODOS` en el guard por
+   * lo mismo que `GET`: el proveedor también tiene que recibir el 404.
+   */
+  @RequireEventAccess(...TODOS)
+  @Post(':itemId/notes')
+  @HttpCode(201)
+  async escribirNota(
+    @Param('eventId') eventId: string,
+    @Param('itemId') itemId: string,
+    @EventAccessOf() acceso: EventAccess | undefined,
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+    @Body() body: unknown,
+  ): Promise<NoteJson> {
+    const actor = actorDe(acceso, usuario)
+    const id = itemDeRuta(itemId)
+    if (!actor.esPlanner) throw new ItemDeCronogramaNoEncontradoError()
+    const { body: texto } = validarCon(notaSchema, body)
+    return await this.notaJson(await this.crearNota.ejecutar(eventId, id, actor, texto))
+  }
+
+  private async notaJson(nota: NotaDeItem): Promise<NoteJson> {
+    return notaJson(nota, await this.firmarOpcional(nota.author.avatarKey))
+  }
+
+  private async confirmacionesJson(estado: EstadoDeConfirmaciones): Promise<ConfirmacionesJson> {
+    const avatares = new Map(
+      await Promise.all(
+        estado.vendors.map(
+          async (v) => [v.userId, await this.firmarOpcional(v.avatarKey)] as const,
+        ),
+      ),
     )
+    return confirmacionesJson(estado, avatares)
+  }
+
+  private async firmarOpcional(key: string | null): Promise<string | null> {
+    return key === null ? null : await this.imagenes.firmarLectura(key)
   }
 }
 
 /**
- * Traduce el acceso que el guard ya resolvió a lo que el caso de uso
- * necesita. Sin acceso la ruta perdió su guard: error de programación (500),
- * como en `event-vendors.controller.ts`, nunca un permiso concedido.
+ * Sin acceso la ruta perdió su guard: error de programación (500), como en
+ * `event-vendors.controller.ts`, nunca un permiso concedido.
  */
-function actorDe(acceso: EventAccess | undefined): ActorDelCronograma {
+function accesoDe(acceso: EventAccess | undefined): EventAccess {
   if (acceso === undefined) throw new Error('ScheduleController requires EventAccessGuard')
-  return { puedeCambiarEstado: puedeCambiarEstadoDelCronograma(acceso) }
+  return acceso
 }
 
-interface ItemRespuesta {
-  id: string
-  eventId: string
-  title: string
-  description: string | null
-  startsAt: string
-  endsAt: string | null
-  location: Ubicacion | null
-  status: ScheduleItemStatus
+/** El usuario que `JwtAuthGuard` dejó en la petición, o 401 si falta. */
+function exigirUsuario(usuario: UsuarioAutenticado | undefined): UsuarioAutenticado {
+  if (usuario === undefined) throw new UnauthorizedError('Falta el token de acceso')
+  return usuario
 }
 
-function aRespuesta(item: ScheduleItem): ItemRespuesta {
-  return {
-    id: item.id,
-    eventId: item.eventId,
-    title: item.title,
-    description: item.description,
-    startsAt: item.startsAt.toISOString(),
-    endsAt: item.endsAt?.toISOString() ?? null,
-    location: item.location,
-    status: item.status,
-  }
+/**
+ * Traduce el acceso que el guard ya resolvió y el usuario autenticado a lo
+ * que el caso de uso necesita (`esPlannerDelEvento`, la única copia de la
+ * regla). Sin usuario, 401 como en `moodboard.controller.ts`.
+ */
+function actorDe(
+  acceso: EventAccess | undefined,
+  usuario: UsuarioAutenticado | undefined,
+): ActorDelCronograma {
+  const esPlanner = esPlannerDelEvento(accesoDe(acceso))
+  return { userId: exigirUsuario(usuario).id, esPlanner }
 }

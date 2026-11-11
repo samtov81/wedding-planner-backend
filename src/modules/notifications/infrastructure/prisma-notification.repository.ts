@@ -7,7 +7,7 @@ import { encodeCursor, type CursorPage } from '@/shared/domain'
 
 import {
   TIPO_PROVEEDOR_CONTRATADO,
-  TIPOS_MOODBOARD,
+  TIPOS_PARA_PROVEEDOR,
   type NotificationPort,
 } from '../application/notification.port'
 import type {
@@ -35,22 +35,28 @@ const ORDEN_ESTABLE = [
 const MIEMBRO_ACTIVO = { status: 'ACTIVE' } satisfies Prisma.EventMembershipWhereInput
 
 /**
- * Las notificaciones de `userId` cuyo evento le sigue dando acceso: membresía
- * ACTIVE (cualquier tipo), o, SÓLO para `event.vendor.booked`, ser el proveedor
- * de una contratación BOOKED de ese evento (el `VendorProfile.userId` es él)
- * con el evento PUBLICADO (`status: 'ACTIVE'`), exactamente como
- * `buscarContratacionReservada` concede acceso a un proveedor: visibilidad y
- * acceso no pueden discrepar. La rama de proveedor va filtrada por tipo: un
- * miembro revocado que luego es contratado no recupera sus avisos de miembro,
- * que llevan a páginas que el proveedor no puede abrir. Los tipos de moodboard
- * (`TIPOS_MOODBOARD`) son la tercera rama: miembro ACTIVE o proveedor BOOKED
- * (evento publicado), porque su destinatario puede ser un proveedor y el
- * moodboard es una pantalla que ambos abren (spec 2026-11-09 §7). Un aviso de un evento
- * en borrador aparece cuando éste se publica. Un usuario que es las dos cosas
- * ve cada fila una sola vez: el `OR` está sobre la notificación, no es un join. Una
- * contratación cancelada (o sólo preseleccionada) retira la visibilidad igual
- * que revocar una membresía. Una sola definición para listar, contar y marcar:
- * lista, insignia y "marcar todas" no pueden discrepar.
+ * Las notificaciones de `userId` cuyo evento le sigue dando acceso. Un `OR` de
+ * TRES ramas sobre la notificación:
+ *
+ *  1. Membresía ACTIVE en el evento: ve TODOS los tipos.
+ *  2. `event.vendor.booked` (`TIPO_PROVEEDOR_CONTRATADO`): además de a un
+ *     miembro, se le muestra al proveedor de una contratación BOOKED de ese
+ *     evento (`VendorProfile.userId` es él) con el evento PUBLICADO
+ *     (`status: 'ACTIVE'`), exactamente como `buscarContratacionReservada`
+ *     concede acceso a un proveedor: visibilidad y acceso no pueden discrepar.
+ *  3. Los tipos de moodboard y del cronograma (`TIPOS_PARA_PROVEEDOR`):
+ *     miembro ACTIVE o proveedor BOOKED con el evento publicado, porque su
+ *     destinatario puede ser un proveedor y son pantallas que ambos abren
+ *     (spec 2026-11-09 §7 y 2026-11-10 §5–§6).
+ *
+ * Las ramas 2 y 3 van filtradas por TIPO: un miembro revocado que luego es
+ * contratado no recupera sus avisos de miembro, que llevan a páginas que el
+ * proveedor no puede abrir. Un aviso de un evento en borrador aparece cuando
+ * éste se publica. Un usuario que es las dos cosas ve cada fila una sola vez:
+ * el `OR` está sobre la notificación, no es un join. Una contratación
+ * cancelada (o sólo preseleccionada) retira la visibilidad igual que revocar
+ * una membresía. Una sola definición para listar, contar y marcar: lista,
+ * insignia y "marcar todas" no pueden discrepar.
  *
  * Índice (decisión de la Tarea 1): `EXPLAIN` de `listarDeUsuario` en Postgres 16
  * con 30 000 notificaciones, 51 usuarios y 5 eventos NO hace seq scan sobre
@@ -72,10 +78,10 @@ const visiblesDe = (userId: string): Prisma.NotificationWhereInput => ({
       },
     },
     {
-      // Avisos de moodboard: miembro ACTIVE (ya cubierto arriba) o proveedor
+      // Avisos de moodboard y cronograma: miembro ACTIVE (ya cubierto arriba) o proveedor
       // BOOKED del evento publicado. Sólo estos tipos: un proveedor sigue sin
       // ver los avisos de miembro. La foto concreta la re-comprueba el REST.
-      type: { in: [...TIPOS_MOODBOARD] },
+      type: { in: [...TIPOS_PARA_PROVEEDOR] },
       event: {
         OR: [
           { memberships: { some: { userId, ...MIEMBRO_ACTIVO } } },

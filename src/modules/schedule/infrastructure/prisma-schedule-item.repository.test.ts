@@ -128,6 +128,9 @@ describe('PrismaScheduleItemRepository (Postgres real)', () => {
         if ((fila?.n ?? 0n) > 0n) return
         await new Promise((r) => setTimeout(r, 50))
       }
+      // Si nadie llegó a esperar, el caso no probó la serialización: que falle
+      // en voz alta en lugar de dar un verde que no vigila nada.
+      throw new Error('ninguna sesión esperó un bloqueo (pg_stat_activity) en 5 s')
     }
 
     /** Un evento propio con un ítem y una contratación BOOKED del proveedor, ya asignada. */

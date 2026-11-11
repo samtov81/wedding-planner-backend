@@ -54,9 +54,21 @@ export interface Mundo {
   cambiarContratacion(id: string, status: EstadoContratacion): Promise<void>
 }
 
+/**
+ * Un `userId` sin ficha de proveedor degradaba en silencio a una contratación
+ * externa en Postgres, mientras el doble la guardaba como de usuario: una
+ * divergencia fabricada por el test, no por el repositorio. Mejor romper.
+ */
+function sinFichaNoHayContratacionDeUsuario(userId: string | null, tieneFicha: boolean): void {
+  if (userId !== null && !tieneFicha) {
+    throw new Error(`el usuario ${userId} no tiene ficha de proveedor: usa m.proveedor()`)
+  }
+}
+
 export function mundoDoble(): Mundo {
   const repo = new ScheduleItemRepositoryEnMemoria()
   const contrataciones = new Map<string, Parameters<Mundo['contratacion']>[0]>()
+  const conFicha = new Set<string>()
   return {
     repo,
     evento: () => {
@@ -72,9 +84,11 @@ export function mundoDoble(): Mundo {
     proveedor: (nombre, avatarKey) => {
       const id = randomUUID()
       repo.sembrarUsuario({ id, name: nombre, ...(avatarKey === undefined ? {} : { avatarKey }) })
+      conFicha.add(id)
       return Promise.resolve(id)
     },
     contratacion: (datos) => {
+      sinFichaNoHayContratacionDeUsuario(datos.userId, conFicha.has(datos.userId ?? ''))
       const id = randomUUID()
       contrataciones.set(id, datos)
       repo.sembrarContratacion({ id, ...datos, categoryName: CATEGORIA })
@@ -130,6 +144,7 @@ export function mundoPrisma({ prisma, categoryId }: ContextoPrisma): Mundo {
     },
     contratacion: async (datos) => {
       const ficha = datos.userId === null ? undefined : fichas.get(datos.userId)
+      sinFichaNoHayContratacionDeUsuario(datos.userId, ficha !== undefined)
       const e = await prisma.eventVendor.create({
         data: {
           eventId: datos.eventId,

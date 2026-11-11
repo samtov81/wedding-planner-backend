@@ -95,6 +95,21 @@ describe('Paridad: notas y recordatorios del cronograma', () => {
     expect(resultados[1]).toEqual(resultados[0])
   })
 
+  it('crearNota de un ítem inexistente se rechaza en ambos (FK), y nada queda guardado', async () => {
+    await conAmbos(async (m, nombre) => {
+      const eventId = await m.evento()
+      const ana = await m.usuario('Ana')
+      const a = await item(m, eventId, 'Ceremonia', '2027-06-12T18:00:00Z')
+
+      await expect(
+        m.repo.crearNota('00000000-0000-4000-8000-000000000000', ana, 'Huérfana'),
+      ).rejects.toThrow()
+
+      expect(await m.repo.listarNotas(a.id), nombre).toEqual([])
+      expect((await m.repo.contarNotas(eventId)).size, nombre).toBe(0)
+    })
+  })
+
   it('contarNotas devuelve el número de cada ítem del evento y omite los que no tienen', async () => {
     const resultados: unknown[] = []
     await conAmbos(async (m) => {

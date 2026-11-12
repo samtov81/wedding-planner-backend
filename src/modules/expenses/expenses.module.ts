@@ -22,6 +22,8 @@ import { PagosRecibidosUseCase } from './application/pagos-recibidos.use-cases'
 import { UpdateExpenseUseCase } from './application/update-expense.use-case'
 import { PrismaExpenseRepository } from './infrastructure/prisma-expense.repository'
 import { ExpensesController } from './interfaces/expenses.controller'
+import { GastosProcessor } from './interfaces/expenses.processor'
+import { VendorPaymentsController } from './interfaces/vendor-payments.controller'
 
 /**
  * `EventsModule` se importa por el mismo motivo que en `VendorsModule` y
@@ -49,7 +51,7 @@ import { ExpensesController } from './interfaces/expenses.controller'
     StorageModule,
     BullModule.registerQueue({ name: COLA_GASTOS }),
   ],
-  controllers: [ExpensesController],
+  controllers: [ExpensesController, VendorPaymentsController],
   providers: [
     {
       provide: EXPENSE_REPOSITORY,
@@ -64,6 +66,7 @@ import { ExpensesController } from './interfaces/expenses.controller'
     PrepararSubidaFacturaUseCase,
     ArchivoDeGastoUseCase,
     PagosRecibidosUseCase,
+    GastosProcessor,
   ],
 })
 export class ExpensesModule {}

@@ -18,34 +18,29 @@ import {
 import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
 import { EventAccessGuard } from '@/modules/events/interfaces/event-access.guard'
 import { RequireEventAccess } from '@/modules/events/interfaces/require-event-access.decorator'
+import type { SubidaPreparada } from '@/modules/storage/application/subida-directa'
 import { decodeCursor, UnauthorizedError } from '@/shared/domain'
 import { idDeRuta } from '@/shared/http/id-de-ruta'
 import { validarCon } from '@/shared/http/validar-con'
 
+import {
+  ArchivoDeGastoUseCase,
+  PrepararSubidaFacturaUseCase,
+} from '../application/archivos-de-factura.use-cases'
 import { BudgetSummaryUseCase } from '../application/budget-summary.use-case'
 import { CreateExpenseUseCase } from '../application/create-expense.use-case'
 import { DeleteExpenseUseCase } from '../application/delete-expense.use-case'
 import { ListExpensesUseCase } from '../application/list-expenses.use-case'
 import { UpdateExpenseUseCase } from '../application/update-expense.use-case'
-import type { GastoListado, ResumenPresupuesto } from '../domain/expense'
+import type { ResumenPresupuesto } from '../domain/expense'
 import { GastoNoEncontradoError } from '../domain/expense-errors'
-import { createExpenseSchema, listExpensesQuerySchema, updateExpenseSchema } from './expenses.dto'
-
-interface GastoRespuesta {
-  id: string
-  origin:
-    | { kind: 'vendor'; eventVendorId: string; vendorName: string }
-    | { kind: 'external'; payeeName: string }
-  concept: string
-  category: string
-  amount: string
-  status: 'PENDING' | 'PAID'
-  dueDate: string | null
-  paidAt: string | null
-  notes: string | null
-  createdAt: string
-  overdue: boolean
-}
+import {
+  createExpenseSchema,
+  listExpensesQuerySchema,
+  updateExpenseSchema,
+  uploadUrlSchema,
+} from './expenses.dto'
+import { aGastoJson, type GastoJson } from './expenses.json'
 
 /**
  * El presupuesto es privado del creador (`accesoAlPresupuesto`): leer exige
@@ -61,6 +56,8 @@ export class ExpensesController {
     private readonly actualizar: UpdateExpenseUseCase,
     private readonly eliminar: DeleteExpenseUseCase,
     private readonly resumen: BudgetSummaryUseCase,
+    private readonly prepararSubida: PrepararSubidaFacturaUseCase,
+    private readonly archivoDeGasto: ArchivoDeGastoUseCase,
   ) {}
 
   @RequireEventAccess('BUDGET_VIEW')
@@ -68,7 +65,7 @@ export class ExpensesController {
   async listarGastos(
     @Param('eventId') eventId: string,
     @Query() query: unknown,
-  ): Promise<{ items: GastoRespuesta[]; nextCursor: string | null }> {
+  ): Promise<{ items: GastoJson[]; nextCursor: string | null }> {
     const q = validarCon(listExpensesQuerySchema, query)
     const pagina = await this.listar.ejecutar(
       eventId,
@@ -76,12 +73,12 @@ export class ExpensesController {
         status: q.status ?? null,
         origin: q.origin ?? null,
         eventVendorId: q.eventVendorId ?? null,
-        q: null,
+        q: q.q ?? null,
       },
       q.cursor === undefined ? null : decodeCursor(q.cursor),
       q.limit,
     )
-    return { items: pagina.items.map(aRespuesta), nextCursor: pagina.nextCursor }
+    return { items: pagina.items.map(aGastoJson), nextCursor: pagina.nextCursor }
   }
 
   @RequireEventAccess('BUDGET_EDIT')
@@ -90,10 +87,10 @@ export class ExpensesController {
     @CurrentUser() usuario: UsuarioAutenticado | undefined,
     @Param('eventId') eventId: string,
     @Body() body: unknown,
-  ): Promise<GastoRespuesta> {
+  ): Promise<GastoJson> {
     const yo = exigirUsuario(usuario)
     const d = validarCon(createExpenseSchema, body)
-    return aRespuesta(
+    return aGastoJson(
       await this.crear.ejecutar(
         eventId,
         {
@@ -104,12 +101,36 @@ export class ExpensesController {
           dueDate: d.dueDate ?? null,
           notes: d.notes ?? null,
           status: d.status,
-          invoiceNumber: null,
-          subtotal: null,
-          invoiceFile: null,
+          invoiceNumber: d.invoiceNumber ?? null,
+          subtotal: d.subtotal ?? null,
+          invoiceFile: d.invoiceFile ?? null,
         },
         yo.id,
       ),
+    )
+  }
+
+  /** Antes que `expenses/:expenseId/...`: la ruta literal no debe leerse como un id. */
+  @RequireEventAccess('BUDGET_EDIT')
+  @Post('expenses/invoice-upload-url')
+  @HttpCode(201)
+  async urlDeSubida(
+    @Param('eventId') eventId: string,
+    @Body() body: unknown,
+  ): Promise<SubidaPreparada> {
+    const { contentType, bytes } = validarCon(uploadUrlSchema, body)
+    return await this.prepararSubida.ejecutar(eventId, contentType, bytes)
+  }
+
+  @RequireEventAccess('BUDGET_VIEW')
+  @Get('expenses/:expenseId/invoice-file')
+  async archivoDeFactura(
+    @Param('eventId') eventId: string,
+    @Param('expenseId') expenseId: string,
+  ): Promise<{ url: string }> {
+    return await this.archivoDeGasto.ejecutar(
+      eventId,
+      idDeRuta(expenseId, () => new GastoNoEncontradoError()),
     )
   }
 
@@ -119,9 +140,9 @@ export class ExpensesController {
     @Param('eventId') eventId: string,
     @Param('expenseId') expenseId: string,
     @Body() body: unknown,
-  ): Promise<GastoRespuesta> {
+  ): Promise<GastoJson> {
     const id = idDeRuta(expenseId, () => new GastoNoEncontradoError())
-    return aRespuesta(
+    return aGastoJson(
       await this.actualizar.ejecutar(eventId, id, validarCon(updateExpenseSchema, body)),
     )
   }
@@ -143,25 +164,9 @@ export class ExpensesController {
   @Get('budget-summary')
   async verResumen(
     @Param('eventId') eventId: string,
-  ): Promise<Omit<ResumenPresupuesto, 'upcoming'> & { upcoming: GastoRespuesta[] }> {
+  ): Promise<Omit<ResumenPresupuesto, 'upcoming'> & { upcoming: GastoJson[] }> {
     const r = await this.resumen.ejecutar(eventId)
-    return { ...r, upcoming: r.upcoming.map(aRespuesta) }
-  }
-}
-
-function aRespuesta(g: GastoListado): GastoRespuesta {
-  return {
-    id: g.id,
-    origin: g.origen,
-    concept: g.concept,
-    category: g.category,
-    amount: g.amount,
-    status: g.status,
-    dueDate: g.dueDate?.toISOString().slice(0, 10) ?? null,
-    paidAt: g.paidAt?.toISOString() ?? null,
-    notes: g.notes,
-    createdAt: g.createdAt.toISOString(),
-    overdue: g.overdue,
+    return { ...r, upcoming: r.upcoming.map(aGastoJson) }
   }
 }
 

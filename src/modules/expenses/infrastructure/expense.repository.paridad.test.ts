@@ -472,19 +472,24 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
     }
   }
 
-  const ARCHIVO = {
-    key: 'events/x/invoices/a.pdf',
+  /** Una key de R2 la tiene un solo gasto (`expenses_invoice_file_key_unique`): cada uso, la suya. */
+  const archivo = (key: string) => ({
+    key: `events/x/invoices/${key}.pdf`,
     name: 'a.pdf',
     contentType: 'application/pdf',
     bytes: 1234,
-  }
+  })
 
   it('bloquearGasto devuelve lo mismo que buscarPorId y null desde otro evento', async () => {
     for (const [nombre, repo] of sujetos()) {
       const { eventId } = await sembrarEvento()
       const { eventId: otro } = await sembrarEvento()
       const creado = await repo.crear(
-        nuevo(eventId, { invoiceNumber: 'F-09', subtotal: '80.00', invoiceFile: ARCHIVO }),
+        nuevo(eventId, {
+          invoiceNumber: 'F-09',
+          subtotal: '80.00',
+          invoiceFile: archivo('bloqueo'),
+        }),
       )
       expect(await repo.bloquearGasto(eventId, creado.id), nombre).toEqual(
         await repo.buscarPorId(eventId, creado.id),
@@ -496,6 +501,7 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
   it('crea con número, subtotal y archivo de factura, y actualizar los deja en null', async () => {
     for (const [nombre, repo] of sujetos()) {
       const { eventId } = await sembrarEvento()
+      const ARCHIVO = archivo('numero-01')
       const creado = await repo.crear(
         nuevo(eventId, { invoiceNumber: 'F-01', subtotal: '80.00', invoiceFile: ARCHIVO }),
       )
@@ -653,7 +659,7 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
             paidAt: status === 'PAID' ? new Date(paidAt) : null,
             invoiceNumber: `N-${concept}`,
             subtotal: '80.00',
-            invoiceFile: ARCHIVO,
+            invoiceFile: archivo(`pago-${concept}`),
             origen: { kind: 'vendor', eventVendorId: vid(e, i) },
           }),
         )
@@ -686,7 +692,7 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         subtotal: '80.00',
         invoiceNumber: 'N-reservado',
         paidAt: new Date('2026-03-05T00:00:00Z'),
-        invoiceFile: ARCHIVO,
+        invoiceFile: archivo('pago-reservado'),
       })
       expect(
         (await repo.listarPagosRecibidos(yo, e1.eventId)).map((p) => p.concept),
@@ -742,6 +748,27 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         repo.actualizar(eventId, otro.id, { invoiceNumber: 'F-1' }),
         nombre,
       ).rejects.toMatchObject({ code: 'INVOICE_NUMBER_TAKEN' })
+    }
+  })
+
+  it('una key de R2 ya usada por otro gasto lanza SubidaNoValidaError, y el mismo gasto puede reenviarla', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      const { eventId } = await sembrarEvento()
+      const a = await repo.crear(nuevo(eventId, { invoiceFile: archivo(`dup-${nombre}`) }))
+      await expect(
+        repo.crear(nuevo(eventId, { invoiceFile: archivo(`dup-${nombre}`) })),
+        nombre,
+      ).rejects.toMatchObject({ code: 'INVALID_UPLOAD' })
+      const otro = await repo.crear(nuevo(eventId))
+      await expect(
+        repo.actualizar(eventId, otro.id, { invoiceFile: archivo(`dup-${nombre}`) }),
+        nombre,
+      ).rejects.toMatchObject({ code: 'INVALID_UPLOAD' })
+      // Renombrar: la MISMA key en el MISMO gasto sigue valiendo.
+      const renombrado = await repo.actualizar(eventId, a.id, {
+        invoiceFile: { ...archivo(`dup-${nombre}`), name: 'otro.pdf' },
+      })
+      expect(renombrado.invoiceFile?.name, nombre).toBe('otro.pdf')
     }
   })
 })

@@ -4,7 +4,7 @@ import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
 
 /**
- * Las restricciones de factura de `expenses` (spec 2026-11-11 §2) viven en la
+ * Las restricciones de factura de `expenses` (spec 2026-11-11 §6) viven en la
  * base y no sólo en el caso de uso: un segundo camino de escritura no puede
  * saltárselas. Se prueban con Prisma contra Postgres real; el mensaje del error
  * lleva el nombre de la constraint, que es lo que se exige aquí.
@@ -115,6 +115,27 @@ describe('expenses: restricciones de factura', () => {
           invoiceFileBytes: 1234,
         }),
       ).resolves.toBeDefined()
+    })
+  })
+
+  describe('key del archivo', () => {
+    const archivo = (key: string) => ({
+      invoiceFileKey: key,
+      invoiceFileName: 'a.pdf',
+      invoiceFileType: 'application/pdf',
+      invoiceFileBytes: 10,
+    })
+
+    it('rechaza la misma key de R2 en dos gastos', async () => {
+      await gasto(eventoA, archivo('events/x/invoices/unica.pdf'))
+      await expect(gasto(eventoB, archivo('events/x/invoices/unica.pdf'))).rejects.toThrow(
+        /Unique constraint failed on the fields:.*invoiceFileKey/,
+      )
+    })
+
+    it('acepta varios gastos sin archivo', async () => {
+      await gasto(eventoA)
+      await expect(gasto(eventoA)).resolves.toBeDefined()
     })
   })
 

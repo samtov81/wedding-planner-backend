@@ -50,6 +50,8 @@ describe('Facturas e2e', () => {
   let gastoDeFlor: string
   let gastoConArchivo: string
   let gastoSinArchivo: string
+  let evDj: string
+  let evMarta: string
 
   const auth = (u: Usuario) => ({ Authorization: `Bearer ${u.accessToken}` })
 
@@ -118,6 +120,29 @@ describe('Facturas e2e', () => {
     return g.id
   }
 
+  /**
+   * Siembra un gasto con archivo, lo pasa a `usar` y lo borra al acabar: así no
+   * altera los conteos de los demás casos. Cada key de R2 la tiene un solo gasto.
+   */
+  async function conArchivoSembrado(
+    eventVendorId: string,
+    estado: 'PAID' | 'PENDING',
+    usar: (expenseId: string) => Promise<void>,
+  ): Promise<void> {
+    const id = await sembrarGasto(eventVendorId, `Con archivo ${estado}`, {
+      invoiceFileKey: `events/${evento}/invoices/${eventVendorId}-${estado}.pdf`,
+      invoiceFileName: 'factura.pdf',
+      invoiceFileType: 'application/pdf',
+      invoiceFileBytes: 1234,
+      ...(estado === 'PENDING' ? { status: 'PENDING', paidAt: null } : {}),
+    })
+    try {
+      await usar(id)
+    } finally {
+      await prisma.expense.delete({ where: { id } })
+    }
+  }
+
   async function conectar(u: Usuario): Promise<{ socket: SocketCliente; recibidos: string[] }> {
     const socket = io(`${url}/realtime`, {
       auth: { token: u.accessToken },
@@ -179,10 +204,10 @@ describe('Facturas e2e', () => {
       .send({ budgetAccess: 'view' })
       .expect(200)
 
-    const evDj = await contratar(dj, 'DJ Max', 'BOOKED')
+    evDj = await contratar(dj, 'DJ Max', 'BOOKED')
     const evFlor = await contratar(flor, 'Flor y Co', 'BOOKED')
     // Marta cobró y después se canceló su contratación.
-    const evMarta = await contratar(marta, 'Marta Foto', 'CANCELLED')
+    evMarta = await contratar(marta, 'Marta Foto', 'CANCELLED')
     const evSara = await contratar(sara, 'Sara Video', 'SHORTLISTED')
     const evPia = await contratar(pia, 'Pía Catering', 'BOOKED')
 
@@ -355,6 +380,53 @@ describe('Facturas e2e', () => {
       expect(JSON.stringify(cuerpo)).not.toContain('nota privada')
     })
 
+    it('el archivo de su pago PAID pasa la regla y se detiene en el almacén (503)', async () => {
+      await conArchivoSembrado(evDj, 'PAID', async (id) => {
+        const r = await request(url)
+          .get(`/me/vendor-payments/${id}/invoice-file`)
+          .set(auth(dj))
+          .expect(503)
+        expect((r.body as ErrorCuerpo).code).toBe('STORAGE_UNAVAILABLE')
+      })
+    })
+
+    it('el archivo de su gasto PENDING es 404 VENDOR_PAYMENT_NOT_FOUND', async () => {
+      await conArchivoSembrado(evDj, 'PENDING', async (id) => {
+        const r = await request(url)
+          .get(`/me/vendor-payments/${id}/invoice-file`)
+          .set(auth(dj))
+          .expect(404)
+        expect((r.body as ErrorCuerpo).code).toBe('VENDOR_PAYMENT_NOT_FOUND')
+      })
+    })
+
+    it('/me/vendor-payments filtra por eventId y rechaza uno que no es uuid', async () => {
+      const propio = await request(url)
+        .get(`/me/vendor-payments?eventId=${evento}`)
+        .set(auth(dj))
+        .expect(200)
+      expect((propio.body as PagosCuerpo).events).toHaveLength(1)
+      const otro = await request(url)
+        .get('/me/vendor-payments?eventId=00000000-0000-4000-8000-000000000000')
+        .set(auth(dj))
+        .expect(200)
+      expect(otro.body).toEqual({ events: [] })
+      await request(url).get('/me/vendor-payments?eventId=no-uuid').set(auth(dj)).expect(400)
+    })
+
+    it('no crea ni edita gastos del evento: 403', async () => {
+      await request(url)
+        .post(`/events/${evento}/expenses`)
+        .set(auth(dj))
+        .send({ concept: 'X', category: 'Y', amount: '1', payeeName: 'Z' })
+        .expect(403)
+      await request(url)
+        .patch(`/events/${evento}/expenses/${gastoPagadoDj}`)
+        .set(auth(dj))
+        .send({ concept: 'Cambiado' })
+        .expect(403)
+    })
+
     it('el pago de otro proveedor es 404 VENDOR_PAYMENT_NOT_FOUND', async () => {
       const r = await request(url)
         .get(`/me/vendor-payments/${gastoDeFlor}/invoice-file`)
@@ -372,6 +444,16 @@ describe('Facturas e2e', () => {
       expect(cuerpo.events[0]?.payments).toHaveLength(1)
       await request(url).get(`/events/${evento}`).set(auth(marta)).expect(404)
       await request(url).get(`/events/${evento}/expenses`).set(auth(marta)).expect(404)
+    })
+
+    it('el archivo de su pago PAID sigue pasando la regla (503 sin R2)', async () => {
+      await conArchivoSembrado(evMarta, 'PAID', async (id) => {
+        const r = await request(url)
+          .get(`/me/vendor-payments/${id}/invoice-file`)
+          .set(auth(marta))
+          .expect(503)
+        expect((r.body as ErrorCuerpo).code).toBe('STORAGE_UNAVAILABLE')
+      })
     })
   })
 

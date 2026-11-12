@@ -79,6 +79,7 @@ function montar(opciones: { cola?: QueuePort } = {}) {
 
   return {
     gastos,
+    uow,
     almacen,
     avisos,
     memoria,
@@ -349,6 +350,23 @@ describe('casos de uso de gastos', () => {
       ])
       expect(jobs()).toHaveLength(3)
     })
+  })
+
+  it('editar y borrar bloquean el gasto dentro de la unidad de trabajo', async () => {
+    // El "antes" que decide campana y subtotal tiene que salir del bloqueo,
+    // no de una lectura fuera de la transacción.
+    const { crear, editar, borrar, gastos, uow } = montar()
+    const gasto = await crear.ejecutar(EVENTO, deVendor(VENDOR), 'ana')
+    const dentro: boolean[] = []
+    vi.spyOn(gastos, 'bloquearGasto').mockImplementation((eventId, expenseId) => {
+      dentro.push(uow.activa)
+      return gastos.buscarPorId(eventId, expenseId)
+    })
+
+    await editar.ejecutar(EVENTO, gasto.id, { status: 'PAID' })
+    await borrar.ejecutar(EVENTO, gasto.id)
+
+    expect(dentro).toEqual([true, true])
   })
 
   describe('número de factura y subtotal', () => {

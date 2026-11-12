@@ -31,7 +31,10 @@ export type EntradaCambiosGasto = Omit<CambiosGasto, 'paidAt' | 'invoiceFile'> &
  * Edita un gasto (spec 2026-11-11 §8 y §9), en este orden:
  *  1. si trae archivo, `confirmar` en R2 ANTES de abrir la transacción (ver
  *     `CreateExpenseUseCase`);
- *  2. unidad de trabajo: releer el gasto → proveedor del evento → subtotal
+ *  2. unidad de trabajo: bloquear y releer el gasto (`bloquearGasto`, `FOR
+ *     UPDATE`: dos PATCH concurrentes se serializan y el segundo ve el "antes"
+ *     que dejó el primero, así un solo paso a PAID crea una sola campana) →
+ *     proveedor del evento → subtotal
  *     con los valores FINALES (lo que llega o, si no llega, lo guardado; un
  *     PATCH que sólo baja `amount` por debajo del `subtotal` guardado es 422 y
  *     no un 500 del CHECK) → escribir → destinatarios y campana con el gasto de
@@ -67,7 +70,7 @@ export class UpdateExpenseUseCase {
     }
 
     const { gasto, job, keyABorrar } = await this.unidadDeTrabajo.ejecutar(async () => {
-      const actual = await this.gastos.buscarPorId(eventId, expenseId)
+      const actual = await this.gastos.bloquearGasto(eventId, expenseId)
       if (actual === null) throw new GastoNoEncontradoError()
       if (
         cambios.origen?.kind === 'vendor' &&

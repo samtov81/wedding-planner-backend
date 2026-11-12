@@ -87,6 +87,11 @@ export class ExpenseRepositoryEnMemoria implements ExpenseRepository {
     return Promise.resolve(gasto === undefined ? null : this.aDominio(gasto))
   }
 
+  /** Sin concurrencia que serializar en memoria: es una lectura sin más. */
+  bloquearGasto(eventId: string, expenseId: string): Promise<Expense | null> {
+    return this.buscarPorId(eventId, expenseId)
+  }
+
   listar(
     eventId: string,
     filtro: FiltroGastos,

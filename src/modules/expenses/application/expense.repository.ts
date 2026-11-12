@@ -76,6 +76,18 @@ export interface ExpenseRepository {
   /** Lanza `NumeroDeFacturaRepetidoError` si el proveedor ya tiene ese número en el evento. */
   crear(datos: DatosNuevoGasto): Promise<Expense>
   buscarPorId(eventId: string, expenseId: string): Promise<Expense | null>
+  /**
+   * Como `buscarPorId`, pero antes bloquea la fila del gasto (`SELECT … FOR
+   * UPDATE`) dentro de la unidad de trabajo en curso. Es lo primero que hacen
+   * editar y borrar: el gasto de "antes" decide la campana `expense.paid` y la
+   * validación del subtotal con los valores finales, y sin el bloqueo dos
+   * PATCH concurrentes leerían el mismo "antes" (dos campanas por un solo paso
+   * a PAID, o un subtotal validado sobre un importe que otro acaba de bajar,
+   * que acabaría en el CHECK como 500). Fuera de una transacción el bloqueo se
+   * suelta al terminar la sentencia y no protege nada. `null` si el gasto no
+   * es de ese evento.
+   */
+  bloquearGasto(eventId: string, expenseId: string): Promise<Expense | null>
   /** `createdAt` desc, `id` desc. */
   listar(
     eventId: string,

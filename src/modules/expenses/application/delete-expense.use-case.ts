@@ -12,8 +12,8 @@ import { avisosDelCambio, encolarAvisoGasto } from './avisos-gastos'
 import { EXPENSE_REPOSITORY, type ExpenseRepository } from './expense.repository'
 
 /**
- * Borra un gasto (spec 2026-11-11 §9). Dentro de la unidad de trabajo relee el
- * gasto (hace falta su estado, su proveedor y su archivo de ANTES: después ya
+ * Borra un gasto (spec 2026-11-11 §9). Dentro de la unidad de trabajo bloquea
+ * y relee el gasto (`bloquearGasto`; hace falta su estado, su proveedor y su archivo de ANTES: después ya
  * no hay fila) y lo borra. Borrar no crea campana: sólo avisa al proveedor
  * cobrado si estaba PAID (`avisosDelCambio` con `despues = null`), que ya no
  * lo verá. Tras el commit encola siempre y borra el archivo de R2 si lo tenía.
@@ -33,7 +33,7 @@ export class DeleteExpenseUseCase {
 
   async ejecutar(eventId: string, expenseId: string): Promise<void> {
     const { job, keyABorrar } = await this.unidadDeTrabajo.ejecutar(async () => {
-      const actual = await this.gastos.buscarPorId(eventId, expenseId)
+      const actual = await this.gastos.bloquearGasto(eventId, expenseId)
       if (actual === null || !(await this.gastos.eliminar(eventId, expenseId))) {
         throw new GastoNoEncontradoError()
       }

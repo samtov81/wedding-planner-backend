@@ -134,7 +134,10 @@ export class PrismaExpenseRepository implements ExpenseRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async proveedorExiste(eventId: string, eventVendorId: string): Promise<boolean> {
-    return (await this.prisma.eventVendor.count({ where: { id: eventVendorId, eventId } })) > 0
+    return (
+      (await clienteDe(this.prisma).eventVendor.count({ where: { id: eventVendorId, eventId } })) >
+      0
+    )
   }
 
   async crear(datos: DatosNuevoGasto): Promise<Expense> {
@@ -169,11 +172,20 @@ export class PrismaExpenseRepository implements ExpenseRepository {
   }
 
   async buscarPorId(eventId: string, expenseId: string): Promise<Expense | null> {
-    const fila = await this.prisma.expense.findFirst({
+    const fila = await clienteDe(this.prisma).expense.findFirst({
       where: { id: expenseId, eventId },
       include: CON_PROVEEDOR,
     })
     return fila === null ? null : aDominio(fila)
+  }
+
+  async bloquearGasto(eventId: string, expenseId: string): Promise<Expense | null> {
+    // `$queryRaw` con template tag: los ids van como parámetros, nada se concatena.
+    await clienteDe(this.prisma).$queryRaw`
+      SELECT id FROM expenses
+      WHERE id = ${expenseId}::uuid AND "eventId" = ${eventId}::uuid
+      FOR UPDATE`
+    return await this.buscarPorId(eventId, expenseId)
   }
 
   async listar(
@@ -345,7 +357,7 @@ export class PrismaExpenseRepository implements ExpenseRepository {
   async proveedorCobrable(
     eventVendorId: string,
   ): Promise<{ userId: string; status: 'SHORTLISTED' | 'BOOKED' | 'CANCELLED' } | null> {
-    const fila = await this.prisma.eventVendor.findUnique({
+    const fila = await clienteDe(this.prisma).eventVendor.findUnique({
       where: { id: eventVendorId },
       select: { status: true, vendorProfile: { select: { userId: true } } },
     })

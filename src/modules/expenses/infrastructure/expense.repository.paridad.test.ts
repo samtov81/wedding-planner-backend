@@ -479,6 +479,20 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
     bytes: 1234,
   }
 
+  it('bloquearGasto devuelve lo mismo que buscarPorId y null desde otro evento', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      const { eventId } = await sembrarEvento()
+      const { eventId: otro } = await sembrarEvento()
+      const creado = await repo.crear(
+        nuevo(eventId, { invoiceNumber: 'F-09', subtotal: '80.00', invoiceFile: ARCHIVO }),
+      )
+      expect(await repo.bloquearGasto(eventId, creado.id), nombre).toEqual(
+        await repo.buscarPorId(eventId, creado.id),
+      )
+      expect(await repo.bloquearGasto(otro, creado.id), nombre).toBeNull()
+    }
+  })
+
   it('crea con número, subtotal y archivo de factura, y actualizar los deja en null', async () => {
     for (const [nombre, repo] of sujetos()) {
       const { eventId } = await sembrarEvento()

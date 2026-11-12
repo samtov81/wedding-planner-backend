@@ -1,39 +1,127 @@
-import { Inject, Injectable } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
-import { paidAtTrasCambio } from '../domain/expense'
-import type { Expense } from '../domain/expense'
+import {
+  UNIDAD_DE_TRABAJO,
+  type UnidadDeTrabajo,
+} from '@/modules/database/application/unidad-de-trabajo'
+import {
+  EVENT_REPOSITORY,
+  type EventRepository,
+} from '@/modules/events/application/event.repository'
+import {
+  NOTIFICATION_PORT,
+  type NotificationPort,
+} from '@/modules/notifications/application/notification.port'
+import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
+import { NotFoundError } from '@/shared/domain'
+import { SubidaDeFacturas } from '@/modules/storage/application/subida-de-facturas'
+
+import {
+  type ArchivoFactura,
+  estaVencido,
+  type GastoListado,
+  hoyEnZona,
+  paidAtTrasCambio,
+  subtotalValido,
+} from '../domain/expense'
 import {
   GastoNoEncontradoError,
   ProveedorDelEventoNoEncontradoError,
+  SubtotalInvalidoError,
 } from '../domain/expense-errors'
+import { type ArchivoSubido, confirmarArchivo } from './archivos-de-factura.use-cases'
+import { avisosDelCambio, encolarAvisoGasto } from './avisos-gastos'
 import { type CambiosGasto, EXPENSE_REPOSITORY, type ExpenseRepository } from './expense.repository'
+import { RELOJ_GASTOS, type Reloj } from './reloj'
 
+/** `invoiceFile`: ausente = no se toca; `null` = quitarlo; `{ key, name }` = reemplazarlo. */
+export type EntradaCambiosGasto = Omit<CambiosGasto, 'paidAt' | 'invoiceFile'> & {
+  invoiceFile?: ArchivoSubido | null | undefined
+}
+
+/**
+ * Edita un gasto (spec 2026-11-11 §8 y §9), en este orden:
+ *  1. si trae archivo, `confirmar` en R2 ANTES de abrir la transacción (ver
+ *     `CreateExpenseUseCase`);
+ *  2. unidad de trabajo: bloquear y releer el gasto (`bloquearGasto`, `FOR
+ *     UPDATE`: dos PATCH concurrentes se serializan y el segundo ve el "antes"
+ *     que dejó el primero, así un solo paso a PAID crea una sola campana) →
+ *     proveedor del evento → subtotal
+ *     con los valores FINALES (lo que llega o, si no llega, lo guardado; un
+ *     PATCH que sólo baja `amount` por debajo del `subtotal` guardado es 422 y
+ *     no un 500 del CHECK) → escribir → destinatarios y campana con el gasto de
+ *     antes y el de después (`avisosDelCambio`);
+ *  3. tras el commit, encolar siempre y, si el archivo se reemplazó o se quitó,
+ *     borrar el anterior de R2. Si la escritura falla no se llega aquí: el
+ *     archivo anterior sigue siendo el de la fila y no se borra.
+ *
+ * Reenviar la misma key (p. ej. para cambiar sólo el nombre) no es reemplazar:
+ * borrarla dejaría la fila apuntando a un objeto que ya no existe.
+ */
 @Injectable()
 export class UpdateExpenseUseCase {
-  constructor(@Inject(EXPENSE_REPOSITORY) private readonly gastos: ExpenseRepository) {}
+  private readonly registro = new Logger(UpdateExpenseUseCase.name)
+
+  constructor(
+    @Inject(EXPENSE_REPOSITORY) private readonly gastos: ExpenseRepository,
+    private readonly subidas: SubidaDeFacturas,
+    @Inject(UNIDAD_DE_TRABAJO) private readonly unidadDeTrabajo: UnidadDeTrabajo,
+    @Inject(NOTIFICATION_PORT) private readonly avisos: NotificationPort,
+    @Inject(QUEUE_PORT) private readonly cola: QueuePort,
+    @Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository,
+    @Optional() @Inject(RELOJ_GASTOS) private readonly ahora: Reloj = () => new Date(),
+  ) {}
 
   async ejecutar(
     eventId: string,
     expenseId: string,
-    cambios: Omit<CambiosGasto, 'paidAt'>,
-  ): Promise<Expense> {
-    const actual = await this.gastos.buscarPorId(eventId, expenseId)
-    if (actual === null) throw new GastoNoEncontradoError()
-    if (
-      cambios.origen?.kind === 'vendor' &&
-      !(await this.gastos.proveedorExiste(eventId, cambios.origen.eventVendorId))
-    ) {
-      throw new ProveedorDelEventoNoEncontradoError()
+    entrada: EntradaCambiosGasto,
+  ): Promise<GastoListado> {
+    const { invoiceFile, ...cambios } = entrada
+    // El evento aporta la zona horaria con que se calcula `overdue` de la respuesta.
+    const evento = await this.eventos.buscarPorId(eventId)
+    if (evento === null) throw new NotFoundError('El evento no existe')
+    let archivo: ArchivoFactura | null | undefined = invoiceFile === null ? null : undefined
+    if (invoiceFile !== undefined && invoiceFile !== null) {
+      archivo = await confirmarArchivo(this.subidas, eventId, invoiceFile)
     }
-    // `paidAt` sólo se recalcula cuando el PATCH trae `status`: si no, un
-    // cambio de `{notes}` concurrente con un `{status:'PAID'}` de otra
-    // petición pisaría el `paidAt` recién fijado con uno calculado sobre esta
-    // lectura, ya obsoleta.
-    return await this.gastos.actualizar(eventId, expenseId, {
-      ...cambios,
-      ...(cambios.status !== undefined
-        ? { paidAt: paidAtTrasCambio(actual, cambios.status, new Date()) }
-        : {}),
+
+    const { gasto, job, keyABorrar } = await this.unidadDeTrabajo.ejecutar(async () => {
+      const actual = await this.gastos.bloquearGasto(eventId, expenseId)
+      if (actual === null) throw new GastoNoEncontradoError()
+      if (
+        cambios.origen?.kind === 'vendor' &&
+        !(await this.gastos.proveedorExiste(eventId, cambios.origen.eventVendorId))
+      ) {
+        throw new ProveedorDelEventoNoEncontradoError()
+      }
+      const subtotalFinal = cambios.subtotal === undefined ? actual.subtotal : cambios.subtotal
+      if (!subtotalValido(cambios.amount ?? actual.amount, subtotalFinal)) {
+        throw new SubtotalInvalidoError()
+      }
+      // `paidAt` sólo se recalcula cuando el PATCH trae `status`: si no, un
+      // cambio de `{notes}` concurrente con un `{status:'PAID'}` de otra
+      // petición pisaría el `paidAt` recién fijado con uno calculado sobre esta
+      // lectura, ya obsoleta.
+      const gasto = await this.gastos.actualizar(eventId, expenseId, {
+        ...cambios,
+        ...(archivo !== undefined ? { invoiceFile: archivo } : {}),
+        ...(cambios.status !== undefined
+          ? { paidAt: paidAtTrasCambio(actual, cambios.status, new Date()) }
+          : {}),
+      })
+      const keyAnterior = actual.invoiceFile?.key ?? null
+      return {
+        gasto,
+        job: await avisosDelCambio(this.gastos, this.avisos, eventId, actual, gasto),
+        keyABorrar:
+          archivo !== undefined && keyAnterior !== null && keyAnterior !== archivo?.key
+            ? keyAnterior
+            : null,
+      }
     })
+    await encolarAvisoGasto(this.cola, this.registro, gasto.id, job)
+    if (keyABorrar !== null) await this.subidas.borrar(keyABorrar)
+    return { ...gasto, overdue: estaVencido(gasto, hoyEnZona(this.ahora(), evento.timezone)) }
   }
 }

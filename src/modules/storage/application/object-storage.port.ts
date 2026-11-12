@@ -12,8 +12,11 @@ export interface ObjectStorage {
   readonly disponible: boolean
   /** URL de PUT que sólo acepta exactamente ese `Content-Type` y ese tamaño. */
   firmarSubida(key: string, contentType: string, bytes: number): Promise<string>
-  /** URL de GET de vida corta, o `null` sin almacenamiento. */
-  firmarLectura(key: string): Promise<string | null>
+  /**
+   * URL de GET de vida corta, o `null` sin almacenamiento. Con `descargarComo`
+   * la URL fuerza la descarga con ese nombre de archivo.
+   */
+  firmarLectura(key: string, descargarComo?: string): Promise<string | null>
   /** Metadatos del objeto, o `null` si no existe. */
   inspeccionar(key: string): Promise<ObjetoAlmacenado | null>
   borrar(key: string): Promise<void>

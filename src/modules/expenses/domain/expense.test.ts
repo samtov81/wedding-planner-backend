@@ -1,4 +1,12 @@
-import { calcularResumen, paidAtTrasCambio } from './expense'
+import {
+  calcularResumen,
+  estaVencido,
+  hoyEnZona,
+  impuestoDe,
+  pasaAPagado,
+  paidAtTrasCambio,
+  subtotalValido,
+} from './expense'
 
 describe('calcularResumen', () => {
   it('con total calcula sin asignar y lo que queda, admitiendo negativos', () => {
@@ -87,5 +95,49 @@ describe('calcularResumen — byCategory', () => {
 
   it('sin gastos, byCategory vacío', () => {
     expect(calcularResumen({ ...base, porCategoria: [] }).byCategory).toEqual([])
+  })
+})
+
+describe('factura', () => {
+  describe('impuestoDe', () => {
+    it('es amount menos subtotal', () => expect(impuestoDe('121.00', '100.00')).toBe('21.00'))
+    it('sin impuestos es 0.00', () => expect(impuestoDe('100.00', '100.00')).toBe('0.00'))
+    it('sin subtotal es null', () => expect(impuestoDe('100.00', null)).toBeNull())
+  })
+
+  describe('subtotalValido', () => {
+    it('igual al importe es válido', () => expect(subtotalValido('100.00', '100.00')).toBe(true))
+    it('mayor que el importe no es válido', () =>
+      expect(subtotalValido('100.00', '100.01')).toBe(false))
+    it('cero no es válido', () => expect(subtotalValido('100.00', '0.00')).toBe(false))
+    it('sin subtotal es válido', () => expect(subtotalValido('100.00', null)).toBe(true))
+  })
+
+  describe('hoyEnZona', () => {
+    const instante = new Date('2026-11-11T03:00:00Z')
+    it('usa la fecha local de la zona', () =>
+      expect(hoyEnZona(instante, 'America/Caracas')).toBe('2026-11-10'))
+    it('en UTC coincide con la fecha UTC', () =>
+      expect(hoyEnZona(instante, 'UTC')).toBe('2026-11-11'))
+  })
+
+  describe('estaVencido', () => {
+    const dueDate = new Date('2026-11-10T00:00:00Z')
+    it('PENDING con fecha pasada está vencido', () =>
+      expect(estaVencido({ status: 'PENDING', dueDate }, '2026-11-11')).toBe(true))
+    it('vence hoy: no está vencido', () =>
+      expect(estaVencido({ status: 'PENDING', dueDate }, '2026-11-10')).toBe(false))
+    it('PAID con fecha pasada no está vencido', () =>
+      expect(estaVencido({ status: 'PAID', dueDate }, '2026-11-11')).toBe(false))
+    it('sin dueDate no está vencido', () =>
+      expect(estaVencido({ status: 'PENDING', dueDate: null }, '2026-11-11')).toBe(false))
+  })
+
+  describe('pasaAPagado', () => {
+    it('un alta PAID pasa a pagado', () => expect(pasaAPagado(null, 'PAID')).toBe(true))
+    it('PENDING a PAID pasa a pagado', () => expect(pasaAPagado('PENDING', 'PAID')).toBe(true))
+    it('PAID a PAID no es un paso', () => expect(pasaAPagado('PAID', 'PAID')).toBe(false))
+    it('PAID a PENDING no es un paso', () => expect(pasaAPagado('PAID', 'PENDING')).toBe(false))
+    it('un alta PENDING no es un paso', () => expect(pasaAPagado(null, 'PENDING')).toBe(false))
   })
 })

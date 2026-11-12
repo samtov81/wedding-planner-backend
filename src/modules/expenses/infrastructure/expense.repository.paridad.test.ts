@@ -7,11 +7,12 @@ import { decodeCursor } from '@/shared/domain'
 
 import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
-import type { ExpenseRepository } from '../application/expense.repository'
+import type { DatosNuevoGasto, ExpenseRepository } from '../application/expense.repository'
 import { ExpenseRepositoryEnMemoria, type ProveedorEnMemoria } from './expense.repository.fake'
 import { PrismaExpenseRepository } from './prisma-expense.repository'
 
 const BASE = new Date('2026-03-01T00:00:00.000Z')
+const HOY = '2026-03-10'
 
 /**
  * Cada caso corre contra el doble y contra Postgres y compara lo que devuelve
@@ -55,21 +56,36 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
     proveedores: Array<{
       name: string
       assignedBudget: string
-      status: 'BOOKED' | 'CANCELLED'
+      status?: 'SHORTLISTED' | 'BOOKED' | 'CANCELLED'
+      /** Con `userId` el proveedor tiene ficha (`VendorProfile`) de ese usuario. */
+      userId?: string
     }> = [],
   ) {
     const evento = await prisma.event.create({
       data: { name: 'Boda', ownerId: createdById, timezone: 'UTC', currency: 'USD' },
     })
+    doble.eventos.push({ id: evento.id, name: 'Boda', currency: 'USD' })
     const vendorIds: string[] = []
     for (const p of proveedores) {
+      const status = p.status ?? 'BOOKED'
+      const perfil =
+        p.userId === undefined
+          ? null
+          : ((await prisma.vendorProfile.findUnique({ where: { userId: p.userId } })) ??
+            (await prisma.vendorProfile.create({
+              data: {
+                userId: p.userId,
+                businessName: p.name,
+                categoryId: await categoriaId(prisma, 'music-entertainment'),
+              },
+            })))
       const fila = await prisma.eventVendor.create({
         data: {
           eventId: evento.id,
-          externalName: p.name,
+          ...(perfil === null ? { externalName: p.name } : { vendorProfileId: perfil.id }),
           categoryId: await categoriaId(prisma, 'music-entertainment'),
           assignedBudget: p.assignedBudget,
-          status: p.status,
+          status,
         },
       })
       const enMemoria: ProveedorEnMemoria = {
@@ -77,7 +93,8 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         eventId: evento.id,
         name: p.name,
         assignedBudget: p.assignedBudget,
-        status: p.status,
+        status,
+        userId: p.userId ?? null,
       }
       doble.proveedores.push(enMemoria)
       vendorIds.push(fila.id)
@@ -112,6 +129,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         paidAt: null,
         dueDate: null,
         notes: null,
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
         createdById,
       })
       expect(sinVolatiles({ ...deVendor })).toEqual({
@@ -123,6 +143,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         dueDate: null,
         paidAt: null,
         notes: null,
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
       })
 
       const externo = await repo.crear({
@@ -135,6 +158,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         paidAt: new Date('2026-03-05T00:00:00Z'),
         dueDate: null,
         notes: null,
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
         createdById,
       })
       expect(sinVolatiles({ ...externo })).toEqual({
@@ -146,6 +172,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         dueDate: null,
         paidAt: new Date('2026-03-05T00:00:00Z'),
         notes: null,
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
       })
     }
   })
@@ -205,6 +234,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
             dueDate: null,
             paidAt: g.status === 'PAID' ? createdAt : null,
             notes: null,
+            invoiceNumber: null,
+            subtotal: null,
+            invoiceFile: null,
             createdById,
             createdAt,
             updatedAt: createdAt,
@@ -214,7 +246,7 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
 
       const porStatus = await repo.listar(
         eventId,
-        { status: 'PENDING', origin: null, eventVendorId: null },
+        { status: 'PENDING', origin: null, eventVendorId: null, q: null, hoy: HOY },
         null,
         20,
       )
@@ -222,7 +254,7 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
 
       const porOrigin = await repo.listar(
         eventId,
-        { status: null, origin: 'vendor', eventVendorId: null },
+        { status: null, origin: 'vendor', eventVendorId: null, q: null, hoy: HOY },
         null,
         20,
       )
@@ -230,7 +262,7 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
 
       const porVendor = await repo.listar(
         eventId,
-        { status: null, origin: null, eventVendorId: vendorId },
+        { status: null, origin: null, eventVendorId: vendorId, q: null, hoy: HOY },
         null,
         20,
       )
@@ -242,7 +274,7 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
       // gasto de ese vendor y es 'vendor', no 'external') → vacío.
       const contradictorio = await repo.listar(
         eventId,
-        { status: null, origin: 'external', eventVendorId: vendorId },
+        { status: null, origin: 'external', eventVendorId: vendorId, q: null, hoy: HOY },
         null,
         20,
       )
@@ -252,7 +284,7 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
       // consistente: sigue devolviendo sólo G1.
       const vendorYOrigin = await repo.listar(
         eventId,
-        { status: null, origin: 'vendor', eventVendorId: vendorId },
+        { status: null, origin: 'vendor', eventVendorId: vendorId, q: null, hoy: HOY },
         null,
         20,
       )
@@ -264,7 +296,7 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
       for (let i = 0; i < 10; i++) {
         const pagina = await repo.listar(
           eventId,
-          { status: null, origin: null, eventVendorId: null },
+          { status: null, origin: null, eventVendorId: null, q: null, hoy: HOY },
           cursor,
           1,
         )
@@ -295,6 +327,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         paidAt: null,
         dueDate: null,
         notes: null,
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
         createdById,
       })
       const actualizado = await repo.actualizar(eventId, creado.id, {
@@ -332,6 +367,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         paidAt: new Date(),
         dueDate: null,
         notes: null,
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
         createdById,
       })
       await repo.crear({
@@ -344,6 +382,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         paidAt: new Date(),
         dueDate: null,
         notes: null,
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
         createdById,
       })
       await repo.crear({
@@ -356,6 +397,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         paidAt: null,
         dueDate: null,
         notes: null,
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
         createdById,
       })
 
@@ -379,6 +423,9 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
       paidAt: status === 'PAID' ? new Date() : null,
       dueDate: null,
       notes: null,
+      invoiceNumber: null,
+      subtotal: null,
+      invoiceFile: null,
       createdById,
     })
     for (const [, repo] of sujetos()) {
@@ -396,6 +443,332 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
         { category: 'Flowers', status: 'PENDING', amount: '0.20', count: 1 },
         { category: 'Music', status: 'PENDING', amount: '500.00', count: 1 },
       ])
+    }
+  })
+
+  async function usuario(): Promise<string> {
+    const u = await prisma.user.create({
+      data: { email: `${randomUUID()}@gastos.test`, passwordHash: 'x', fullName: 'Proveedor' },
+    })
+    return u.id
+  }
+
+  function nuevo(eventId: string, extra: Partial<DatosNuevoGasto> = {}): DatosNuevoGasto {
+    return {
+      eventId,
+      origen: { kind: 'external', payeeName: 'Ana' },
+      concept: 'Servicio',
+      category: 'Otros',
+      amount: '100.00',
+      status: 'PENDING',
+      paidAt: null,
+      dueDate: null,
+      notes: null,
+      invoiceNumber: null,
+      subtotal: null,
+      invoiceFile: null,
+      createdById,
+      ...extra,
+    }
+  }
+
+  /** Una key de R2 la tiene un solo gasto (`expenses_invoice_file_key_unique`): cada uso, la suya. */
+  const archivo = (key: string) => ({
+    key: `events/x/invoices/${key}.pdf`,
+    name: 'a.pdf',
+    contentType: 'application/pdf',
+    bytes: 1234,
+  })
+
+  it('bloquearGasto devuelve lo mismo que buscarPorId y null desde otro evento', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      const { eventId } = await sembrarEvento()
+      const { eventId: otro } = await sembrarEvento()
+      const creado = await repo.crear(
+        nuevo(eventId, {
+          invoiceNumber: 'F-09',
+          subtotal: '80.00',
+          invoiceFile: archivo('bloqueo'),
+        }),
+      )
+      expect(await repo.bloquearGasto(eventId, creado.id), nombre).toEqual(
+        await repo.buscarPorId(eventId, creado.id),
+      )
+      expect(await repo.bloquearGasto(otro, creado.id), nombre).toBeNull()
+    }
+  })
+
+  it('crea con número, subtotal y archivo de factura, y actualizar los deja en null', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      const { eventId } = await sembrarEvento()
+      const ARCHIVO = archivo('numero-01')
+      const creado = await repo.crear(
+        nuevo(eventId, { invoiceNumber: 'F-01', subtotal: '80.00', invoiceFile: ARCHIVO }),
+      )
+      const releido = await repo.buscarPorId(eventId, creado.id)
+      expect(releido, nombre).toMatchObject({
+        invoiceNumber: 'F-01',
+        subtotal: '80.00',
+        invoiceFile: ARCHIVO,
+      })
+      const vacio = await repo.actualizar(eventId, creado.id, {
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
+      })
+      expect(vacio, nombre).toMatchObject({
+        invoiceNumber: null,
+        subtotal: null,
+        invoiceFile: null,
+      })
+    }
+  })
+
+  it('listar con q busca por proveedor, concepto, número y beneficiario sin distinguir mayúsculas', async () => {
+    const { eventId, vendorIds } = await sembrarEvento([
+      { name: 'DJ Max', assignedBudget: '500.00' },
+    ])
+    const vendorId = vendorIds[0]
+    if (vendorId === undefined) throw new Error('vendor no sembrado')
+    for (const [nombre, repo] of sujetos()) {
+      await repo.crear(
+        nuevo(eventId, { concept: 'Pago A', origen: { kind: 'vendor', eventVendorId: vendorId } }),
+      )
+      await repo.crear(
+        nuevo(eventId, {
+          concept: 'Anticipo boda',
+          origen: { kind: 'external', payeeName: 'Zeta' },
+        }),
+      )
+      await repo.crear(
+        nuevo(eventId, {
+          concept: 'Pago C',
+          invoiceNumber: 'F-0042',
+          origen: { kind: 'external', payeeName: 'Zeta' },
+        }),
+      )
+      await repo.crear(
+        nuevo(eventId, { concept: 'Pago D', origen: { kind: 'external', payeeName: 'Ana Ruiz' } }),
+      )
+      const buscar = async (q: string) =>
+        (
+          await repo.listar(
+            eventId,
+            { status: null, origin: null, eventVendorId: null, q, hoy: HOY },
+            null,
+            20,
+          )
+        ).items
+          .map((e) => e.concept)
+          .sort()
+      expect(await buscar('dj'), nombre).toEqual(['Pago A'])
+      expect(await buscar('ANTICIPO'), nombre).toEqual(['Anticipo boda'])
+      expect(await buscar('F-0'), nombre).toEqual(['Pago C'])
+      expect(await buscar('ana'), nombre).toEqual(['Pago D'])
+      expect(await buscar('nada'), nombre).toEqual([])
+    }
+  })
+
+  /** Siembra PENDING con distintos `dueDate` respecto a `HOY` (2026-03-10) y un PAID vencido. */
+  async function sembrarVencimientos(repo: ExpenseRepository, eventId: string) {
+    const d = (dia: string) => new Date(`${dia}T00:00:00.000Z`)
+    const casos: Array<[string, string | null, 'PENDING' | 'PAID', string]> = [
+      ['V1', '2026-03-01', 'PENDING', '10.10'],
+      ['V2', '2026-03-09', 'PENDING', '20.20'],
+      ['HOY', '2026-03-10', 'PENDING', '5.00'],
+      ['P1', '2026-03-11', 'PENDING', '1.00'],
+      ['P2', '2026-03-12', 'PENDING', '1.00'],
+      ['P3', '2026-03-13', 'PENDING', '1.00'],
+      ['P4', '2026-03-14', 'PENDING', '1.00'],
+      ['P5', '2026-03-15', 'PENDING', '1.00'],
+      ['P6', '2026-03-16', 'PENDING', '1.00'],
+      ['SIN', null, 'PENDING', '1.00'],
+      ['PAGADO', '2026-03-02', 'PAID', '99.00'],
+    ]
+    for (const [concept, dia, status, amount] of casos) {
+      await repo.crear(
+        nuevo(eventId, {
+          concept,
+          amount,
+          status,
+          dueDate: dia === null ? null : d(dia),
+          paidAt: status === 'PAID' ? new Date('2026-03-03T00:00:00Z') : null,
+        }),
+      )
+    }
+  }
+
+  it('OVERDUE y vencidos devuelven sólo PENDING con dueDate anterior a hoy', async () => {
+    const { eventId } = await sembrarEvento()
+    for (const [nombre, repo] of sujetos()) {
+      await sembrarVencimientos(repo, eventId)
+      const pagina = await repo.listar(
+        eventId,
+        { status: 'OVERDUE', origin: null, eventVendorId: null, q: null, hoy: HOY },
+        null,
+        20,
+      )
+      expect(pagina.items.map((e) => e.concept).sort(), nombre).toEqual(['V1', 'V2'])
+      expect(await repo.vencidos(eventId, HOY), nombre).toEqual({ amount: '30.30', count: 2 })
+    }
+  })
+
+  it('proximos devuelve 5 por dueDate asc sin vencidos, pagados ni sin fecha', async () => {
+    const { eventId } = await sembrarEvento()
+    for (const [nombre, repo] of sujetos()) {
+      await sembrarVencimientos(repo, eventId)
+      const proximos = await repo.proximos(eventId, HOY, 5)
+      expect(
+        proximos.map((e) => e.concept),
+        nombre,
+      ).toEqual(['HOY', 'P1', 'P2', 'P3', 'P4'])
+    }
+  })
+
+  it('listarPagosRecibidos y buscarPagoRecibido sólo ven PAID de BOOKED o CANCELLED propios', async () => {
+    const yo = await usuario()
+    const otro = await usuario()
+    const e1 = await sembrarEvento([
+      { name: 'Mi DJ', assignedBudget: '100.00', status: 'BOOKED', userId: yo },
+      { name: 'Otro DJ', assignedBudget: '100.00', status: 'BOOKED', userId: otro },
+    ])
+    const e2 = await sembrarEvento([
+      { name: 'Mi DJ', assignedBudget: '100.00', status: 'CANCELLED', userId: yo },
+    ])
+    const e3 = await sembrarEvento([
+      { name: 'Mi DJ', assignedBudget: '100.00', status: 'SHORTLISTED', userId: yo },
+    ])
+    const externo = await sembrarEvento([{ name: 'Externo', assignedBudget: '100.00' }])
+    const vid = (e: { vendorIds: string[] }, i = 0) => {
+      const v = e.vendorIds.at(i)
+      if (v === undefined) throw new Error('vendor no sembrado')
+      return v
+    }
+    for (const [nombre, repo] of sujetos()) {
+      const pago = (
+        e: { eventId: string; vendorIds: string[] },
+        i: number,
+        concept: string,
+        status: 'PAID' | 'PENDING',
+        paidAt: string,
+      ) =>
+        repo.crear(
+          nuevo(e.eventId, {
+            concept,
+            status,
+            paidAt: status === 'PAID' ? new Date(paidAt) : null,
+            invoiceNumber: `N-${concept}`,
+            subtotal: '80.00',
+            invoiceFile: archivo(`pago-${concept}`),
+            origen: { kind: 'vendor', eventVendorId: vid(e, i) },
+          }),
+        )
+      const reservado = await pago(e1, 0, 'reservado', 'PAID', '2026-03-05T00:00:00Z')
+      await pago(e1, 0, 'pendiente', 'PENDING', '')
+      const ajeno = await pago(e1, 1, 'ajeno', 'PAID', '2026-03-06T00:00:00Z')
+      const cancelado = await pago(e2, 0, 'cancelado', 'PAID', '2026-03-07T00:00:00Z')
+      const preseleccion = await pago(e3, 0, 'preseleccion', 'PAID', '2026-03-08T00:00:00Z')
+      const deExterno = await repo.crear(
+        nuevo(externo.eventId, {
+          concept: 'externo',
+          status: 'PAID',
+          paidAt: new Date('2026-03-09T00:00:00Z'),
+          origen: { kind: 'vendor', eventVendorId: vid(externo) },
+        }),
+      )
+
+      const todos = await repo.listarPagosRecibidos(yo, null)
+      expect(
+        todos.map((p) => p.concept),
+        nombre,
+      ).toEqual(['cancelado', 'reservado'])
+      expect(todos[1], nombre).toEqual({
+        expenseId: reservado.id,
+        eventId: e1.eventId,
+        eventName: 'Boda',
+        currency: 'USD',
+        concept: 'reservado',
+        amount: '100.00',
+        subtotal: '80.00',
+        invoiceNumber: 'N-reservado',
+        paidAt: new Date('2026-03-05T00:00:00Z'),
+        invoiceFile: archivo('pago-reservado'),
+      })
+      expect(
+        (await repo.listarPagosRecibidos(yo, e1.eventId)).map((p) => p.concept),
+        nombre,
+      ).toEqual(['reservado'])
+
+      expect((await repo.buscarPagoRecibido(yo, cancelado.id))?.concept, nombre).toBe('cancelado')
+      for (const excluido of [ajeno, preseleccion, deExterno]) {
+        expect(await repo.buscarPagoRecibido(yo, excluido.id), nombre).toBeNull()
+      }
+      const pendiente = (
+        await repo.listar(
+          e1.eventId,
+          { status: 'PENDING', origin: null, eventVendorId: null, q: null, hoy: HOY },
+          null,
+          5,
+        )
+      ).items[0]
+      expect(pendiente).toBeDefined()
+      expect(await repo.buscarPagoRecibido(yo, pendiente?.id ?? ''), nombre).toBeNull()
+    }
+  })
+
+  it('proveedorCobrable devuelve dueño y estado, y null para un externo', async () => {
+    const yo = await usuario()
+    const e = await sembrarEvento([
+      { name: 'Con ficha', assignedBudget: '1.00', status: 'CANCELLED', userId: yo },
+      { name: 'Externo', assignedBudget: '1.00' },
+    ])
+    for (const [nombre, repo] of sujetos()) {
+      expect(await repo.proveedorCobrable(e.vendorIds[0] ?? ''), nombre).toEqual({
+        userId: yo,
+        status: 'CANCELLED',
+      })
+      expect(await repo.proveedorCobrable(e.vendorIds[1] ?? ''), nombre).toBeNull()
+    }
+  })
+
+  it('un número repetido del mismo proveedor lanza NumeroDeFacturaRepetidoError al crear y al actualizar', async () => {
+    const { eventId, vendorIds } = await sembrarEvento([
+      { name: 'DJ Max', assignedBudget: '500.00' },
+    ])
+    const vendorId = vendorIds[0] ?? ''
+    for (const [nombre, repo] of sujetos()) {
+      const origen = { kind: 'vendor' as const, eventVendorId: vendorId }
+      await repo.crear(nuevo(eventId, { origen, invoiceNumber: 'F-1' }))
+      await expect(
+        repo.crear(nuevo(eventId, { origen, invoiceNumber: 'F-1' })),
+        nombre,
+      ).rejects.toMatchObject({ code: 'INVOICE_NUMBER_TAKEN' })
+      const otro = await repo.crear(nuevo(eventId, { origen }))
+      await expect(
+        repo.actualizar(eventId, otro.id, { invoiceNumber: 'F-1' }),
+        nombre,
+      ).rejects.toMatchObject({ code: 'INVOICE_NUMBER_TAKEN' })
+    }
+  })
+
+  it('una key de R2 ya usada por otro gasto lanza SubidaNoValidaError, y el mismo gasto puede reenviarla', async () => {
+    for (const [nombre, repo] of sujetos()) {
+      const { eventId } = await sembrarEvento()
+      const a = await repo.crear(nuevo(eventId, { invoiceFile: archivo(`dup-${nombre}`) }))
+      await expect(
+        repo.crear(nuevo(eventId, { invoiceFile: archivo(`dup-${nombre}`) })),
+        nombre,
+      ).rejects.toMatchObject({ code: 'INVALID_UPLOAD' })
+      const otro = await repo.crear(nuevo(eventId))
+      await expect(
+        repo.actualizar(eventId, otro.id, { invoiceFile: archivo(`dup-${nombre}`) }),
+        nombre,
+      ).rejects.toMatchObject({ code: 'INVALID_UPLOAD' })
+      // Renombrar: la MISMA key en el MISMO gasto sigue valiendo.
+      const renombrado = await repo.actualizar(eventId, a.id, {
+        invoiceFile: { ...archivo(`dup-${nombre}`), name: 'otro.pdf' },
+      })
+      expect(renombrado.invoiceFile?.name, nombre).toBe('otro.pdf')
     }
   })
 })

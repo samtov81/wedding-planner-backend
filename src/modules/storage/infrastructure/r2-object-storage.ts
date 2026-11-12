@@ -20,6 +20,20 @@ export interface ConfiguracionR2 {
 /** 5 minutos: lo justo para subir o para pintar la página que pidió la URL. */
 const VIDA_DE_FIRMA_S = 300
 
+/**
+ * Cabecera `Content-Disposition` de una descarga con nombre (RFC 5987/6266).
+ * `encodeURIComponent` deja sin escapar `' ( ) *`, que en `filename*` son
+ * caracteres reservados: se escapan a mano para que un nombre como `a(1)'.pdf`
+ * no rompa el valor de la cabecera.
+ */
+export function contentDispositionDe(nombre: string): string {
+  const codificado = encodeURIComponent(nombre).replace(
+    /['()*]/g,
+    (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase(),
+  )
+  return `attachment; filename*=UTF-8''${codificado}`
+}
+
 export class R2ObjectStorage implements ObjectStorage {
   readonly disponible = true
   private readonly client: S3Client
@@ -47,8 +61,16 @@ export class R2ObjectStorage implements ObjectStorage {
     })
   }
 
-  firmarLectura(key: string): Promise<string | null> {
-    const comando = new GetObjectCommand({ Bucket: this.config.bucket, Key: key })
+  firmarLectura(key: string, descargarComo?: string): Promise<string | null> {
+    const comando = new GetObjectCommand({
+      Bucket: this.config.bucket,
+      Key: key,
+      ...(descargarComo === undefined
+        ? {}
+        : {
+            ResponseContentDisposition: contentDispositionDe(descargarComo),
+          }),
+    })
     return getSignedUrl(this.client, comando, { expiresIn: VIDA_DE_FIRMA_S })
   }
 

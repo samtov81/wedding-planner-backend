@@ -7,6 +7,14 @@ export type OrigenGasto =
   | { kind: 'vendor'; eventVendorId: string; vendorName: string }
   | { kind: 'external'; payeeName: string }
 
+/** Metadatos del fichero de factura guardado en R2 (el binario no vive en la base). */
+export interface ArchivoFactura {
+  key: string
+  name: string
+  contentType: string
+  bytes: number
+}
+
 export interface Expense {
   id: string
   eventId: string
@@ -18,6 +26,10 @@ export interface Expense {
   dueDate: Date | null
   paidAt: Date | null
   notes: string | null
+  invoiceNumber: string | null
+  /** Base imponible. Los impuestos no se guardan: se derivan con `impuestoDe` (spec 2026-11-11 §6). */
+  subtotal: string | null
+  invoiceFile: ArchivoFactura | null
   createdById: string
   createdAt: Date
   updatedAt: Date
@@ -39,7 +51,10 @@ export interface ResumenPorCategoria {
   count: number
 }
 
-export interface ResumenPresupuesto {
+/** Un gasto con su "vencido" ya calculado en la zona del evento (spec 2026-11-11 §8). */
+export type GastoListado = Expense & { overdue: boolean }
+
+export interface ResumenBase {
   currency: string
   totalBudget: string | null
   assigned: string
@@ -50,6 +65,15 @@ export interface ResumenPresupuesto {
   byCategory: ResumenPorCategoria[]
 }
 
+/**
+ * `overdue`: suma y número de los PENDING con `dueDate < hoy`; `upcoming`: los 5
+ * PENDING con `dueDate >= hoy` más cercanos (spec 2026-11-11 §8).
+ */
+export interface ResumenPresupuesto extends ResumenBase {
+  overdue: { amount: string; count: number }
+  upcoming: GastoListado[]
+}
+
 export function calcularResumen(e: {
   currency: string
   totalBudget: string | null
@@ -57,7 +81,7 @@ export function calcularResumen(e: {
   paid: string
   pending: string
   porCategoria: SumaPorCategoria[]
-}): ResumenPresupuesto {
+}): ResumenBase {
   const total = e.totalBudget === null ? null : aCentimos(e.totalBudget)
   return {
     currency: e.currency,
@@ -109,4 +133,50 @@ export function paidAtTrasCambio(
   const estado = nuevoEstado ?? actual.status
   if (estado === 'PENDING') return null
   return actual.status === 'PAID' && actual.paidAt !== null ? actual.paidAt : ahora
+}
+
+/**
+ * Impuestos = `amount − subtotal`, derivado y nunca guardado (spec 2026-11-11 §6):
+ * una columna aparte podría contradecir a las otras dos. Sin subtotal no hay
+ * desglose, y el resultado es `null`.
+ */
+export function impuestoDe(amount: string, subtotal: string | null): string | null {
+  if (subtotal === null) return null
+  return deCentimos(aCentimos(amount) - aCentimos(subtotal))
+}
+
+/** `0 < subtotal <= amount`; sin subtotal no hay nada que validar. */
+export function subtotalValido(amount: string, subtotal: string | null): boolean {
+  if (subtotal === null) return true
+  const s = aCentimos(subtotal)
+  return s > 0n && s <= aCentimos(amount)
+}
+
+/** `YYYY-MM-DD` de un instante en la zona del evento (mismo método que `fechaIsoLocal` de schedule). */
+export function hoyEnZona(ahora: Date, timezone: string): string {
+  // `en-CA` formatea como `YYYY-MM-DD` sin tener que recomponer las partes.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(ahora)
+}
+
+/**
+ * Vencido = PENDING y `dueDate < hoy`. `dueDate` es `@db.Date`, la medianoche UTC
+ * de ese día, así que se compara su fecha UTC con `hoy` (ya en la zona del
+ * evento); un gasto que vence hoy aún no está vencido.
+ */
+export function estaVencido(
+  g: { status: ExpenseStatus; dueDate: Date | null },
+  hoy: string,
+): boolean {
+  if (g.status !== 'PENDING' || g.dueDate === null) return false
+  return g.dueDate.toISOString().slice(0, 10) < hoy
+}
+
+/** Hay "paso a pagado" al crear PAID (`antes = null`) o al cambiar de PENDING a PAID. */
+export function pasaAPagado(antes: ExpenseStatus | null, despues: ExpenseStatus): boolean {
+  return despues === 'PAID' && antes !== 'PAID'
 }

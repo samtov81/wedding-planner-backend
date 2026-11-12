@@ -9,6 +9,22 @@ const montoPositivo = montoSchema.refine((m) => m !== '0.00', {
 const fechaDia = z.iso.date().transform((d) => new Date(`${d}T00:00:00.000Z`))
 const estado = z.enum(['PENDING', 'PAID'])
 
+/**
+ * Datos de factura (spec 2026-11-11 §8). `null` quita el valor en el PATCH. El
+ * número se recorta y debe quedar entre 1 y 60 caracteres: los casos de uso
+ * confían en ello. El archivo es `{ key, name }`: tipo y tamaño los dice R2, no
+ * el cliente, y por eso `.strict()` rechaza cualquier otro campo.
+ */
+const facturaCampos = {
+  invoiceNumber: z.string().trim().min(1).max(60).nullable().optional(),
+  subtotal: montoPositivo.nullable().optional(),
+  invoiceFile: z
+    .object({ key: z.string().min(1).max(300), name: z.string().trim().min(1).max(200) })
+    .strict()
+    .nullable()
+    .optional(),
+}
+
 const origenCampos = {
   eventVendorId: z.uuid().optional(),
   payeeName: z.string().trim().min(1).max(200).optional(),
@@ -34,6 +50,7 @@ export const createExpenseSchema = z
     dueDate: fechaDia.nullable().optional(),
     status: estado.optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
+    ...facturaCampos,
     ...origenCampos,
   })
   .strict()
@@ -55,6 +72,7 @@ export const updateExpenseSchema = z
     dueDate: fechaDia.nullable().optional(),
     status: estado.optional(),
     notes: z.string().trim().max(2000).nullable().optional(),
+    ...facturaCampos,
     ...origenCampos,
   })
   .strict()
@@ -66,9 +84,22 @@ export const updateExpenseSchema = z
   })
 
 export const listExpensesQuerySchema = z.object({
-  status: estado.optional(),
+  status: z.enum(['PENDING', 'PAID', 'OVERDUE']).optional(),
+  q: z.string().trim().min(1).max(100).optional(),
   origin: z.enum(['vendor', 'external']).optional(),
   eventVendorId: z.uuid().optional(),
   cursor: z.string().min(1).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
+})
+
+/** Igual que el de moodboard: tipo y tamaño se validan en `SubidaDeFacturas`. */
+export const uploadUrlSchema = z
+  .object({
+    contentType: z.string(),
+    bytes: z.number().int().positive(),
+  })
+  .strict()
+
+export const vendorPaymentsQuerySchema = z.object({
+  eventId: z.uuid().optional(),
 })

@@ -161,4 +161,36 @@ describe('EventAccessService', () => {
     expect(await repoDraft.buscarContratacionReservada(EVENTO, 'vendor-1')).toBeNull()
     expect(await repoDraft.listarAccesiblesPor('vendor-1')).toEqual([])
   })
+
+  describe('usuariosConPresupuesto', () => {
+    it('devuelve el creador y los ACTIVE con grant; no los ACTIVE sin grant ni los INVITED', async () => {
+      for (const id of ['user-pareja', 'con-grant', 'sin-grant', 'invitado']) {
+        repo.usuarios.push({ id, fullName: id, email: `${id}@example.com` })
+      }
+      repo.membresias.push(
+        { id: 'm-1', eventId: 'ev-1', userId: 'user-pareja', role: 'PLANNER', status: 'ACTIVE' },
+        {
+          id: 'm-2',
+          eventId: 'ev-1',
+          userId: 'con-grant',
+          role: 'COUPLE',
+          status: 'ACTIVE',
+          budgetView: true,
+        },
+        { id: 'm-3', eventId: 'ev-1', userId: 'sin-grant', role: 'COUPLE', status: 'ACTIVE' },
+        {
+          id: 'm-4',
+          eventId: 'ev-1',
+          userId: 'invitado',
+          role: 'COUPLE',
+          status: 'INVITED',
+          budgetView: true,
+        },
+      )
+
+      const ids = await servicio.usuariosConPresupuesto('ev-1')
+
+      expect([...ids].sort()).toEqual(['con-grant', 'user-pareja'])
+    })
+  })
 })

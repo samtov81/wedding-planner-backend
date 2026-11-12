@@ -138,13 +138,17 @@ describe('Facturas e2e', () => {
   }
 
   function esperar(socket: SocketCliente, nombre: string, ms = 10_000): Promise<unknown> {
-    return new Promise((resolve, reject) => {
+    const espera = new Promise<unknown>((resolve, reject) => {
       const reloj = setTimeout(() => reject(new Error(`no llegó ${nombre} en ${ms} ms`)), ms)
       socket.once(nombre, (datos: unknown) => {
         clearTimeout(reloj)
         resolve(datos)
       })
     })
+    // Si la petición que debía provocarlo falla antes de esperarla, el rechazo
+    // no debe quedar sin atender; quien la espera sigue viendo el fallo.
+    espera.catch(() => undefined)
+    return espera
   }
 
   beforeAll(async () => {
@@ -252,11 +256,12 @@ describe('Facturas e2e', () => {
         .expect(409)
       expect((repetido.body as ErrorCuerpo).code).toBe('INVOICE_NUMBER_TAKEN')
 
-      await request(url)
+      const mayor = await request(url)
         .post(`/events/${evento}/expenses`)
         .set(auth(ana))
         .send({ ...cuerpo, invoiceNumber: 'A-101', subtotal: '200.00' })
         .expect(422)
+      expect((mayor.body as ErrorCuerpo).code).toBe('INVALID_SUBTOTAL')
     })
 
     it('sin R2, invoice-upload-url responde 503 STORAGE_UNAVAILABLE', async () => {
@@ -411,6 +416,10 @@ describe('Facturas e2e', () => {
       const deDj = await conectar(dj)
       const deLia = await conectar(lia)
       const deLuis = await conectar(luis)
+      // Luis entra en la sala del evento: así su socket está de verdad escuchando.
+      expect(await deLuis.socket.timeout(5_000).emitWithAck('join', { eventId: evento })).toEqual({
+        ok: true,
+      })
 
       const cambioProveedor = esperar(deDj.socket, 'vendor-payment.changed')
       const campanaProveedor = esperar(deDj.socket, 'notification.created')
@@ -439,6 +448,13 @@ describe('Facturas e2e', () => {
       // Luis llegara si existiera (control negativo).
       await new Promise((r) => setTimeout(r, 500))
       expect(deLuis.recibidos).toEqual([])
+
+      // Control positivo: el socket de Luis sí recibe lo que le corresponde. Pía
+      // se conecta y Luis, que está en la sala del evento, oye `presence.changed`
+      // (que `conectar` no cuenta en `recibidos`).
+      const presencia = esperar(deLuis.socket, 'presence.changed')
+      await conectar(pia)
+      await presencia
     })
   })
 })

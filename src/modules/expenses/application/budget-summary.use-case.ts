@@ -10,7 +10,7 @@ import { calcularResumen, estaVencido, hoyEnZona, type ResumenPresupuesto } from
 import { EXPENSE_REPOSITORY, type ExpenseRepository } from './expense.repository'
 import { RELOJ_GASTOS, type Reloj } from './reloj'
 
-/** Cuántos próximos pagos lleva el resumen (spec 2026-11-11 §6). */
+/** Cuántos próximos pagos lleva el resumen (spec 2026-11-11 §8). */
 const PROXIMOS = 5
 
 @Injectable()

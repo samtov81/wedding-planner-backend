@@ -252,7 +252,7 @@ describe('casos de uso de gastos', () => {
     })
   })
 
-  describe('vencidos y próximos (spec 2026-11-11 §6)', () => {
+  describe('vencidos y próximos (spec 2026-11-11 §8)', () => {
     const externo = (payeeName: string, dueDate: string, amount = '10.00') => ({
       ...base,
       amount,

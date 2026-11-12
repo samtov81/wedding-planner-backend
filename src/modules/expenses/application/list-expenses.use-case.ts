@@ -12,7 +12,7 @@ import { RELOJ_GASTOS, type Reloj } from './reloj'
 
 /**
  * Lista los gastos de un evento con `overdue` calculado. "Hoy" es la fecha de
- * `ahora()` en la zona del evento (spec 2026-11-11 §6), no la del servidor: en
+ * `ahora()` en la zona del evento (spec 2026-11-11 §8), no la del servidor: en
  * `America/Caracas` a las 03:00Z todavía es el día anterior.
  */
 @Injectable()

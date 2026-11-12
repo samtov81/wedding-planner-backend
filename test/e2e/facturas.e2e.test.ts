@@ -9,7 +9,7 @@ import { startPostgres, type PostgresDeTest } from '../support/containers'
 import { crearEventoPublicado } from '../support/eventos'
 
 /**
- * e2e de las facturas (spec 2026-11-11): la matriz de acceso de las rutas de
+ * e2e de las facturas (spec 2026-11-11 §11): la matriz de acceso de las rutas de
  * gastos y de `/me/vendor-payments`, y los avisos en tiempo real y en campana
  * cuando un gasto pasa a PAID. La app no tiene R2 configurado, así que el
  * archivo de factura se siembra escribiendo las columnas con Prisma y las rutas

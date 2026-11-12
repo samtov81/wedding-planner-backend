@@ -110,6 +110,10 @@ const proveedorDe = (g: GastoParaAviso | null): string | null =>
  *    las campanas de proveedor a quien no está BOOKED: a un CANCELLED la fila
  *    le quedaría invisible. Alternativa descartada: crearla también para el
  *    CANCELLED, que sería avisar a quien no la verá.
+ *    Caso conocido (spec 2026-11-11 §9): re-contratar a un proveedor como una
+ *    fila nueva de `event_vendors` y mover un gasto PAID de la fila vieja a la
+ *    nueva le reenvía `expense.paid`; se acepta porque para esa fila el pago es
+ *    nuevo, y no se distingue de un cambio de proveedor cualquiera.
  */
 export async function avisosDelCambio(
   gastos: Pick<ExpenseRepository, 'proveedorCobrable'>,

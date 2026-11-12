@@ -41,7 +41,7 @@ export class EventAccessService {
 
   /**
    * Los `userId` de los miembros ACTIVE que ven el presupuesto del evento: los
-   * destinatarios de `expense.changed` (spec 2026-11-11). Aplica
+   * destinatarios de `expense.changed` (spec 2026-11-11 §9). Aplica
    * `accesoAlPresupuesto`, la regla única, a cada miembro en vez de repetir
    * "owner o grant" en el worker de `expenses`; la alternativa descartada era
    * que ese worker consultara grants por su cuenta y la regla divergiera.

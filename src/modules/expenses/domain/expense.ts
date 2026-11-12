@@ -27,7 +27,7 @@ export interface Expense {
   paidAt: Date | null
   notes: string | null
   invoiceNumber: string | null
-  /** Base imponible. Los impuestos no se guardan: se derivan con `impuestoDe` (spec 2026-11-11). */
+  /** Base imponible. Los impuestos no se guardan: se derivan con `impuestoDe` (spec 2026-11-11 §6). */
   subtotal: string | null
   invoiceFile: ArchivoFactura | null
   createdById: string
@@ -51,7 +51,7 @@ export interface ResumenPorCategoria {
   count: number
 }
 
-/** Un gasto con su "vencido" ya calculado en la zona del evento (spec 2026-11-11). */
+/** Un gasto con su "vencido" ya calculado en la zona del evento (spec 2026-11-11 §8). */
 export type GastoListado = Expense & { overdue: boolean }
 
 export interface ResumenBase {
@@ -67,7 +67,7 @@ export interface ResumenBase {
 
 /**
  * `overdue`: suma y número de los PENDING con `dueDate < hoy`; `upcoming`: los 5
- * PENDING con `dueDate >= hoy` más cercanos (spec 2026-11-11 §6).
+ * PENDING con `dueDate >= hoy` más cercanos (spec 2026-11-11 §8).
  */
 export interface ResumenPresupuesto extends ResumenBase {
   overdue: { amount: string; count: number }
@@ -136,7 +136,7 @@ export function paidAtTrasCambio(
 }
 
 /**
- * Impuestos = `amount − subtotal`, derivado y nunca guardado (spec 2026-11-11):
+ * Impuestos = `amount − subtotal`, derivado y nunca guardado (spec 2026-11-11 §6):
  * una columna aparte podría contradecir a las otras dos. Sin subtotal no hay
  * desglose, y el resultado es `null`.
  */

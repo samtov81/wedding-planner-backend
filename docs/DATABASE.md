@@ -80,6 +80,8 @@ Invoice CHECK constraints:
 Invoice UNIQUE index (a partial expression index, written by hand in the migration; `schema.prisma` cannot express it, so it only carries a `///` comment):
 - `expenses_invoice_number_unique` — on `(eventId, COALESCE(eventVendorId::text, lower(payeeName)), invoiceNumber) WHERE invoiceNumber IS NOT NULL`. The same invoice number cannot repeat for the same vendor within an event; an external payee is compared case-insensitively (`Ana` = `ANA`). Expenses without a number are unconstrained.
 
+- `expenses_invoice_file_key_unique` — on `(invoiceFileKey) WHERE invoiceFileKey IS NOT NULL` (migration `20261112120000_expense_invoice_file_key`). An R2 object belongs to exactly one expense: two rows sharing a key would let deleting or replacing one destroy the other's file. The repository translates the violation into 422 `INVALID_UPLOAD`. Re-sending the same key on the same expense (a rename) is not a violation.
+
 Enforced by the use cases, not by the database: that the invoice file exists in R2, and that `subtotal <= amount` still holds when an update changes only one of the two (the CHECK would reject it, but the use case answers with a domain error first).
 
 ### `seating_tables`

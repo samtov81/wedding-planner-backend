@@ -320,11 +320,13 @@ model ScheduleItemNote {
 }
 
 /// Un número de factura no se repite para el mismo proveedor dentro de un evento
-/// (spec 2026-11-11 §2). Esa regla es el índice único por expresión
+/// (spec 2026-11-11 §6). Esa regla es el índice único por expresión
 /// `expenses_invoice_number_unique` (clave de proveedor = `eventVendorId` o, si
 /// es externo, `lower(payeeName)`), escrito a mano en la migración
 /// `20261111120000_expense_invoice` porque Prisma no expresa índices por
-/// expresión; por eso no aparece aquí y `migrate diff` no lo reclama.
+/// expresión; por eso no aparece aquí y `migrate diff` no lo reclama. Igual el
+/// índice único parcial `expenses_invoice_file_key_unique` (migración
+/// `20261112120000_expense_invoice_file_key`): una key de R2 pertenece a un solo gasto.
 model Expense {
   id            String        @id @default(uuid()) @db.Uuid
   eventId       String        @db.Uuid

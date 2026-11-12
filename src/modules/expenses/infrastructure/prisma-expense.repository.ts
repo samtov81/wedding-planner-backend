@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client'
 
 import { PrismaService } from '@/modules/database/prisma.service'
 import { clienteDe } from '@/modules/database/transaccion'
+import { SubidaNoValidaError } from '@/modules/storage/domain/imagen'
 import { encodeCursor, type CursorPage, type CursorValue } from '@/shared/domain'
 
 import type {
@@ -70,6 +71,28 @@ function esNumeroRepetido(error: unknown): boolean {
   const target = error.meta?.['target']
   const texto = Array.isArray(target) ? target.join(',') : typeof target === 'string' ? target : ''
   return texto.includes('COALESCE') || texto.includes('invoiceNumber')
+}
+
+/**
+ * El índice único parcial `expenses_invoice_file_key_unique` informa como `P2002`
+ * con `meta.target = ['invoiceFileKey']`: la key de R2 ya la tiene otro gasto
+ * (un reintento con la misma key en otro gasto, o la factura de un proveedor
+ * adjunta a otro). Es una subida no válida para este gasto (422).
+ */
+function esKeyRepetida(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+    return false
+  }
+  const target = error.meta?.['target']
+  const texto = Array.isArray(target) ? target.join(',') : typeof target === 'string' ? target : ''
+  return texto.includes('invoiceFileKey')
+}
+
+/** Traduce los `P2002` de factura a su error de dominio; el resto se propaga. */
+function traducirUnico(error: unknown): unknown {
+  if (esNumeroRepetido(error)) return new NumeroDeFacturaRepetidoError()
+  if (esKeyRepetida(error)) return new SubidaNoValidaError()
+  return error
 }
 
 function aFecha(hoy: string): Date {
@@ -144,8 +167,7 @@ export class PrismaExpenseRepository implements ExpenseRepository {
     try {
       return await this.insertar(datos)
     } catch (e) {
-      if (esNumeroRepetido(e)) throw new NumeroDeFacturaRepetidoError()
-      throw e
+      throw traducirUnico(e)
     }
   }
 
@@ -284,8 +306,7 @@ export class PrismaExpenseRepository implements ExpenseRepository {
         },
       }))
     } catch (e) {
-      if (esNumeroRepetido(e)) throw new NumeroDeFacturaRepetidoError()
-      throw e
+      throw traducirUnico(e)
     }
     if (count === 0) throw new GastoNoEncontradoError()
     const fila = await cliente.expense.findFirst({

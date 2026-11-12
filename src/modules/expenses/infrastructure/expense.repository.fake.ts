@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
+import { SubidaNoValidaError } from '@/modules/storage/domain/imagen'
 import {
   aCentimos,
   deCentimos,
@@ -63,6 +64,13 @@ export class ExpenseRepositoryEnMemoria implements ExpenseRepository {
     )
   }
 
+  /** Réplica de `expenses_invoice_file_key_unique`: una key de R2 la tiene un solo gasto. */
+  private keyRepetida(candidato: GastoEnMemoria): boolean {
+    const key = candidato.invoiceFile?.key
+    if (key === undefined) return false
+    return this.gastos.some((g) => g.id !== candidato.id && g.invoiceFile?.key === key)
+  }
+
   proveedorExiste(eventId: string, eventVendorId: string): Promise<boolean> {
     return Promise.resolve(
       this.proveedores.some((p) => p.id === eventVendorId && p.eventId === eventId),
@@ -78,6 +86,7 @@ export class ExpenseRepositoryEnMemoria implements ExpenseRepository {
       updatedAt: ahora,
     }
     if (this.numeroRepetido(gasto)) return Promise.reject(new NumeroDeFacturaRepetidoError())
+    if (this.keyRepetida(gasto)) return Promise.reject(new SubidaNoValidaError())
     this.gastos.push(gasto)
     return Promise.resolve(this.aDominio(gasto))
   }
@@ -138,6 +147,7 @@ export class ExpenseRepositoryEnMemoria implements ExpenseRepository {
       ...Object.fromEntries(Object.entries(cambios).filter(([, valor]) => valor !== undefined)),
     }
     if (this.numeroRepetido(propuesto)) return Promise.reject(new NumeroDeFacturaRepetidoError())
+    if (this.keyRepetida(propuesto)) return Promise.reject(new SubidaNoValidaError())
     Object.assign(gasto, propuesto)
     gasto.updatedAt = new Date()
     return Promise.resolve(this.aDominio(gasto))

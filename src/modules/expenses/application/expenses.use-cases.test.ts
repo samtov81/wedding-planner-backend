@@ -13,6 +13,7 @@ import {
   ArchivoDeFacturaNoEncontradoError,
   GastoNoEncontradoError,
   NumeroDeFacturaRepetidoError,
+  PagoRecibidoNoEncontradoError,
   ProveedorDelEventoNoEncontradoError,
   SubtotalInvalidoError,
 } from '../domain/expense-errors'
@@ -25,6 +26,8 @@ import { COLA_GASTOS, EVENTO_GASTO_CAMBIADO, type JobGastoCambiado } from './avi
 import { BudgetSummaryUseCase } from './budget-summary.use-case'
 import { CreateExpenseUseCase } from './create-expense.use-case'
 import { DeleteExpenseUseCase } from './delete-expense.use-case'
+import { ListExpensesUseCase } from './list-expenses.use-case'
+import { PagosRecibidosUseCase } from './pagos-recibidos.use-cases'
 import { UpdateExpenseUseCase } from './update-expense.use-case'
 
 const EVENTO = '11111111-1111-4111-8111-111111111111'
@@ -47,8 +50,18 @@ class ColaRota implements QueuePort {
   }
 }
 
-function montar(opciones: { cola?: QueuePort } = {}) {
+function montar(opciones: { cola?: QueuePort; timezone?: string; ahora?: Date } = {}) {
   const gastos = new ExpenseRepositoryEnMemoria()
+  const eventos = new EventRepositoryEnMemoria()
+  eventos.eventos.push({
+    id: EVENTO,
+    ownerId: 'ana',
+    currency: 'COP',
+    totalBudget: '1000.00',
+    timezone: opciones.timezone ?? 'UTC',
+  })
+  eventos.eventos.push({ id: OTRO, ownerId: 'ana', currency: 'EUR' })
+  const ahora = () => opciones.ahora ?? new Date()
   const proveedor = (
     id: string,
     name: string,
@@ -79,16 +92,20 @@ function montar(opciones: { cola?: QueuePort } = {}) {
 
   return {
     gastos,
+    eventos,
     uow,
     almacen,
     avisos,
     memoria,
     subir,
     preparar,
-    crear: new CreateExpenseUseCase(gastos, subidas, uow, avisos, cola),
-    editar: new UpdateExpenseUseCase(gastos, subidas, uow, avisos, cola),
+    crear: new CreateExpenseUseCase(gastos, subidas, uow, avisos, cola, eventos, ahora),
+    editar: new UpdateExpenseUseCase(gastos, subidas, uow, avisos, cola, eventos, ahora),
     borrar: new DeleteExpenseUseCase(gastos, subidas, uow, cola),
     archivo: new ArchivoDeGastoUseCase(gastos, subidas),
+    listar: new ListExpensesUseCase(gastos, eventos, ahora),
+    resumen: new BudgetSummaryUseCase(gastos, eventos, ahora),
+    pagos: new PagosRecibidosUseCase(gastos, subidas),
     jobs: () =>
       memoria.encolados
         .filter((e) => e.cola === COLA_GASTOS && e.nombre === EVENTO_GASTO_CAMBIADO)
@@ -198,7 +215,7 @@ describe('casos de uso de gastos', () => {
   })
 
   it('el resumen suma pagado, pendiente y asignado (sin CANCELLED)', async () => {
-    const { gastos, crear } = montar()
+    const { gastos, crear, resumen } = montar()
     gastos.proveedores.push({
       id: 'v2',
       eventId: EVENTO,
@@ -219,10 +236,7 @@ describe('casos de uso de gastos', () => {
     )
     await crear.ejecutar(EVENTO, { ...deVendor(VENDOR), amount: '100.00' }, 'ana')
 
-    const eventos = new EventRepositoryEnMemoria()
-    eventos.eventos.push({ id: EVENTO, ownerId: 'ana', currency: 'COP', totalBudget: '1000.00' })
-
-    expect(await new BudgetSummaryUseCase(gastos, eventos).ejecutar(EVENTO)).toEqual({
+    expect(await resumen.ejecutar(EVENTO)).toEqual({
       currency: 'COP',
       totalBudget: '1000.00',
       assigned: '500.00',
@@ -233,6 +247,151 @@ describe('casos de uso de gastos', () => {
       byCategory: [
         { category: 'Music', paid: '0.30', pending: '100.00', total: '100.30', count: 3 },
       ],
+      overdue: { amount: '0.00', count: 0 },
+      upcoming: [],
+    })
+  })
+
+  describe('vencidos y próximos (spec 2026-11-11 §6)', () => {
+    const externo = (payeeName: string, dueDate: string, amount = '10.00') => ({
+      ...base,
+      amount,
+      dueDate: new Date(`${dueDate}T00:00:00.000Z`),
+      origen: { kind: 'external' as const, payeeName },
+    })
+
+    it('"hoy" es el de la zona del evento: en Caracas a las 03:00Z aún es el día 10', async () => {
+      const { crear, listar } = montar({
+        timezone: 'America/Caracas',
+        ahora: new Date('2026-11-11T03:00:00Z'),
+      })
+      const dia10 = await crear.ejecutar(EVENTO, externo('A', '2026-11-10'), 'ana')
+      const dia09 = await crear.ejecutar(EVENTO, externo('B', '2026-11-09'), 'ana')
+      // La respuesta de crear ya lo calcula con la zona del evento.
+      expect(dia10.overdue).toBe(false)
+      expect(dia09.overdue).toBe(true)
+
+      const pagina = await listar.ejecutar(
+        EVENTO,
+        { status: null, origin: null, eventVendorId: null, q: null },
+        null,
+        50,
+      )
+      expect(Object.fromEntries(pagina.items.map((g) => [g.id, g.overdue]))).toEqual({
+        [dia10.id]: false,
+        [dia09.id]: true,
+      })
+      const vencidos = await listar.ejecutar(
+        EVENTO,
+        { status: 'OVERDUE', origin: null, eventVendorId: null, q: null },
+        null,
+        50,
+      )
+      expect(vencidos.items.map((g) => g.id)).toEqual([dia09.id])
+    })
+
+    it('el mismo instante en UTC ya es día 11: el del 10 sí está vencido', async () => {
+      const { crear } = montar({ ahora: new Date('2026-11-11T03:00:00Z') })
+      expect((await crear.ejecutar(EVENTO, externo('A', '2026-11-10'), 'ana')).overdue).toBe(true)
+    })
+
+    it('editar devuelve overdue con la zona del evento y un PAID nunca está vencido', async () => {
+      const { crear, editar } = montar({ ahora: new Date('2026-11-11T12:00:00Z') })
+      const g = await crear.ejecutar(EVENTO, externo('A', '2026-11-01'), 'ana')
+      expect(g.overdue).toBe(true)
+      expect((await editar.ejecutar(EVENTO, g.id, { status: 'PAID' })).overdue).toBe(false)
+    })
+
+    it('el resumen lleva vencidos (suma y número) y los 5 próximos más cercanos', async () => {
+      const { crear, resumen } = montar({ ahora: new Date('2026-11-11T12:00:00Z') })
+      await crear.ejecutar(EVENTO, externo('V1', '2026-11-01', '10.10'), 'ana')
+      await crear.ejecutar(EVENTO, externo('V2', '2026-11-10', '0.20'), 'ana')
+      for (const dia of ['20', '12', '11', '30', '15', '25', '13']) {
+        await crear.ejecutar(EVENTO, externo(`P${dia}`, `2026-11-${dia}`), 'ana')
+      }
+
+      const r = await resumen.ejecutar(EVENTO)
+
+      expect(r.overdue).toEqual({ amount: '10.30', count: 2 })
+      expect(r.upcoming.map((g) => g.dueDate?.toISOString().slice(0, 10))).toEqual([
+        '2026-11-11',
+        '2026-11-12',
+        '2026-11-13',
+        '2026-11-15',
+        '2026-11-20',
+      ])
+      expect(r.upcoming.every((g) => !g.overdue)).toBe(true)
+    })
+  })
+
+  describe('pagos recibidos del proveedor', () => {
+    function conPagos() {
+      const m = montar()
+      m.gastos.eventos.push(
+        { id: EVENTO, name: 'Boda A', currency: 'COP' },
+        { id: OTRO, name: 'Boda B', currency: 'EUR' },
+      )
+      m.gastos.proveedores.push({
+        id: 'vb',
+        eventId: OTRO,
+        name: 'DJ Max',
+        assignedBudget: null,
+        status: 'BOOKED',
+        userId: PROV,
+      })
+      return m
+    }
+    const pagado = (eventVendorId: string, amount: string, concept = 'Pago') => ({
+      ...deVendor(eventVendorId),
+      concept,
+      amount,
+      status: 'PAID' as const,
+    })
+
+    it('listar agrupa por evento, suma totalReceived y ordena por el pago más reciente', async () => {
+      const { crear, gastos, pagos } = conPagos()
+      const a1 = await crear.ejecutar(EVENTO, pagado(VENDOR, '0.10', 'A1'), 'ana')
+      const b1 = await crear.ejecutar(OTRO, pagado('vb', '50.00', 'B1'), 'ana')
+      const a2 = await crear.ejecutar(EVENTO, pagado(VENDOR, '0.20', 'A2'), 'ana')
+      const ajeno = await crear.ejecutar(EVENTO, pagado(VENDOR_B, '999.00', 'Ajeno'), 'ana')
+      const fecha = (id: string, iso: string) => {
+        const g = gastos.gastos.find((x) => x.id === id)
+        if (g !== undefined) g.paidAt = new Date(iso)
+      }
+      fecha(a1.id, '2026-11-01T10:00:00Z')
+      fecha(b1.id, '2026-11-03T10:00:00Z')
+      fecha(a2.id, '2026-11-02T10:00:00Z')
+      fecha(ajeno.id, '2026-11-04T10:00:00Z')
+
+      const r = await pagos.listar(PROV, null)
+
+      expect(r.map((e) => [e.eventId, e.eventName, e.currency, e.totalReceived])).toEqual([
+        [OTRO, 'Boda B', 'EUR', '50.00'],
+        [EVENTO, 'Boda A', 'COP', '0.30'],
+      ])
+      expect(r[1]?.payments.map((p) => p.concept)).toEqual(['A2', 'A1'])
+      expect((await pagos.listar(PROV, EVENTO)).map((e) => e.eventId)).toEqual([EVENTO])
+      expect(await pagos.listar(PROV_CORTO, null)).toEqual([])
+    })
+
+    it('archivo: ajeno → VENDOR_PAYMENT_NOT_FOUND; propio sin archivo → INVOICE_FILE_NOT_FOUND', async () => {
+      const { crear, pagos, subir } = conPagos()
+      const ajeno = await crear.ejecutar(EVENTO, pagado(VENDOR_B, '10.00'), 'ana')
+      const sin = await crear.ejecutar(EVENTO, pagado(VENDOR, '10.00'), 'ana')
+      const key = await subir()
+      const con = await crear.ejecutar(
+        EVENTO,
+        { ...pagado(VENDOR, '10.00'), invoiceFile: { key, name: 'f.pdf' } },
+        'ana',
+      )
+
+      await expect(pagos.archivo(PROV, ajeno.id)).rejects.toBeInstanceOf(
+        PagoRecibidoNoEncontradoError,
+      )
+      await expect(pagos.archivo(PROV, sin.id)).rejects.toBeInstanceOf(
+        ArchivoDeFacturaNoEncontradoError,
+      )
+      expect((await pagos.archivo(PROV, con.id)).url).toContain(key)
     })
   })
 

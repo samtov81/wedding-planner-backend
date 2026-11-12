@@ -18,6 +18,7 @@ import { CreateExpenseUseCase } from './application/create-expense.use-case'
 import { DeleteExpenseUseCase } from './application/delete-expense.use-case'
 import { EXPENSE_REPOSITORY } from './application/expense.repository'
 import { ListExpensesUseCase } from './application/list-expenses.use-case'
+import { PagosRecibidosUseCase } from './application/pagos-recibidos.use-cases'
 import { UpdateExpenseUseCase } from './application/update-expense.use-case'
 import { PrismaExpenseRepository } from './infrastructure/prisma-expense.repository'
 import { ExpensesController } from './interfaces/expenses.controller'
@@ -62,6 +63,7 @@ import { ExpensesController } from './interfaces/expenses.controller'
     BudgetSummaryUseCase,
     PrepararSubidaFacturaUseCase,
     ArchivoDeGastoUseCase,
+    PagosRecibidosUseCase,
   ],
 })
 export class ExpensesModule {}

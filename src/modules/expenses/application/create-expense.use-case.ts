@@ -1,17 +1,28 @@
-import { Inject, Injectable, Logger } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
 import {
   UNIDAD_DE_TRABAJO,
   type UnidadDeTrabajo,
 } from '@/modules/database/application/unidad-de-trabajo'
 import {
+  EVENT_REPOSITORY,
+  type EventRepository,
+} from '@/modules/events/application/event.repository'
+import {
   NOTIFICATION_PORT,
   type NotificationPort,
 } from '@/modules/notifications/application/notification.port'
 import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
+import { NotFoundError } from '@/shared/domain'
 import { SubidaDeFacturas } from '@/modules/storage/application/subida-de-facturas'
 
-import { type Expense, type ExpenseStatus, subtotalValido } from '../domain/expense'
+import {
+  estaVencido,
+  type ExpenseStatus,
+  type GastoListado,
+  hoyEnZona,
+  subtotalValido,
+} from '../domain/expense'
 import {
   ProveedorDelEventoNoEncontradoError,
   SubtotalInvalidoError,
@@ -23,6 +34,7 @@ import {
   EXPENSE_REPOSITORY,
   type ExpenseRepository,
 } from './expense.repository'
+import { RELOJ_GASTOS, type Reloj } from './reloj'
 
 export type EntradaGasto = Omit<
   DatosNuevoGasto,
@@ -60,15 +72,21 @@ export class CreateExpenseUseCase {
     @Inject(UNIDAD_DE_TRABAJO) private readonly unidadDeTrabajo: UnidadDeTrabajo,
     @Inject(NOTIFICATION_PORT) private readonly avisos: NotificationPort,
     @Inject(QUEUE_PORT) private readonly cola: QueuePort,
+    @Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository,
+    @Optional() @Inject(RELOJ_GASTOS) private readonly ahora: Reloj = () => new Date(),
   ) {}
 
-  async ejecutar(eventId: string, entrada: EntradaGasto, actorId: string): Promise<Expense> {
+  async ejecutar(eventId: string, entrada: EntradaGasto, actorId: string): Promise<GastoListado> {
     const { invoiceFile, invoiceNumber, subtotal, ...resto } = entrada
     if (!subtotalValido(entrada.amount, subtotal ?? null)) throw new SubtotalInvalidoError()
     const archivo =
       invoiceFile === undefined || invoiceFile === null
         ? null
         : await confirmarArchivo(this.subidas, eventId, invoiceFile)
+
+    // El evento aporta la zona horaria con que se calcula `overdue` de la respuesta.
+    const evento = await this.eventos.buscarPorId(eventId)
+    if (evento === null) throw new NotFoundError('El evento no existe')
 
     const status = entrada.status ?? 'PENDING'
     const { gasto, job } = await this.unidadDeTrabajo.ejecutar(async () => {
@@ -94,6 +112,6 @@ export class CreateExpenseUseCase {
       }
     })
     await encolarAvisoGasto(this.cola, this.registro, gasto.id, job)
-    return gasto
+    return { ...gasto, overdue: estaVencido(gasto, hoyEnZona(this.ahora(), evento.timezone)) }
   }
 }

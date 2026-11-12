@@ -51,7 +51,10 @@ export interface ResumenPorCategoria {
   count: number
 }
 
-export interface ResumenPresupuesto {
+/** Un gasto con su "vencido" ya calculado en la zona del evento (spec 2026-11-11). */
+export type GastoListado = Expense & { overdue: boolean }
+
+export interface ResumenBase {
   currency: string
   totalBudget: string | null
   assigned: string
@@ -62,6 +65,15 @@ export interface ResumenPresupuesto {
   byCategory: ResumenPorCategoria[]
 }
 
+/**
+ * `overdue`: suma y número de los PENDING con `dueDate < hoy`; `upcoming`: los 5
+ * PENDING con `dueDate >= hoy` más cercanos (spec 2026-11-11 §6).
+ */
+export interface ResumenPresupuesto extends ResumenBase {
+  overdue: { amount: string; count: number }
+  upcoming: GastoListado[]
+}
+
 export function calcularResumen(e: {
   currency: string
   totalBudget: string | null
@@ -69,7 +81,7 @@ export function calcularResumen(e: {
   paid: string
   pending: string
   porCategoria: SumaPorCategoria[]
-}): ResumenPresupuesto {
+}): ResumenBase {
   const total = e.totalBudget === null ? null : aCentimos(e.totalBudget)
   return {
     currency: e.currency,

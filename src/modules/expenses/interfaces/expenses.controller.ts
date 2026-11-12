@@ -27,7 +27,7 @@ import { CreateExpenseUseCase } from '../application/create-expense.use-case'
 import { DeleteExpenseUseCase } from '../application/delete-expense.use-case'
 import { ListExpensesUseCase } from '../application/list-expenses.use-case'
 import { UpdateExpenseUseCase } from '../application/update-expense.use-case'
-import { hoyEnZona, type Expense, type ResumenPresupuesto } from '../domain/expense'
+import type { GastoListado, ResumenPresupuesto } from '../domain/expense'
 import { GastoNoEncontradoError } from '../domain/expense-errors'
 import { createExpenseSchema, listExpensesQuerySchema, updateExpenseSchema } from './expenses.dto'
 
@@ -44,6 +44,7 @@ interface GastoRespuesta {
   paidAt: string | null
   notes: string | null
   createdAt: string
+  overdue: boolean
 }
 
 /**
@@ -76,8 +77,6 @@ export class ExpensesController {
         origin: q.origin ?? null,
         eventVendorId: q.eventVendorId ?? null,
         q: null,
-        // Provisional: la Tarea 7 lo sustituye por la zona horaria del evento.
-        hoy: hoyEnZona(new Date(), 'UTC'),
       },
       q.cursor === undefined ? null : decodeCursor(q.cursor),
       q.limit,
@@ -142,12 +141,15 @@ export class ExpensesController {
 
   @RequireEventAccess('BUDGET_VIEW')
   @Get('budget-summary')
-  async verResumen(@Param('eventId') eventId: string): Promise<ResumenPresupuesto> {
-    return await this.resumen.ejecutar(eventId)
+  async verResumen(
+    @Param('eventId') eventId: string,
+  ): Promise<Omit<ResumenPresupuesto, 'upcoming'> & { upcoming: GastoRespuesta[] }> {
+    const r = await this.resumen.ejecutar(eventId)
+    return { ...r, upcoming: r.upcoming.map(aRespuesta) }
   }
 }
 
-function aRespuesta(g: Expense): GastoRespuesta {
+function aRespuesta(g: GastoListado): GastoRespuesta {
   return {
     id: g.id,
     origin: g.origen,
@@ -159,6 +161,7 @@ function aRespuesta(g: Expense): GastoRespuesta {
     paidAt: g.paidAt?.toISOString() ?? null,
     notes: g.notes,
     createdAt: g.createdAt.toISOString(),
+    overdue: g.overdue,
   }
 }
 

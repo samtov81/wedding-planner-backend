@@ -1,18 +1,29 @@
-import { Inject, Injectable, Logger } from '@nestjs/common'
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common'
 
 import {
   UNIDAD_DE_TRABAJO,
   type UnidadDeTrabajo,
 } from '@/modules/database/application/unidad-de-trabajo'
 import {
+  EVENT_REPOSITORY,
+  type EventRepository,
+} from '@/modules/events/application/event.repository'
+import {
   NOTIFICATION_PORT,
   type NotificationPort,
 } from '@/modules/notifications/application/notification.port'
 import { QUEUE_PORT, type QueuePort } from '@/modules/queue/application/queue.port'
+import { NotFoundError } from '@/shared/domain'
 import { SubidaDeFacturas } from '@/modules/storage/application/subida-de-facturas'
 
-import { paidAtTrasCambio, subtotalValido } from '../domain/expense'
-import type { ArchivoFactura, Expense } from '../domain/expense'
+import {
+  type ArchivoFactura,
+  estaVencido,
+  type GastoListado,
+  hoyEnZona,
+  paidAtTrasCambio,
+  subtotalValido,
+} from '../domain/expense'
 import {
   GastoNoEncontradoError,
   ProveedorDelEventoNoEncontradoError,
@@ -21,6 +32,7 @@ import {
 import { type ArchivoSubido, confirmarArchivo } from './archivos-de-factura.use-cases'
 import { avisosDelCambio, encolarAvisoGasto } from './avisos-gastos'
 import { type CambiosGasto, EXPENSE_REPOSITORY, type ExpenseRepository } from './expense.repository'
+import { RELOJ_GASTOS, type Reloj } from './reloj'
 
 /** `invoiceFile`: ausente = no se toca; `null` = quitarlo; `{ key, name }` = reemplazarlo. */
 export type EntradaCambiosGasto = Omit<CambiosGasto, 'paidAt' | 'invoiceFile'> & {
@@ -56,14 +68,19 @@ export class UpdateExpenseUseCase {
     @Inject(UNIDAD_DE_TRABAJO) private readonly unidadDeTrabajo: UnidadDeTrabajo,
     @Inject(NOTIFICATION_PORT) private readonly avisos: NotificationPort,
     @Inject(QUEUE_PORT) private readonly cola: QueuePort,
+    @Inject(EVENT_REPOSITORY) private readonly eventos: EventRepository,
+    @Optional() @Inject(RELOJ_GASTOS) private readonly ahora: Reloj = () => new Date(),
   ) {}
 
   async ejecutar(
     eventId: string,
     expenseId: string,
     entrada: EntradaCambiosGasto,
-  ): Promise<Expense> {
+  ): Promise<GastoListado> {
     const { invoiceFile, ...cambios } = entrada
+    // El evento aporta la zona horaria con que se calcula `overdue` de la respuesta.
+    const evento = await this.eventos.buscarPorId(eventId)
+    if (evento === null) throw new NotFoundError('El evento no existe')
     let archivo: ArchivoFactura | null | undefined = invoiceFile === null ? null : undefined
     if (invoiceFile !== undefined && invoiceFile !== null) {
       archivo = await confirmarArchivo(this.subidas, eventId, invoiceFile)
@@ -105,6 +122,6 @@ export class UpdateExpenseUseCase {
     })
     await encolarAvisoGasto(this.cola, this.registro, gasto.id, job)
     if (keyABorrar !== null) await this.subidas.borrar(keyABorrar)
-    return gasto
+    return { ...gasto, overdue: estaVencido(gasto, hoyEnZona(this.ahora(), evento.timezone)) }
   }
 }

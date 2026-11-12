@@ -135,6 +135,8 @@ describe('Gastos e2e', () => {
         { category: 'Music', paid: '200.00', pending: '0.00', total: '200.00', count: 1 },
         { category: 'Stationery', paid: '80.50', pending: '0.00', total: '80.50', count: 1 },
       ],
+      overdue: { amount: '0.00', count: 0 },
+      upcoming: [],
     })
 
     await request(url).delete(`/events/${evento}/vendors/${vendorId}`).set(auth).expect(409)

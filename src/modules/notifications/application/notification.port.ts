@@ -112,11 +112,23 @@ export const TIPOS_CRONOGRAMA = [
 ] as const
 
 /**
+ * Campana al proveedor BOOKED cuyo gasto pasa a PAID (spec 2026-11-11 §9). Vive
+ * junto al puerto por la misma razón que los anteriores: la importa `expenses`
+ * para crearla. Payload `{ expenseId, concept }`, sin importes: el importe se
+ * ve al abrir Budget.
+ */
+export const TIPO_GASTO_PAGADO = 'expense.paid'
+
+/**
  * Tipos que `visiblesDe` deja ver al proveedor BOOKED (además de a miembros
  * ACTIVE): los que pueden tener a un proveedor como destinatario. Alternativa
  * descartada: ampliar `TIPOS_MOODBOARD`, que seguiría siendo la lista exacta
  * para el código del moodboard que sólo quiere sus dos tipos.
  */
-export const TIPOS_PARA_PROVEEDOR = [...TIPOS_MOODBOARD, ...TIPOS_CRONOGRAMA] as const
+export const TIPOS_PARA_PROVEEDOR = [
+  ...TIPOS_MOODBOARD,
+  ...TIPOS_CRONOGRAMA,
+  TIPO_GASTO_PAGADO,
+] as const
 
 export const NOTIFICATION_PORT = Symbol('NOTIFICATION_PORT')

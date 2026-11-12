@@ -5,7 +5,8 @@
  * jobs de los demás productores. Cada tipo con worker propio, su cola. Lo mismo
  * vale para `messaging` (mensajes y recibos en tiempo real, ver `avisos-mensajeria.ts`)
  * y para `moodboard` (fotos, comparticiones y notas, ver `avisos-moodboard.ts`) y
- * `schedule` (recordatorios y campanas del cronograma, ver `avisos-cronograma.ts`).
+ * `schedule` (recordatorios y campanas del cronograma, ver `avisos-cronograma.ts`) y
+ * `expenses` (cambios del presupuesto y pagos a proveedores, ver `avisos-gastos.ts`).
  */
 export type QueueName =
   | 'email'
@@ -16,6 +17,7 @@ export type QueueName =
   | 'messaging'
   | 'moodboard'
   | 'schedule'
+  | 'expenses'
 
 export interface EnqueueOptions {
   /**

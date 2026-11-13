@@ -27,11 +27,12 @@ export const enviarMensajeSchema = z
     /**
      * Lo que devolvió `attachment-upload-url` (la key) más el nombre original.
      * Sólo comprueba la forma: que la key sea de esta conversación y que el
-     * objeto exista lo decide el caso de uso.
+     * objeto exista lo decide el caso de uso. El nombre NO se acota aquí: su
+     * regla (1–200 tras recortar, sin barras) es del dominio
+     * (`normalizarNombreDeAdjunto`) para que falle con 422 INVALID_ATTACHMENT_NAME
+     * y no con un 400 genérico.
      */
-    attachment: z
-      .object({ key: z.string().min(1).max(500), name: z.string().min(1).max(200) })
-      .optional(),
+    attachment: z.object({ key: z.string().min(1).max(500), name: z.string() }).optional(),
   })
   .refine((m) => m.body.length > 0 || m.attachment !== undefined, {
     message: 'Too small: expected a body or an attachment',

@@ -25,14 +25,19 @@ describe('enviarMensajeSchema', () => {
     expect(enviarMensajeSchema.safeParse({ body: '😀'.repeat(2001) }).success).toBe(false)
   })
 
-  it.each([
-    [{ key: '', name: 'a' }],
-    [{ key: 'k', name: '' }],
-    [{ key: 'k'.repeat(501), name: 'a' }],
-    [{ key: 'k', name: 'a'.repeat(201) }],
-  ])('rechaza el adjunto %o', (attachment) => {
-    expect(enviarMensajeSchema.safeParse({ attachment }).success).toBe(false)
-  })
+  it.each([[{ key: '', name: 'a' }], [{ key: 'k'.repeat(501), name: 'a' }]])(
+    'rechaza el adjunto %o',
+    (attachment) => {
+      expect(enviarMensajeSchema.safeParse({ attachment }).success).toBe(false)
+    },
+  )
+
+  it.each([[''], ['a'.repeat(201)]])(
+    'deja pasar el nombre %j: la regla del nombre es del dominio (422)',
+    (name) => {
+      expect(enviarMensajeSchema.safeParse({ attachment: { key: 'k', name } }).success).toBe(true)
+    },
+  )
 })
 
 describe('subidaDeAdjuntoSchema', () => {

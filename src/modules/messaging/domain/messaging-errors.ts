@@ -144,3 +144,17 @@ export class SolicitudNoPendienteError extends ConflictError {
     super('La solicitud de contacto ya no está pendiente', 'CONTACT_REQUEST_NOT_PENDING')
   }
 }
+
+/**
+ * La key del adjunto ya está guardada en otro mensaje (`UNIQUE(attachmentKey)`):
+ * quien envía reutiliza una subida ya consumida. Para el cliente es lo mismo
+ * que una subida que no vale, así que lleva el mismo code que
+ * `SubidaNoValidaError` de storage (`INVALID_UPLOAD`, 422). Se declara aquí y
+ * no se importa aquél: `messaging/infrastructure` no puede mirar el `domain/`
+ * de `storage` (regla `modulos-no-se-tocan-las-tripas`).
+ */
+export class SubidaDeAdjuntoYaUsadaError extends UnprocessableError {
+  constructor() {
+    super('No hay una subida válida con esa key', 'INVALID_UPLOAD')
+  }
+}

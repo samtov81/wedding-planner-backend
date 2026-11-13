@@ -5,7 +5,7 @@ import { PrismaUnidadDeTrabajo } from '@/modules/database/transaccion'
 
 import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
-import { SolicitudPendienteError } from '../domain/messaging-errors'
+import { SolicitudPendienteError, SubidaDeAdjuntoYaUsadaError } from '../domain/messaging-errors'
 import { claveDePerfil, ESPERA_TRAS_RECHAZO_MS } from '../domain/perfil'
 import type { FichaParaContacto } from '../application/conversation.repository'
 import { PrismaConversationRepository } from './prisma-conversation.repository'
@@ -53,6 +53,37 @@ describe('PrismaConversationRepository', () => {
     expect(resultados.filter((r) => r.creada)).toHaveLength(1)
     expect(await prisma.conversation.count({ where: { eventId } })).toBe(1)
     expect(await prisma.conversationParticipant.count()).toBe(2)
+  })
+
+  it('reutilizar la key de un adjunto ya guardado en otro mensaje es 422 INVALID_UPLOAD, no un 500', async () => {
+    const { id } = await repo.abrir(eventId, aId, bId)
+    const adjunto = {
+      key: `chat/${id}/reutilizada.pdf`,
+      name: 'reutilizada.pdf',
+      contentType: 'application/pdf',
+      bytes: 10,
+    }
+    await repo.agregarMensaje(id, aId, 'primero', new Date(), adjunto)
+
+    const segundo = repo.agregarMensaje(id, aId, 'segundo', new Date(), adjunto)
+    await expect(segundo).rejects.toBeInstanceOf(SubidaDeAdjuntoYaUsadaError)
+    await expect(segundo).rejects.toMatchObject({ httpStatus: 422, code: 'INVALID_UPLOAD' })
+  })
+
+  it('lo mismo en una sala: agregarMensajeDeSala traduce el UNIQUE de attachmentKey', async () => {
+    const salaId = await repo.abrirSala(eventId, aId)
+    if (salaId === null) throw new Error('la sala debía abrirse')
+    const adjunto = {
+      key: `chat/${salaId}/sala.pdf`,
+      name: 'sala.pdf',
+      contentType: 'application/pdf',
+      bytes: 10,
+    }
+    await repo.agregarMensajeDeSala(salaId, aId, 'uno', new Date(), adjunto)
+
+    await expect(
+      repo.agregarMensajeDeSala(salaId, aId, 'dos', new Date(), adjunto),
+    ).rejects.toBeInstanceOf(SubidaDeAdjuntoYaUsadaError)
   })
 
   it('el CHECK rechaza un cuerpo vacío insertado a mano', async () => {

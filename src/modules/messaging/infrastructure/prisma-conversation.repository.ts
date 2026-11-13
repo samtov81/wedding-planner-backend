@@ -19,7 +19,7 @@ import type {
   SalaVista,
 } from '../application/conversation.repository'
 import { avanzar, claveDePar, type Marca, type RolEnEvento } from '../domain/conversacion'
-import { ParNoPermitidoError } from '../domain/messaging-errors'
+import { ParNoPermitidoError, SubidaDeAdjuntoYaUsadaError } from '../domain/messaging-errors'
 import {
   claveDePerfil,
   evaluarSolicitud,
@@ -288,19 +288,21 @@ export class PrismaConversationRepository implements ConversationRepository {
     ahora: Date,
     adjunto: AdjuntoGuardado | null,
   ): Promise<MensajeVista> {
-    return await enTransaccion(this.prisma, async (tx) => {
-      const fila = await tx.message.create({
-        data: { conversationId, senderId, body, createdAt: ahora, ...columnasDeAdjunto(adjunto) },
-      })
-      await tx.conversation.updateMany({
-        where: {
-          id: conversationId,
-          OR: [{ lastMessageAt: null }, { lastMessageAt: { lt: ahora } }],
-        },
-        data: { lastMessageAt: ahora },
-      })
-      return aMensaje(fila)
-    })
+    return await traducirKeyRepetida(() =>
+      enTransaccion(this.prisma, async (tx) => {
+        const fila = await tx.message.create({
+          data: { conversationId, senderId, body, createdAt: ahora, ...columnasDeAdjunto(adjunto) },
+        })
+        await tx.conversation.updateMany({
+          where: {
+            id: conversationId,
+            OR: [{ lastMessageAt: null }, { lastMessageAt: { lt: ahora } }],
+          },
+          data: { lastMessageAt: ahora },
+        })
+        return aMensaje(fila)
+      }),
+    )
   }
 
   async adjuntoDe(messageId: string): Promise<AdjuntoDeMensaje | null> {
@@ -470,38 +472,40 @@ export class PrismaConversationRepository implements ConversationRepository {
     ahora: Date,
     adjunto: AdjuntoGuardado | null,
   ): Promise<{ mensaje: MensajeVista; destinatarios: string[] }> {
-    return await enTransaccion(this.prisma, async (tx) => {
-      const sala = await tx.conversation.findFirstOrThrow({
-        where: { id: conversationId, kind: 'EVENT_ROOM' },
-        select: { eventId: true },
-      })
-      const miembros = await tx.eventMembership.findMany({
-        where: { eventId: sala.eventId ?? '', status: 'ACTIVE', userId: { not: senderId } },
-        select: { userId: true },
-        orderBy: { userId: 'asc' },
-      })
-      const destinatarios = miembros.map((m) => m.userId)
-      const fila = await tx.message.create({
-        data: { conversationId, senderId, body, createdAt: ahora, ...columnasDeAdjunto(adjunto) },
-      })
-      if (destinatarios.length > 0) {
-        await tx.messageRecipient.createMany({
-          data: destinatarios.map((userId) => ({ messageId: fila.id, userId })),
+    return await traducirKeyRepetida(() =>
+      enTransaccion(this.prisma, async (tx) => {
+        const sala = await tx.conversation.findFirstOrThrow({
+          where: { id: conversationId, kind: 'EVENT_ROOM' },
+          select: { eventId: true },
         })
-      }
-      await tx.conversationParticipant.createMany({
-        data: [senderId, ...destinatarios].map((userId) => ({ conversationId, userId })),
-        skipDuplicates: true,
-      })
-      await tx.conversation.updateMany({
-        where: {
-          id: conversationId,
-          OR: [{ lastMessageAt: null }, { lastMessageAt: { lt: ahora } }],
-        },
-        data: { lastMessageAt: ahora },
-      })
-      return { mensaje: aMensaje(fila), destinatarios }
-    })
+        const miembros = await tx.eventMembership.findMany({
+          where: { eventId: sala.eventId ?? '', status: 'ACTIVE', userId: { not: senderId } },
+          select: { userId: true },
+          orderBy: { userId: 'asc' },
+        })
+        const destinatarios = miembros.map((m) => m.userId)
+        const fila = await tx.message.create({
+          data: { conversationId, senderId, body, createdAt: ahora, ...columnasDeAdjunto(adjunto) },
+        })
+        if (destinatarios.length > 0) {
+          await tx.messageRecipient.createMany({
+            data: destinatarios.map((userId) => ({ messageId: fila.id, userId })),
+          })
+        }
+        await tx.conversationParticipant.createMany({
+          data: [senderId, ...destinatarios].map((userId) => ({ conversationId, userId })),
+          skipDuplicates: true,
+        })
+        await tx.conversation.updateMany({
+          where: {
+            id: conversationId,
+            OR: [{ lastMessageAt: null }, { lastMessageAt: { lt: ahora } }],
+          },
+          data: { lastMessageAt: ahora },
+        })
+        return { mensaje: aMensaje(fila), destinatarios }
+      }),
+    )
   }
 
   async marcasDeSala(conversationId: string): Promise<MarcaDeMiembro[]> {
@@ -1185,6 +1189,30 @@ function aMensaje(fila: MensajeFila): MensajeVista {
             bytes: fila.attachmentBytes,
           },
     createdAt: fila.createdAt,
+  }
+}
+
+/**
+ * `UNIQUE(attachmentKey)` (P2002): la key ya vive en otro mensaje, o sea la
+ * subida ya se consumió. Se traduce a 422 `INVALID_UPLOAD` en vez de dejarlo
+ * escapar como 500. Se captura FUERA de `enTransaccion`: dentro, el error de
+ * Postgres deja la transacción abortada (ver `abrir`), y aquí además la
+ * transacción entera se descarta, que es lo que se quiere. Alternativa
+ * descartada: comprobar antes con un `findUnique`, que deja una carrera entre
+ * la lectura y el INSERT y exige igualmente capturar P2002.
+ */
+async function traducirKeyRepetida<T>(operacion: () => Promise<T>): Promise<T> {
+  try {
+    return await operacion()
+  } catch (error) {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002' &&
+      JSON.stringify(error.meta?.target ?? '').includes('attachmentKey')
+    ) {
+      throw new SubidaDeAdjuntoYaUsadaError()
+    }
+    throw error
   }
 }
 

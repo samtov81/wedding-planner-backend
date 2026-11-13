@@ -4,12 +4,14 @@ import { Module } from '@nestjs/common'
 import { AuthModule } from '@/modules/auth/auth.module'
 import { PrismaService } from '@/modules/database/prisma.service'
 import { EventsModule } from '@/modules/events/events.module'
+import { MessagingModule } from '@/modules/messaging/messaging.module'
 import { NotificationsModule } from '@/modules/notifications/notifications.module'
 import { StorageModule } from '@/modules/storage/storage.module'
 import { UsersModule } from '@/modules/users/users.module'
 
 import {
   ArchivoDeGastoUseCase,
+  FacturaDesdeMensajeUseCase,
   PrepararSubidaFacturaUseCase,
 } from './application/archivos-de-factura.use-cases'
 import { COLA_GASTOS } from './application/avisos-gastos'
@@ -36,6 +38,9 @@ import { VendorPaymentsController } from './interfaces/vendor-payments.controlle
  *  - `NotificationsModule`: `NOTIFICATION_PORT` (campana `expense.paid` dentro
  *    de la transacción) y, para el worker, `REALTIME_PORT`.
  *  - `StorageModule`: `SubidaDeFacturas` (subida directa a R2 y URLs firmadas).
+ *  - `MessagingModule`: `ADJUNTOS_DE_MENSAJES`, el puerto público con el que
+ *    `FacturaDesdeMensajeUseCase` lee el adjunto de un mensaje (spec 2026-11-12).
+ *    Sólo importa el puerto: `MessagingModule` no importa este módulo.
  *  - `registerQueue('expenses')`: el explorador de `@nestjs/bullmq` necesita la
  *    cola registrada en el módulo para montar el worker sobre ella.
  *
@@ -49,6 +54,7 @@ import { VendorPaymentsController } from './interfaces/vendor-payments.controlle
     EventsModule,
     NotificationsModule,
     StorageModule,
+    MessagingModule,
     BullModule.registerQueue({ name: COLA_GASTOS }),
   ],
   controllers: [ExpensesController, VendorPaymentsController],
@@ -65,6 +71,7 @@ import { VendorPaymentsController } from './interfaces/vendor-payments.controlle
     BudgetSummaryUseCase,
     PrepararSubidaFacturaUseCase,
     ArchivoDeGastoUseCase,
+    FacturaDesdeMensajeUseCase,
     PagosRecibidosUseCase,
     GastosProcessor,
   ],

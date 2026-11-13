@@ -1,13 +1,16 @@
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
+  NoSuchKey,
   NotFound,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 
+import { SubidaNoValidaError } from '../domain/imagen'
 import type { ObjectStorage, ObjetoAlmacenado } from '../application/object-storage.port'
 
 export interface ConfiguracionR2 {
@@ -82,6 +85,28 @@ export class R2ObjectStorage implements ObjectStorage {
       return { contentType: cabecera.ContentType ?? null, bytes: cabecera.ContentLength ?? 0 }
     } catch (error) {
       if (error instanceof NotFound) return null
+      throw error
+    }
+  }
+
+  /**
+   * Si el origen ya no existe (borrado o nunca subido) R2 responde `NoSuchKey`;
+   * se traduce a `SubidaNoValidaError` (422 `INVALID_UPLOAD`) en vez de dejarlo
+   * escapar como 500: para el cliente es una key que no sirve. Alternativa
+   * descartada: `inspeccionar` antes de copiar, que añade un viaje a R2 y deja
+   * igualmente la carrera entre la comprobación y la copia.
+   */
+  async copiar(origen: string, destino: string): Promise<void> {
+    try {
+      await this.client.send(
+        new CopyObjectCommand({
+          Bucket: this.config.bucket,
+          Key: destino,
+          CopySource: `${this.config.bucket}/${origen}`,
+        }),
+      )
+    } catch (error) {
+      if (error instanceof NoSuchKey) throw new SubidaNoValidaError()
       throw error
     }
   }

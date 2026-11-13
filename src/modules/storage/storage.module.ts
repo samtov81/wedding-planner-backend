@@ -4,6 +4,7 @@ import { ENV } from '@/config/config.module'
 import type { Env } from '@/config/env.schema'
 
 import { OBJECT_STORAGE, type ObjectStorage } from './application/object-storage.port'
+import { SubidaDeAdjuntos } from './application/subida-de-adjuntos'
 import { SubidaDeFacturas } from './application/subida-de-facturas'
 import { SubidaDeImagenes } from './application/subida-de-imagenes'
 import { R2ObjectStorage } from './infrastructure/r2-object-storage'
@@ -35,7 +36,8 @@ import { SinAlmacenamiento } from './infrastructure/sin-almacenamiento'
     },
     SubidaDeImagenes,
     SubidaDeFacturas,
+    SubidaDeAdjuntos,
   ],
-  exports: [OBJECT_STORAGE, SubidaDeImagenes, SubidaDeFacturas],
+  exports: [OBJECT_STORAGE, SubidaDeImagenes, SubidaDeFacturas, SubidaDeAdjuntos],
 })
 export class StorageModule {}

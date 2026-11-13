@@ -14,6 +14,28 @@ export class MensajeInvalidoError extends UnprocessableError {
 }
 
 /**
+ * El nombre del adjunto no sirve: queda vacío al recortar, pasa de 200
+ * caracteres o lleva `/` o `\`. Es la segunda barrera tras el esquema Zod. Se
+ * rechazan las barras (en vez de limpiarlas) porque el nombre se muestra y se
+ * reutiliza al convertir en factura; cambiarlo en silencio sorprendería.
+ */
+export class NombreDeAdjuntoInvalidoError extends UnprocessableError {
+  constructor(message = 'El nombre del adjunto debe tener entre 1 y 200 caracteres, sin / ni \\') {
+    super(message, 'INVALID_ATTACHMENT_NAME')
+  }
+}
+
+/**
+ * Se intentó adjuntar un archivo en una conversación que no admite adjuntos
+ * (la de ficha de proveedor, `PROFILE`). Sólo se adjunta en las de evento.
+ */
+export class AdjuntosNoPermitidosError extends UnprocessableError {
+  constructor() {
+    super('Esta conversación no admite adjuntos', 'ATTACHMENTS_NOT_ALLOWED')
+  }
+}
+
+/**
  * La conversación no existe o el usuario no es participante: ambos casos
  * responden igual para que un id ajeno no confirme que existe.
  */
@@ -120,5 +142,19 @@ export class RechazadoPorTiError extends ConflictError {
 export class SolicitudNoPendienteError extends ConflictError {
   constructor() {
     super('La solicitud de contacto ya no está pendiente', 'CONTACT_REQUEST_NOT_PENDING')
+  }
+}
+
+/**
+ * La key del adjunto ya está guardada en otro mensaje (`UNIQUE(attachmentKey)`):
+ * quien envía reutiliza una subida ya consumida. Para el cliente es lo mismo
+ * que una subida que no vale, así que lleva el mismo code que
+ * `SubidaNoValidaError` de storage (`INVALID_UPLOAD`, 422). Se declara aquí y
+ * no se importa aquél: `messaging/infrastructure` no puede mirar el `domain/`
+ * de `storage` (regla `modulos-no-se-tocan-las-tripas`).
+ */
+export class SubidaDeAdjuntoYaUsadaError extends UnprocessableError {
+  constructor() {
+    super('No hay una subida válida con esa key', 'INVALID_UPLOAD')
   }
 }

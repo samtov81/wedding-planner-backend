@@ -6,6 +6,7 @@ import { SubidaDeFacturas } from './subida-de-facturas'
 
 describe('SubidaDeFacturas', () => {
   const PREFIJO = 'events/E/invoices'
+  const PREFIJO_E = 'events/e/invoices'
 
   describe('preparar', () => {
     it('acepta un PDF de 2 MB y devuelve una key bajo el prefijo con extensión pdf', async () => {
@@ -82,6 +83,40 @@ describe('SubidaDeFacturas', () => {
       const url = await subida.firmarLectura(`${PREFIJO}/a.pdf`, 'factura 1.pdf')
 
       expect(url).toContain('as=factura%201.pdf')
+    })
+  })
+
+  describe('copiarDesde', () => {
+    it('copia el objeto a una key nueva bajo el prefijo, con extensión del tipo', async () => {
+      const almacen = new ObjectStorageEnMemoria()
+      const subida = new SubidaDeFacturas(almacen)
+      const origen = 'events/e/messages/c/x.pdf'
+      almacen.simularSubida(origen, 'application/pdf', 4096)
+
+      const destino = await subida.copiarDesde(origen, PREFIJO_E, 'application/pdf')
+
+      expect(destino).toMatch(/^events\/e\/invoices\/[0-9a-f-]{36}\.pdf$/)
+      expect(almacen.objetos.get(origen)).toEqual({ contentType: 'application/pdf', bytes: 4096 })
+      expect(almacen.objetos.get(destino)).toEqual({ contentType: 'application/pdf', bytes: 4096 })
+    })
+
+    it('rechaza un tipo que no es de factura sin copiar nada', async () => {
+      const almacen = new ObjectStorageEnMemoria()
+      const subida = new SubidaDeFacturas(almacen)
+      almacen.simularSubida('events/e/messages/c/x.gif', 'image/gif', 10)
+
+      await expect(
+        subida.copiarDesde('events/e/messages/c/x.gif', PREFIJO_E, 'image/gif'),
+      ).rejects.toBeInstanceOf(ArchivoDeFacturaInvalidoError)
+      expect(almacen.objetos.size).toBe(1)
+    })
+
+    it('sin almacenamiento lanza AlmacenamientoNoDisponibleError', async () => {
+      const subida = new SubidaDeFacturas(new SinAlmacenamiento())
+
+      await expect(
+        subida.copiarDesde('a/x.pdf', PREFIJO_E, 'application/pdf'),
+      ).rejects.toBeInstanceOf(AlmacenamientoNoDisponibleError)
     })
   })
 })

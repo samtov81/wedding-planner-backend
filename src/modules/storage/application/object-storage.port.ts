@@ -20,6 +20,11 @@ export interface ObjectStorage {
   /** Metadatos del objeto, o `null` si no existe. */
   inspeccionar(key: string): Promise<ObjetoAlmacenado | null>
   borrar(key: string): Promise<void>
+  /**
+   * Copia server-side `origen` a `destino` dentro del mismo bucket: los bytes
+   * no pasan por el backend. Sin almacenamiento rechaza.
+   */
+  copiar(origen: string, destino: string): Promise<void>
 }
 
 export const OBJECT_STORAGE = Symbol('OBJECT_STORAGE')

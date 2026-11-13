@@ -678,13 +678,21 @@ model ConversationParticipant {
 }
 
 /// Mensaje. Orden total por (`createdAt`, `id`). Un CHECK (añadido a mano en la
-/// migración, Prisma no los modela) exige 1..2000 caracteres tras recortar.
+/// migración, Prisma no los modela) exige 1..2000 caracteres tras recortar (0..2000
+/// si el mensaje lleva adjunto).
 model Message {
-  id             String   @id @default(uuid()) @db.Uuid
-  conversationId String   @db.Uuid
-  senderId       String   @db.Uuid
-  body           String
-  createdAt      DateTime @default(now())
+  id              String   @id @default(uuid()) @db.Uuid
+  conversationId  String   @db.Uuid
+  senderId        String   @db.Uuid
+  body            String
+  createdAt       DateTime @default(now())
+  /// Adjunto opcional (spec 2026-11-12): las cuatro columnas van juntas o ninguna
+  /// (CHECK `messages_adjunto_completo`). `attachmentKey` es la key del objeto en
+  /// R2, nunca una URL, y es única: un objeto, un mensaje.
+  attachmentKey   String?  @unique
+  attachmentName  String?
+  attachmentType  String?
+  attachmentBytes Int?
 
   conversation Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender       User               @relation(fields: [senderId], references: [id], onDelete: Restrict)

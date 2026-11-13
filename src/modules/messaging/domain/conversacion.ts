@@ -1,4 +1,4 @@
-import { MensajeInvalidoError } from './messaging-errors'
+import { MensajeInvalidoError, NombreDeAdjuntoInvalidoError } from './messaging-errors'
 
 /**
  * Papel con el que alguien participa en un evento a efectos de mensajería.
@@ -31,14 +31,39 @@ export function parPermitido(a: RolEnEvento, b: RolEnEvento): boolean {
 }
 
 /**
- * Recorta el texto y exige entre 1 y `MAX_CARACTERES_MENSAJE` caracteres. Se
- * guarda tal cual, sin HTML. Cuenta con `Array.from` para que un emoji sea un
- * carácter, igual que `char_length` en Postgres (que cuenta puntos de código).
+ * Recorta el texto y exige entre 1 y `MAX_CARACTERES_MENSAJE` caracteres, o
+ * entre 0 y el tope si el mensaje lleva adjunto (`conAdjunto`): un archivo
+ * solo, sin texto, es un mensaje válido. Se guarda tal cual, sin HTML. Cuenta
+ * con `Array.from` para que un emoji sea un carácter, igual que `char_length`
+ * en Postgres (que cuenta puntos de código). Alternativa descartada: una
+ * función aparte para el cuerpo con adjunto; el tope se repetiría y podrían
+ * divergir.
  */
-export function normalizarCuerpo(texto: string): string {
+export function normalizarCuerpo(texto: string, conAdjunto = false): string {
   const recortado = texto.trim()
   const longitud = Array.from(recortado).length
-  if (longitud === 0 || longitud > MAX_CARACTERES_MENSAJE) throw new MensajeInvalidoError()
+  if ((longitud === 0 && !conAdjunto) || longitud > MAX_CARACTERES_MENSAJE) {
+    throw new MensajeInvalidoError()
+  }
+  return recortado
+}
+
+/** Tope de caracteres del nombre de un adjunto, tras recortar. Lo repite el CHECK de la base. */
+export const MAX_NOMBRE_ADJUNTO = 200
+
+/**
+ * Recorta el nombre del adjunto y exige entre 1 y `MAX_NOMBRE_ADJUNTO`
+ * caracteres (contados con `Array.from`, como el cuerpo), sin `/` ni `\`. Se
+ * acepta cualquier otro unicode: el nombre es sólo una etiqueta, nunca una
+ * ruta. Alternativa descartada: sustituir las barras por `_`; el cliente ya
+ * envía un nombre saneado y uno rechazado delata un bug en vez de ocultarlo.
+ */
+export function normalizarNombreDeAdjunto(nombre: string): string {
+  const recortado = nombre.trim()
+  const longitud = Array.from(recortado).length
+  if (longitud === 0 || longitud > MAX_NOMBRE_ADJUNTO || /[/\\]/.test(recortado)) {
+    throw new NombreDeAdjuntoInvalidoError()
+  }
   return recortado
 }
 

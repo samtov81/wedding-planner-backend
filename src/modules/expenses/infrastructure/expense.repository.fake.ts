@@ -233,6 +233,14 @@ export class ExpenseRepositoryEnMemoria implements ExpenseRepository {
     )
   }
 
+  contratacionesConFichaDe(eventId: string, userId: string): Promise<string[]> {
+    return Promise.resolve(
+      this.proveedores
+        .filter((p) => p.eventId === eventId && p.status === 'BOOKED' && p.userId === userId)
+        .map((p) => p.id),
+    )
+  }
+
   listarPagosRecibidos(userId: string, eventId: string | null): Promise<PagoRecibido[]> {
     return Promise.resolve(
       this.gastos

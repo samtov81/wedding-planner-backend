@@ -5,6 +5,7 @@ import {
   impuestoDe,
   pasaAPagado,
   paidAtTrasCambio,
+  proveedorSugerido,
   subtotalValido,
 } from './expense'
 
@@ -139,5 +140,19 @@ describe('factura', () => {
     it('PAID a PAID no es un paso', () => expect(pasaAPagado('PAID', 'PAID')).toBe(false))
     it('PAID a PENDING no es un paso', () => expect(pasaAPagado('PAID', 'PENDING')).toBe(false))
     it('un alta PENDING no es un paso', () => expect(pasaAPagado(null, 'PENDING')).toBe(false))
+  })
+})
+
+describe('proveedorSugerido', () => {
+  it('sin contrataciones no sugiere nada', () => {
+    expect(proveedorSugerido([])).toBeNull()
+  })
+
+  it('con exactamente una sugiere su id', () => {
+    expect(proveedorSugerido(['a'])).toBe('a')
+  })
+
+  it('con varias no adivina: null', () => {
+    expect(proveedorSugerido(['a', 'b'])).toBeNull()
   })
 })

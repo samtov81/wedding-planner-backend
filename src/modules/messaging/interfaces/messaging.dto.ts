@@ -15,12 +15,34 @@ export const abrirConversacionSchema = z.object({ userId: z.guid() })
  * emoji como 2 y rechazaría aquí lo que el dominio acepta. El e2e de 2000/2001
  * emoji fija el comportamiento. `[...s]` itera por puntos de código.
  */
-export const enviarMensajeSchema = z.object({
-  body: z
-    .string()
-    .trim()
-    .min(1)
-    .refine((s) => [...s].length <= 2000, { message: 'Too big: expected at most 2000 characters' }),
+export const enviarMensajeSchema = z
+  .object({
+    body: z
+      .string()
+      .trim()
+      .refine((s) => [...s].length <= 2000, {
+        message: 'Too big: expected at most 2000 characters',
+      })
+      .default(''),
+    /**
+     * Lo que devolvió `attachment-upload-url` (la key) más el nombre original.
+     * Sólo comprueba la forma: que la key sea de esta conversación y que el
+     * objeto exista lo decide el caso de uso. El nombre NO se acota aquí: su
+     * regla (1–200 tras recortar, sin barras) es del dominio
+     * (`normalizarNombreDeAdjunto`) para que falle con 422 INVALID_ATTACHMENT_NAME
+     * y no con un 400 genérico.
+     */
+    attachment: z.object({ key: z.string().min(1).max(500), name: z.string() }).optional(),
+  })
+  .refine((m) => m.body.length > 0 || m.attachment !== undefined, {
+    message: 'Too small: expected a body or an attachment',
+    path: ['body'],
+  })
+
+/** El tipo y el tamaño admitidos los valida `SubidaDeAdjuntos` (INVALID_ATTACHMENT). */
+export const subidaDeAdjuntoSchema = z.object({
+  contentType: z.string().min(1),
+  bytes: z.number().int().positive(),
 })
 
 export const marcarSchema = z.object({ upTo: z.guid() })

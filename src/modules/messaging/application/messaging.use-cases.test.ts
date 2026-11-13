@@ -1,15 +1,20 @@
 import { Logger } from '@nestjs/common'
 
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
+import { SubidaDeAdjuntos } from '@/modules/storage/application/subida-de-adjuntos'
+import { SubidaNoValidaError } from '@/modules/storage/domain/imagen'
+import { ObjectStorageEnMemoria } from '@/modules/storage/infrastructure/object-storage.fake'
 
 import { ConversationRepositoryEnMemoria } from '../infrastructure/conversation.repository.fake'
 import {
   ConversacionNoEncontradaError,
   ConversacionSoloLecturaError,
   MensajeInvalidoError,
+  NombreDeAdjuntoInvalidoError,
   ParNoPermitidoError,
   SinAccesoAlEventoError,
 } from '../domain/messaging-errors'
+import { prefijoAdjuntos } from './adjuntos.use-cases'
 import { ListConversationsUseCase } from './list-conversations.use-case'
 import { ListMessagesUseCase } from './list-messages.use-case'
 import { MarkConversationUseCase } from './mark-conversation.use-case'
@@ -32,11 +37,13 @@ function escenario() {
   repo.registrarProveedor(EVENTO, PROV_A, 'Foto A', true)
   repo.registrarProveedor(EVENTO, PROV_B, 'Flores B', true)
   const cola = new InMemoryQueueAdapter()
+  const almacen = new ObjectStorageEnMemoria()
   return {
     repo,
     cola,
+    almacen,
     abrir: new OpenConversationUseCase(repo),
-    enviar: new SendMessageUseCase(repo, cola),
+    enviar: new SendMessageUseCase(repo, cola, new SubidaDeAdjuntos(almacen)),
     marcar: new MarkConversationUseCase(repo, cola),
     mensajes: new ListMessagesUseCase(repo),
     bandeja: new ListConversationsUseCase(repo),
@@ -88,7 +95,7 @@ describe('casos de uso de mensajería', () => {
     it('normaliza el cuerpo y devuelve el mensaje y los destinatarios', async () => {
       const { abrir, enviar } = escenario()
       const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
-      const r = await enviar.ejecutar(PAREJA, conversacion.id, '  hola  ')
+      const r = await enviar.ejecutar(PAREJA, conversacion.id, '  hola  ', null)
       expect(r.mensaje.body).toBe('hola')
       expect(r.mensaje.senderId).toBe(PAREJA)
       expect(r.destinatarios).toEqual([PROV_A])
@@ -97,7 +104,7 @@ describe('casos de uso de mensajería', () => {
     it('encola tras persistir: el aviso lleva ids y el mensaje ya está guardado', async () => {
       const { repo, cola, abrir, enviar } = escenario()
       const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
-      const { mensaje } = await enviar.ejecutar(PAREJA, conversacion.id, 'hola')
+      const { mensaje } = await enviar.ejecutar(PAREJA, conversacion.id, 'hola', null)
       expect(cola.encolados).toHaveLength(1)
       expect(cola.encolados[0]).toMatchObject({
         cola: 'messaging',
@@ -113,7 +120,7 @@ describe('casos de uso de mensajería', () => {
       const { cola, abrir, enviar } = escenario()
       const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
       cola.enqueue = () => Promise.reject(new Error('redis caído'))
-      await expect(enviar.ejecutar(PAREJA, conversacion.id, 'hola')).resolves.toMatchObject({
+      await expect(enviar.ejecutar(PAREJA, conversacion.id, 'hola', null)).resolves.toMatchObject({
         mensaje: { body: 'hola' },
       })
       expect(aviso).toHaveBeenCalledOnce()
@@ -126,7 +133,7 @@ describe('casos de uso de mensajería', () => {
     it('un envío rechazado no encola nada', async () => {
       const { cola, abrir, enviar } = escenario()
       const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
-      await expect(enviar.ejecutar(PAREJA, conversacion.id, '   ')).rejects.toBeInstanceOf(
+      await expect(enviar.ejecutar(PAREJA, conversacion.id, '   ', null)).rejects.toBeInstanceOf(
         MensajeInvalidoError,
       )
       expect(cola.encolados).toEqual([])
@@ -135,7 +142,7 @@ describe('casos de uso de mensajería', () => {
     it('un cuerpo vacío lanza MensajeInvalidoError', async () => {
       const { abrir, enviar } = escenario()
       const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
-      await expect(enviar.ejecutar(PAREJA, conversacion.id, '   ')).rejects.toBeInstanceOf(
+      await expect(enviar.ejecutar(PAREJA, conversacion.id, '   ', null)).rejects.toBeInstanceOf(
         MensajeInvalidoError,
       )
     })
@@ -144,7 +151,7 @@ describe('casos de uso de mensajería', () => {
       const { repo, abrir, enviar } = escenario()
       const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
       repo.registrarProveedor(EVENTO, PROV_A, 'Foto A', false)
-      await expect(enviar.ejecutar(PAREJA, conversacion.id, 'hola')).rejects.toBeInstanceOf(
+      await expect(enviar.ejecutar(PAREJA, conversacion.id, 'hola', null)).rejects.toBeInstanceOf(
         ConversacionSoloLecturaError,
       )
     })
@@ -152,9 +159,55 @@ describe('casos de uso de mensajería', () => {
     it('un no participante recibe ConversacionNoEncontradaError', async () => {
       const { abrir, enviar } = escenario()
       const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
-      await expect(enviar.ejecutar(PROV_B, conversacion.id, 'hola')).rejects.toBeInstanceOf(
+      await expect(enviar.ejecutar(PROV_B, conversacion.id, 'hola', null)).rejects.toBeInstanceOf(
         ConversacionNoEncontradaError,
       )
+    })
+  })
+
+  describe('enviar con adjunto', () => {
+    it('con un archivo subido bajo su prefijo guarda el adjunto y un cuerpo vacío', async () => {
+      const { almacen, abrir, enviar, repo } = escenario()
+      const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
+      const key = `${prefijoAdjuntos(EVENTO, conversacion.id)}/a.pdf`
+      almacen.simularSubida(key, 'application/pdf', 2048)
+
+      const r = await enviar.ejecutar(PAREJA, conversacion.id, '   ', {
+        key,
+        name: '  presupuesto.pdf  ',
+      })
+      expect(r.mensaje.body).toBe('')
+      expect(r.mensaje.attachment).toEqual({
+        name: 'presupuesto.pdf',
+        contentType: 'application/pdf',
+        bytes: 2048,
+      })
+      expect(r.destinatarios).toEqual([PROV_A])
+      expect(await repo.adjuntoDe(r.mensaje.id)).toMatchObject({ key, eventId: EVENTO })
+    })
+
+    it('con una key de otro prefijo es 422 INVALID_UPLOAD y no guarda nada', async () => {
+      const { almacen, abrir, enviar, cola } = escenario()
+      const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
+      const ajena = `${prefijoAdjuntos(EVENTO, 'otra-conversacion')}/a.pdf`
+      almacen.simularSubida(ajena, 'application/pdf', 2048)
+
+      const error: unknown = await enviar
+        .ejecutar(PAREJA, conversacion.id, 'mira', { key: ajena, name: 'a.pdf' })
+        .catch((e: unknown) => e)
+      expect(error).toBeInstanceOf(SubidaNoValidaError)
+      expect(error).toMatchObject({ httpStatus: 422, code: 'INVALID_UPLOAD' })
+      expect(cola.encolados).toEqual([])
+    })
+
+    it('un nombre con barras es NombreDeAdjuntoInvalidoError', async () => {
+      const { almacen, abrir, enviar } = escenario()
+      const { conversacion } = await abrir.ejecutar(PAREJA, EVENTO, PROV_A)
+      const key = `${prefijoAdjuntos(EVENTO, conversacion.id)}/a.pdf`
+      almacen.simularSubida(key, 'application/pdf', 2048)
+      await expect(
+        enviar.ejecutar(PAREJA, conversacion.id, '', { key, name: '../a.pdf' }),
+      ).rejects.toBeInstanceOf(NombreDeAdjuntoInvalidoError)
     })
   })
 
@@ -163,7 +216,7 @@ describe('casos de uso de mensajería', () => {
       const { abrir, enviar, marcar } = escenario()
       const c1 = (await abrir.ejecutar(PAREJA, EVENTO, PROV_A)).conversacion
       const c2 = (await abrir.ejecutar(PAREJA, EVENTO, PLANNER)).conversacion
-      const { mensaje } = await enviar.ejecutar(PAREJA, c1.id, 'hola')
+      const { mensaje } = await enviar.ejecutar(PAREJA, c1.id, 'hola', null)
       await expect(marcar.ejecutar(PLANNER, c2.id, 'read', mensaje.id)).rejects.toBeInstanceOf(
         ConversacionNoEncontradaError,
       )
@@ -172,7 +225,7 @@ describe('casos de uso de mensajería', () => {
     it('marca leído y devuelve las marcas y los demás participantes', async () => {
       const { abrir, enviar, marcar, bandeja } = escenario()
       const c = (await abrir.ejecutar(PAREJA, EVENTO, PROV_A)).conversacion
-      const { mensaje } = await enviar.ejecutar(PAREJA, c.id, 'hola')
+      const { mensaje } = await enviar.ejecutar(PAREJA, c.id, 'hola', null)
       expect((await bandeja.ejecutar(PROV_A)).unreadTotal).toBe(1)
       const r = await marcar.ejecutar(PROV_A, c.id, 'read', mensaje.id)
       expect(r.marcas.readUpTo?.id).toBe(mensaje.id)
@@ -184,7 +237,7 @@ describe('casos de uso de mensajería', () => {
       const aviso = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined)
       const { cola, abrir, enviar, marcar } = escenario()
       const c = (await abrir.ejecutar(PAREJA, EVENTO, PROV_A)).conversacion
-      const { mensaje } = await enviar.ejecutar(PAREJA, c.id, 'hola')
+      const { mensaje } = await enviar.ejecutar(PAREJA, c.id, 'hola', null)
       await marcar.ejecutar(PROV_A, c.id, 'read', mensaje.id)
       const recibo = cola.encolados.find((e) => e.nombre === 'message.receipt')
       expect(recibo).toMatchObject({
@@ -209,7 +262,7 @@ describe('casos de uso de mensajería', () => {
       try {
         const { cola, abrir, enviar, marcar } = escenario()
         const c = (await abrir.ejecutar(PAREJA, EVENTO, PROV_A)).conversacion
-        const { mensaje } = await enviar.ejecutar(PAREJA, c.id, 'hola')
+        const { mensaje } = await enviar.ejecutar(PAREJA, c.id, 'hola', null)
         await marcar.ejecutar(PROV_A, c.id, 'delivered', mensaje.id)
         await marcar.ejecutar(PROV_A, c.id, 'read', mensaje.id)
         await marcar.ejecutar(PROV_A, c.id, 'read', mensaje.id)
@@ -225,7 +278,7 @@ describe('casos de uso de mensajería', () => {
     it('se puede marcar en una conversación de solo lectura', async () => {
       const { repo, abrir, enviar, marcar } = escenario()
       const c = (await abrir.ejecutar(PAREJA, EVENTO, PROV_A)).conversacion
-      const { mensaje } = await enviar.ejecutar(PAREJA, c.id, 'hola')
+      const { mensaje } = await enviar.ejecutar(PAREJA, c.id, 'hola', null)
       repo.registrarMiembro(EVENTO, PAREJA, 'COUPLE', 'REVOKED', 'Pareja')
       repo.registrarMiembro(EVENTO, PLANNER, 'PLANNER', 'REVOKED', 'Planner')
       repo.registrarProveedor(EVENTO, PROV_A, 'Foto A', false)

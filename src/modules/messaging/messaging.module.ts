@@ -4,8 +4,15 @@ import { Module } from '@nestjs/common'
 import { AuthModule } from '@/modules/auth/auth.module'
 import { PrismaService } from '@/modules/database/prisma.service'
 import { NotificationsModule } from '@/modules/notifications/notifications.module'
+import { StorageModule } from '@/modules/storage/storage.module'
 import { UsersModule } from '@/modules/users/users.module'
 
+import { ADJUNTOS_DE_MENSAJES } from './application/adjuntos-de-mensajes.port'
+import {
+  BuscarAdjuntoVisible,
+  DescargarAdjuntoUseCase,
+  PrepararSubidaAdjuntoUseCase,
+} from './application/adjuntos.use-cases'
 import { COLA_MENSAJERIA } from './application/avisos-mensajeria'
 import { CONVERSATION_REPOSITORY } from './application/conversation.repository'
 import { GetContactStateUseCase } from './application/get-contact-state.use-case'
@@ -34,12 +41,22 @@ import { MessagingProcessor } from './interfaces/messaging.processor'
  * Socket.IO sobre Redis) y `registerQueue` monta `MessagingProcessor` sobre la
  * cola propia `messaging`. No importa `EventsModule`: el acceso de mensajería lo decide
  * el propio repositorio (ver el docblock del controlador).
+ *
+ * Adjuntos (spec 2026-11-12): `StorageModule` aporta `SubidaDeAdjuntos` (subida
+ * directa a R2 y URLs firmadas). Exporta UN puerto público,
+ * `ADJUNTOS_DE_MENSAJES`, para que presupuesto convierta un adjunto en factura
+ * con la misma regla de visibilidad que el listado, sin tocar el repositorio
+ * de conversaciones. Se cablea con `useExisting` sobre `BuscarAdjuntoVisible`
+ * (una sola instancia, la que también usa `DescargarAdjuntoUseCase`).
+ * Alternativa descartada: exportar `CONVERSATION_REPOSITORY`, que obligaría a
+ * cada consumidor a repetir la regla de visibilidad.
  */
 @Module({
   imports: [
     AuthModule,
     UsersModule,
     NotificationsModule,
+    StorageModule,
     BullModule.registerQueue({ name: COLA_MENSAJERIA }),
   ],
   controllers: [ConversationsController, ContactRequestsController],
@@ -62,7 +79,12 @@ import { MessagingProcessor } from './interfaces/messaging.processor'
     RespondContactUseCase,
     GetContactStateUseCase,
     ListProfileConversationsUseCase,
+    BuscarAdjuntoVisible,
+    { provide: ADJUNTOS_DE_MENSAJES, useExisting: BuscarAdjuntoVisible },
+    PrepararSubidaAdjuntoUseCase,
+    DescargarAdjuntoUseCase,
     MessagingProcessor,
   ],
+  exports: [ADJUNTOS_DE_MENSAJES],
 })
 export class MessagingModule {}

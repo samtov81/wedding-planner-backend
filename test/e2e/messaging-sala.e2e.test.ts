@@ -353,6 +353,7 @@ describe('sala del evento e2e', () => {
           senderId: id.pareja,
           body: 'hola a todos',
           createdAt: m.createdAt,
+          attachment: null,
         },
       })
 

@@ -11,6 +11,9 @@ import type {
   MarcaDeMiembro,
   MarcasDeParticipante,
   MensajeVista,
+  AdjuntoDeMensaje,
+  AdjuntoGuardado,
+  AdjuntoVista,
   SalaVista,
 } from '../application/conversation.repository'
 import { alcanza, avanzar, claveDePar, type Marca, type RolEnEvento } from '../domain/conversacion'
@@ -67,6 +70,12 @@ interface ConversacionEnMemoria {
 }
 
 /** Orden total (createdAt, id), más reciente primero. */
+const vistaDeAdjunto = (a: AdjuntoGuardado): AdjuntoVista => ({
+  name: a.name,
+  contentType: a.contentType,
+  bytes: a.bytes,
+})
+
 const masReciente = (x: MensajeVista, y: MensajeVista): number =>
   y.createdAt.getTime() - x.createdAt.getTime() || (x.id < y.id ? 1 : -1)
 
@@ -90,6 +99,8 @@ const ordenDeBandeja = (x: ConversacionEnMemoria, y: ConversacionEnMemoria): num
 export class ConversationRepositoryEnMemoria implements ConversationRepository {
   private readonly conversaciones: ConversacionEnMemoria[] = []
   private readonly mensajesGuardados: MensajeVista[] = []
+  /** La key del adjunto por mensaje: `MensajeVista` no la lleva, la base sí. */
+  private readonly clavesDeAdjunto = new Map<string, string>()
   private readonly destinatariosPorMensaje = new Map<string, string[]>()
   private readonly miembros: MiembroEnMemoria[] = []
   private readonly proveedores: ProveedorEnMemoria[] = []
@@ -243,6 +254,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     senderId: string,
     body: string,
     ahora: Date,
+    adjunto: AdjuntoGuardado | null,
   ): Promise<MensajeVista> {
     const conv = this.conversaciones.find((c) => c.id === conversationId)
     if (conv === undefined) return Promise.reject(new Error('conversación inexistente'))
@@ -251,11 +263,29 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
       conversationId,
       senderId,
       body,
+      attachment: adjunto === null ? null : vistaDeAdjunto(adjunto),
       createdAt: ahora,
     }
     this.mensajesGuardados.push(mensaje)
+    if (adjunto !== null) this.clavesDeAdjunto.set(mensaje.id, adjunto.key)
     if (conv.lastMessageAt === null || conv.lastMessageAt < ahora) conv.lastMessageAt = ahora
     return Promise.resolve({ ...mensaje })
+  }
+
+  adjuntoDe(messageId: string): Promise<AdjuntoDeMensaje | null> {
+    const m = this.mensajesGuardados.find((x) => x.id === messageId)
+    const key = this.clavesDeAdjunto.get(messageId)
+    if (m === undefined || m.attachment === null || key === undefined) return Promise.resolve(null)
+    const conv = this.conversaciones.find((c) => c.id === m.conversationId)
+    return Promise.resolve({
+      ...m.attachment,
+      key,
+      messageId: m.id,
+      conversationId: m.conversationId,
+      eventId: conv?.eventId ?? null,
+      senderId: m.senderId,
+      createdAt: m.createdAt,
+    })
   }
 
   mensaje(conversationId: string, messageId: string): Promise<MensajeVista | null> {
@@ -326,6 +356,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
     senderId: string,
     body: string,
     ahora: Date,
+    adjunto: AdjuntoGuardado | null,
   ): Promise<{ mensaje: MensajeVista; destinatarios: string[] }> {
     const sala = this.conversaciones.find((c) => c.id === conversationId && c.kind === 'EVENT_ROOM')
     if (sala === undefined) return Promise.reject(new Error('sala inexistente'))
@@ -338,9 +369,11 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
       conversationId,
       senderId,
       body,
+      attachment: adjunto === null ? null : vistaDeAdjunto(adjunto),
       createdAt: ahora,
     }
     this.mensajesGuardados.push(mensaje)
+    if (adjunto !== null) this.clavesDeAdjunto.set(mensaje.id, adjunto.key)
     this.destinatariosPorMensaje.set(mensaje.id, destinatarios)
     for (const id of [senderId, ...destinatarios]) this.unir(sala, id)
     if (sala.lastMessageAt === null || sala.lastMessageAt < ahora) sala.lastMessageAt = ahora
@@ -477,7 +510,7 @@ export class ConversationRepositoryEnMemoria implements ConversationRepository {
         conv.solicitud.declinedAt = null
       }
     }
-    const mensaje = await this.agregarMensaje(conv.id, e.solicitante, e.cuerpo, e.ahora)
+    const mensaje = await this.agregarMensaje(conv.id, e.solicitante, e.cuerpo, e.ahora, null)
     return { conversationId: conv.id, mensaje, estado }
   }
 

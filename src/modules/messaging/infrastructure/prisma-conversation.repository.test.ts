@@ -5,7 +5,7 @@ import { PrismaUnidadDeTrabajo } from '@/modules/database/transaccion'
 
 import { categoriaId } from '../../../../test/support/categorias'
 import { startPostgres, type PostgresDeTest } from '../../../../test/support/containers'
-import { SolicitudPendienteError } from '../domain/messaging-errors'
+import { SolicitudPendienteError, SubidaDeAdjuntoYaUsadaError } from '../domain/messaging-errors'
 import { claveDePerfil, ESPERA_TRAS_RECHAZO_MS } from '../domain/perfil'
 import type { FichaParaContacto } from '../application/conversation.repository'
 import { PrismaConversationRepository } from './prisma-conversation.repository'
@@ -55,6 +55,37 @@ describe('PrismaConversationRepository', () => {
     expect(await prisma.conversationParticipant.count()).toBe(2)
   })
 
+  it('reutilizar la key de un adjunto ya guardado en otro mensaje es 422 INVALID_UPLOAD, no un 500', async () => {
+    const { id } = await repo.abrir(eventId, aId, bId)
+    const adjunto = {
+      key: `chat/${id}/reutilizada.pdf`,
+      name: 'reutilizada.pdf',
+      contentType: 'application/pdf',
+      bytes: 10,
+    }
+    await repo.agregarMensaje(id, aId, 'primero', new Date(), adjunto)
+
+    const segundo = repo.agregarMensaje(id, aId, 'segundo', new Date(), adjunto)
+    await expect(segundo).rejects.toBeInstanceOf(SubidaDeAdjuntoYaUsadaError)
+    await expect(segundo).rejects.toMatchObject({ httpStatus: 422, code: 'INVALID_UPLOAD' })
+  })
+
+  it('lo mismo en una sala: agregarMensajeDeSala traduce el UNIQUE de attachmentKey', async () => {
+    const salaId = await repo.abrirSala(eventId, aId)
+    if (salaId === null) throw new Error('la sala debía abrirse')
+    const adjunto = {
+      key: `chat/${salaId}/sala.pdf`,
+      name: 'sala.pdf',
+      contentType: 'application/pdf',
+      bytes: 10,
+    }
+    await repo.agregarMensajeDeSala(salaId, aId, 'uno', new Date(), adjunto)
+
+    await expect(
+      repo.agregarMensajeDeSala(salaId, aId, 'dos', new Date(), adjunto),
+    ).rejects.toBeInstanceOf(SubidaDeAdjuntoYaUsadaError)
+  })
+
   it('el CHECK rechaza un cuerpo vacío insertado a mano', async () => {
     const { id } = await repo.abrir(eventId, aId, bId)
 
@@ -79,8 +110,20 @@ describe('PrismaConversationRepository', () => {
 
   it('dos marcados concurrentes no retroceden la marca', async () => {
     const { id } = await repo.abrir(eventId, aId, bId)
-    const viejo = await repo.agregarMensaje(id, bId, 'viejo', new Date('2026-03-01T00:00:00Z'))
-    const nuevo = await repo.agregarMensaje(id, bId, 'nuevo', new Date('2026-03-01T00:05:00Z'))
+    const viejo = await repo.agregarMensaje(
+      id,
+      bId,
+      'viejo',
+      new Date('2026-03-01T00:00:00Z'),
+      null,
+    )
+    const nuevo = await repo.agregarMensaje(
+      id,
+      bId,
+      'nuevo',
+      new Date('2026-03-01T00:05:00Z'),
+      null,
+    )
 
     await Promise.all([
       repo.marcar(id, aId, 'read', nuevo.id),
@@ -100,7 +143,7 @@ describe('PrismaConversationRepository', () => {
     const { reabierta, mensaje } = await unidad.ejecutar(async () => {
       const reabierta = await repo.abrir(eventId, bId, aId)
       // Otra escritura en la misma transacción: falla si ésta quedó abortada.
-      const mensaje = await repo.agregarMensaje(existente.id, aId, 'tras abrir', new Date())
+      const mensaje = await repo.agregarMensaje(existente.id, aId, 'tras abrir', new Date(), null)
       return { reabierta, mensaje }
     })
 
@@ -116,7 +159,7 @@ describe('PrismaConversationRepository', () => {
       Array.from({ length: 4 }, () =>
         unidad.ejecutar(async () => {
           const r = await repo.abrir(otroEvento.id, aId, bId)
-          await repo.agregarMensaje(r.id, aId, 'hola', new Date())
+          await repo.agregarMensaje(r.id, aId, 'hola', new Date(), null)
           return r
         }),
       ),

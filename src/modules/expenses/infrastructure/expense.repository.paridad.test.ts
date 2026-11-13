@@ -731,6 +731,52 @@ describe('Paridad: ExpenseRepositoryEnMemoria vs PrismaExpenseRepository', () =>
     }
   })
 
+  it('contratacionesConFichaDe sólo devuelve las BOOKED con ficha del usuario en ese evento', async () => {
+    const otroUsuario = await prisma.user.create({
+      data: { email: `otro-${randomUUID()}@gastos.test`, passwordHash: 'x', fullName: 'Otro' },
+    })
+    const proveedor = await prisma.user.create({
+      data: { email: `prov-${randomUUID()}@gastos.test`, passwordHash: 'x', fullName: 'Prov' },
+    })
+    for (const [nombre, repo] of sujetos()) {
+      const e = await sembrarEvento([
+        { name: 'Reservado', assignedBudget: '1.00', status: 'BOOKED', userId: proveedor.id },
+        {
+          name: 'Preseleccionado',
+          assignedBudget: '1.00',
+          status: 'SHORTLISTED',
+          userId: proveedor.id,
+        },
+        { name: 'Cancelado', assignedBudget: '1.00', status: 'CANCELLED', userId: proveedor.id },
+        { name: 'De otro', assignedBudget: '1.00', status: 'BOOKED', userId: otroUsuario.id },
+        { name: 'Externo', assignedBudget: '1.00', status: 'BOOKED' },
+      ])
+      const ajeno = await sembrarEvento([
+        { name: 'Otro evento', assignedBudget: '1.00', status: 'BOOKED', userId: proveedor.id },
+      ])
+      expect(await repo.contratacionesConFichaDe(e.eventId, proveedor.id), nombre).toEqual([
+        e.vendorIds[0],
+      ])
+      expect(await repo.contratacionesConFichaDe(ajeno.eventId, proveedor.id), nombre).toEqual(
+        ajeno.vendorIds,
+      )
+    }
+  })
+
+  it('contratacionesConFichaDe devuelve las dos si el usuario tiene dos BOOKED', async () => {
+    const proveedor = await prisma.user.create({
+      data: { email: `dos-${randomUUID()}@gastos.test`, passwordHash: 'x', fullName: 'Dos' },
+    })
+    for (const [nombre, repo] of sujetos()) {
+      const e = await sembrarEvento([
+        { name: 'Uno', assignedBudget: '1.00', status: 'BOOKED', userId: proveedor.id },
+        { name: 'Dos', assignedBudget: '1.00', status: 'BOOKED', userId: proveedor.id },
+      ])
+      const ids = await repo.contratacionesConFichaDe(e.eventId, proveedor.id)
+      expect([...ids].sort(), nombre).toEqual([...e.vendorIds].sort())
+    }
+  })
+
   it('un número repetido del mismo proveedor lanza NumeroDeFacturaRepetidoError al crear y al actualizar', async () => {
     const { eventId, vendorIds } = await sembrarEvento([
       { name: 'DJ Max', assignedBudget: '500.00' },

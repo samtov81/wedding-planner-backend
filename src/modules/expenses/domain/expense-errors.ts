@@ -37,3 +37,13 @@ export class ArchivoDeFacturaNoEncontradoError extends NotFoundError {
     super('El gasto no tiene archivo de factura', 'INVOICE_FILE_NOT_FOUND')
   }
 }
+
+/**
+ * 404 tanto si el mensaje no existe como si no lleva adjunto, es de otro
+ * evento o el usuario no lo ve: indistinguibles a propósito.
+ */
+export class MensajeNoEncontradoError extends NotFoundError {
+  constructor() {
+    super('El mensaje no existe o no tiene un adjunto que puedas usar', 'MESSAGE_NOT_FOUND')
+  }
+}

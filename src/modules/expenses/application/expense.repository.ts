@@ -108,6 +108,11 @@ export interface ExpenseRepository {
   vencidos(eventId: string, hoy: string): Promise<{ amount: string; count: number }>
   /** PENDING con `dueDate >= hoy`: `dueDate` asc y `createdAt` asc de desempate. */
   proximos(eventId: string, hoy: string, limit: number): Promise<Expense[]>
+  /**
+   * Ids de los `EventVendor` del evento con `status = BOOKED` cuya ficha es de
+   * `userId`. Alimenta `proveedorSugerido` al convertir un adjunto en factura.
+   */
+  contratacionesConFichaDe(eventId: string, userId: string): Promise<string[]>
   /** `null` si el `EventVendor` no tiene ficha (externo) o no existe. */
   proveedorCobrable(
     eventVendorId: string,

@@ -25,6 +25,7 @@ import { validarCon } from '@/shared/http/validar-con'
 
 import {
   ArchivoDeGastoUseCase,
+  FacturaDesdeMensajeUseCase,
   PrepararSubidaFacturaUseCase,
 } from '../application/archivos-de-factura.use-cases'
 import { BudgetSummaryUseCase } from '../application/budget-summary.use-case'
@@ -36,6 +37,7 @@ import type { ResumenPresupuesto } from '../domain/expense'
 import { GastoNoEncontradoError } from '../domain/expense-errors'
 import {
   createExpenseSchema,
+  facturaDesdeMensajeSchema,
   listExpensesQuerySchema,
   updateExpenseSchema,
   uploadUrlSchema,
@@ -58,6 +60,7 @@ export class ExpensesController {
     private readonly resumen: BudgetSummaryUseCase,
     private readonly prepararSubida: PrepararSubidaFacturaUseCase,
     private readonly archivoDeGasto: ArchivoDeGastoUseCase,
+    private readonly facturaDesdeMensaje: FacturaDesdeMensajeUseCase,
   ) {}
 
   @RequireEventAccess('BUDGET_VIEW')
@@ -120,6 +123,20 @@ export class ExpensesController {
   ): Promise<SubidaPreparada> {
     const { contentType, bytes } = validarCon(uploadUrlSchema, body)
     return await this.prepararSubida.ejecutar(eventId, contentType, bytes)
+  }
+
+  /** Antes que `expenses/:expenseId/...`, igual que `invoice-upload-url`. */
+  @RequireEventAccess('BUDGET_EDIT')
+  @Post('expenses/invoice-from-message')
+  @HttpCode(201)
+  async facturaDeMensaje(
+    @Param('eventId') eventId: string,
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+    @Body() body: unknown,
+  ): Promise<{ key: string; name: string; suggestedEventVendorId: string | null }> {
+    const yo = exigirUsuario(usuario)
+    const { messageId } = validarCon(facturaDesdeMensajeSchema, body)
+    return await this.facturaDesdeMensaje.ejecutar(yo.id, eventId, messageId)
   }
 
   @RequireEventAccess('BUDGET_VIEW')

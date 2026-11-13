@@ -6,12 +6,14 @@ import { TIPO_GASTO_PAGADO } from '@/modules/notifications/application/notificat
 import { NotificationPortEnMemoria } from '@/modules/notifications/infrastructure/notification.port.fake'
 import type { QueuePort } from '@/modules/queue/application/queue.port'
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
+import { AdjuntosDeMensajesEnMemoria } from '@/modules/messaging/infrastructure/adjuntos-de-mensajes.fake'
 import { SubidaDeFacturas } from '@/modules/storage/application/subida-de-facturas'
 import { ObjectStorageEnMemoria } from '@/modules/storage/infrastructure/object-storage.fake'
 
 import {
   ArchivoDeFacturaNoEncontradoError,
   GastoNoEncontradoError,
+  MensajeNoEncontradoError,
   NumeroDeFacturaRepetidoError,
   PagoRecibidoNoEncontradoError,
   ProveedorDelEventoNoEncontradoError,
@@ -20,6 +22,7 @@ import {
 import { ExpenseRepositoryEnMemoria } from '../infrastructure/expense.repository.fake'
 import {
   ArchivoDeGastoUseCase,
+  FacturaDesdeMensajeUseCase,
   PrepararSubidaFacturaUseCase,
 } from './archivos-de-factura.use-cases'
 import { COLA_GASTOS, EVENTO_GASTO_CAMBIADO, type JobGastoCambiado } from './avisos-gastos'
@@ -82,6 +85,7 @@ function montar(opciones: { cola?: QueuePort; timezone?: string; ahora?: Date } 
   const memoria = new InMemoryQueueAdapter()
   const cola = opciones.cola ?? memoria
   const preparar = new PrepararSubidaFacturaUseCase(subidas)
+  const adjuntos = new AdjuntosDeMensajesEnMemoria()
 
   /** Sube un archivo como lo haría el cliente: preparar y PUT al bucket. */
   async function subir(eventId = EVENTO): Promise<string> {
@@ -103,6 +107,8 @@ function montar(opciones: { cola?: QueuePort; timezone?: string; ahora?: Date } 
     editar: new UpdateExpenseUseCase(gastos, subidas, uow, avisos, cola, eventos, ahora),
     borrar: new DeleteExpenseUseCase(gastos, subidas, uow, cola),
     archivo: new ArchivoDeGastoUseCase(gastos, subidas),
+    adjuntos,
+    desdeMensaje: new FacturaDesdeMensajeUseCase(gastos, subidas, adjuntos),
     listar: new ListExpensesUseCase(gastos, eventos, ahora),
     resumen: new BudgetSummaryUseCase(gastos, eventos, ahora),
     pagos: new PagosRecibidosUseCase(gastos, subidas),
@@ -699,6 +705,85 @@ describe('casos de uso de gastos', () => {
         ArchivoDeFacturaNoEncontradoError,
       )
       await expect(archivo.ejecutar(OTRO, con.id)).rejects.toBeInstanceOf(GastoNoEncontradoError)
+    })
+  })
+
+  describe('factura desde un mensaje', () => {
+    const MENSAJE = '88888888-8888-4888-8888-888888888888'
+
+    const adjunto = (eventId = EVENTO, senderId = PROV) => ({
+      messageId: MENSAJE,
+      eventId,
+      conversationId: '99999999-9999-4999-8999-999999999999',
+      senderId,
+      key: `events/${eventId}/messages/c/origen.png`,
+      name: 'factura marzo.png',
+      contentType: 'image/png',
+      bytes: 4096,
+    })
+
+    it('copia a la carpeta de facturas con la extensión del tipo y devuelve el nombre original', async () => {
+      const { desdeMensaje, adjuntos, almacen } = montar()
+      const a = adjunto()
+      adjuntos.poner('ana', a)
+      almacen.simularSubida(a.key, 'image/png', 4096)
+
+      const r = await desdeMensaje.ejecutar('ana', EVENTO, MENSAJE)
+
+      expect(r.key).toMatch(new RegExp(`^events/${EVENTO}/invoices/[0-9a-f-]{36}\\.png$`))
+      expect(r.name).toBe('factura marzo.png')
+      expect(almacen.objetos.get(r.key)).toEqual({ contentType: 'image/png', bytes: 4096 })
+      expect(almacen.objetos.has(a.key)).toBe(true)
+    })
+
+    it('un adjunto de otro evento es `MESSAGE_NOT_FOUND` y no copia nada', async () => {
+      const { desdeMensaje, adjuntos, almacen } = montar()
+      const a = adjunto(OTRO)
+      adjuntos.poner('ana', a)
+      almacen.simularSubida(a.key, 'image/png', 4096)
+
+      await expect(desdeMensaje.ejecutar('ana', EVENTO, MENSAJE)).rejects.toBeInstanceOf(
+        MensajeNoEncontradoError,
+      )
+      expect(almacen.objetos.size).toBe(1)
+    })
+
+    it('un mensaje que el usuario no ve es `MESSAGE_NOT_FOUND`', async () => {
+      const { desdeMensaje, adjuntos } = montar()
+      adjuntos.poner('otra', adjunto())
+      await expect(desdeMensaje.ejecutar('ana', EVENTO, MENSAJE)).rejects.toMatchObject({
+        code: 'MESSAGE_NOT_FOUND',
+        httpStatus: 404,
+      })
+    })
+
+    it('sugiere al remitente si tiene exactamente una contratación BOOKED en el evento', async () => {
+      const { desdeMensaje, adjuntos, almacen } = montar()
+      const a = adjunto(EVENTO, PROV)
+      adjuntos.poner('ana', a)
+      almacen.simularSubida(a.key, 'image/png', 4096)
+      expect((await desdeMensaje.ejecutar('ana', EVENTO, MENSAJE)).suggestedEventVendorId).toBe(
+        VENDOR,
+      )
+    })
+
+    it('no sugiere si tiene dos contrataciones, ninguna BOOKED o es un remitente sin ficha', async () => {
+      const { desdeMensaje, adjuntos, almacen, gastos } = montar()
+      gastos.proveedores.push({
+        id: '12121212-1212-4212-8212-121212121212',
+        eventId: EVENTO,
+        name: 'DJ Max 2',
+        assignedBudget: null,
+        status: 'BOOKED',
+        userId: PROV,
+      })
+      for (const sender of [PROV, PROV_CORTO, 'sin-ficha']) {
+        const a = adjunto(EVENTO, sender)
+        adjuntos.poner('ana', a)
+        almacen.simularSubida(a.key, 'image/png', 4096)
+        const r = await desdeMensaje.ejecutar('ana', EVENTO, MENSAJE)
+        expect(r.suggestedEventVendorId, sender).toBeNull()
+      }
     })
   })
 

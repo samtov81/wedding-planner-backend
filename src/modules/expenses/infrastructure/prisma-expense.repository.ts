@@ -386,6 +386,15 @@ export class PrismaExpenseRepository implements ExpenseRepository {
     return { userId: fila.vendorProfile.userId, status: fila.status }
   }
 
+  async contratacionesConFichaDe(eventId: string, userId: string): Promise<string[]> {
+    const filas = await clienteDe(this.prisma).eventVendor.findMany({
+      where: { eventId, status: 'BOOKED', vendorProfile: { userId } },
+      select: { id: true },
+      orderBy: { createdAt: 'asc' },
+    })
+    return filas.map((f) => f.id)
+  }
+
   async listarPagosRecibidos(userId: string, eventId: string | null): Promise<PagoRecibido[]> {
     const filas = await this.prisma.expense.findMany({
       where: { ...cobradoPor(userId), ...(eventId !== null ? { eventId } : {}) },

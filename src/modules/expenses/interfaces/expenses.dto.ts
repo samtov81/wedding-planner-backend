@@ -100,6 +100,9 @@ export const uploadUrlSchema = z
   })
   .strict()
 
+/** Mensaje del que se toma el adjunto para la factura. */
+export const facturaDesdeMensajeSchema = z.object({ messageId: z.guid() }).strict()
+
 export const vendorPaymentsQuerySchema = z.object({
   eventId: z.uuid().optional(),
 })

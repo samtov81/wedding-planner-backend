@@ -180,3 +180,13 @@ export function estaVencido(
 export function pasaAPagado(antes: ExpenseStatus | null, despues: ExpenseStatus): boolean {
   return despues === 'PAID' && antes !== 'PAID'
 }
+
+/**
+ * Proveedor que se propone al convertir un adjunto en factura: el único
+ * `EventVendor` BOOKED del remitente en el evento. Con ninguno no hay a quién
+ * atribuirla y con varios elegir uno sería adivinar (decisión 6 del spec
+ * 2026-11-12 §13): en ambos casos `null` y decide quien la registra.
+ */
+export function proveedorSugerido(contrataciones: readonly string[]): string | null {
+  return contrataciones.length === 1 ? (contrataciones[0] ?? null) : null
+}

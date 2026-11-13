@@ -144,10 +144,14 @@ Enforced by the use cases, not by the database: marks only move forward (never b
 
 Belongs to a `Conversation` (`onDelete: Cascade`) and to its sender, a `User` (`onDelete: Restrict` — a user with messages cannot be deleted). Indexed by `(conversationId, createdAt, id)` for backwards cursor pagination.
 
-CHECK constraints:
-- `messages_cuerpo_longitud` — `char_length(btrim(body))` is between 1 and 2000.
+Attachment columns (all nullable; one attachment per message): `attachmentKey` (R2 object key, never a URL; `unique`, so an object belongs to at most one message), `attachmentName`, `attachmentType` and `attachmentBytes`.
 
-That the sender is a participant of the conversation and still has access to the event is enforced by the use cases.
+CHECK constraints:
+- `messages_cuerpo_longitud` — `char_length(btrim(body))` is between 1 and 2000 without an attachment, and between 0 and 2000 with one (a message may be only a file).
+- `messages_adjunto_completo` — the four `attachment*` columns are either all set or all null.
+- `messages_adjunto_bytes` — `attachmentBytes`, when set, is greater than 0.
+
+That the sender is a participant of the conversation and still has access to the event is enforced by the use cases. So are the attachment rules the database does not know: the conversation is not `PROFILE`, the content type is one of the allowed ones, the size is at most 10 MiB and the name is valid.
 
 ### `message_recipients`
 

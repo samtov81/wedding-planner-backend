@@ -7,10 +7,14 @@ import {
 } from '@/modules/auth/interfaces/current-user.decorator'
 import { JwtAuthGuard } from '@/modules/auth/interfaces/jwt-auth.guard'
 import { decodeCursor, NotFoundError } from '@/shared/domain'
-import { LIMITADOR_MESSAGES, LimiteDeRuta } from '@/shared/http/limitadores'
+import { LIMITADOR_ATTACHMENTS, LIMITADOR_MESSAGES, LimiteDeRuta } from '@/shared/http/limitadores'
 import { validarCon } from '@/shared/http/validar-con'
 
 import type { Contacto, ConversacionVista } from '../application/conversation.repository'
+import {
+  DescargarAdjuntoUseCase,
+  PrepararSubidaAdjuntoUseCase,
+} from '../application/adjuntos.use-cases'
 import { ListContactsUseCase } from '../application/list-contacts.use-case'
 import { ListConversationsUseCase } from '../application/list-conversations.use-case'
 import { ListMessagesUseCase } from '../application/list-messages.use-case'
@@ -28,6 +32,7 @@ import {
   idSchema,
   listarMensajesQuerySchema,
   marcarSchema,
+  subidaDeAdjuntoSchema,
 } from './messaging.dto'
 import {
   marcaDeMiembroJson,
@@ -106,6 +111,8 @@ export class ConversationsController {
     private readonly salas: ListRoomsUseCase,
     private readonly abrirSala: OpenRoomUseCase,
     private readonly lectores: ListRoomReadersUseCase,
+    private readonly prepararSubida: PrepararSubidaAdjuntoUseCase,
+    private readonly descargarAdjunto: DescargarAdjuntoUseCase,
   ) {}
 
   /** Las salas van aparte de `me/conversations` (ver `ListRoomsUseCase`). */
@@ -206,9 +213,37 @@ export class ConversationsController {
     @Body() cuerpo: unknown,
   ): Promise<MensajeJson> {
     const yo = exigirUsuario(usuario)
-    const { body } = validarCon(enviarMensajeSchema, cuerpo)
-    const r = await this.enviar.ejecutar(yo.id, idDeConversacion(id), body, null)
+    const { body, attachment } = validarCon(enviarMensajeSchema, cuerpo)
+    const r = await this.enviar.ejecutar(yo.id, idDeConversacion(id), body, attachment ?? null)
     return mensajeJson(r.mensaje)
+  }
+
+  /** URL firmada para subir el adjunto; la key que devuelve va luego en el envío. */
+  @Post('conversations/:id/attachment-upload-url')
+  @LimiteDeRuta(LIMITADOR_ATTACHMENTS, { ttl: 60_000, limit: 20 })
+  async urlDeSubida(
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+    @Param('id') id: string,
+    @Body() cuerpo: unknown,
+  ): Promise<{ key: string; uploadUrl: string }> {
+    const yo = exigirUsuario(usuario)
+    const { contentType, bytes } = validarCon(subidaDeAdjuntoSchema, cuerpo)
+    return await this.prepararSubida.ejecutar(yo.id, idDeConversacion(id), contentType, bytes)
+  }
+
+  /** URL de descarga de vida corta; sin acceso al mensaje, 404. */
+  @Get('conversations/:id/messages/:messageId/attachment')
+  async adjuntoDeMensaje(
+    @CurrentUser() usuario: UsuarioAutenticado | undefined,
+    @Param('id') id: string,
+    @Param('messageId') messageId: string,
+  ): Promise<{ url: string }> {
+    const yo = exigirUsuario(usuario)
+    return await this.descargarAdjunto.ejecutar(
+      yo.id,
+      idDeConversacion(id),
+      idDeConversacion(messageId),
+    )
   }
 
   @Post('conversations/:id/delivered')

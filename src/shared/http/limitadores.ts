@@ -46,6 +46,7 @@ export const LIMITADOR_VENDOR_PROFILE = 'vendor-profile'
 export const LIMITADOR_INVITE = 'invite'
 export const LIMITADOR_MESSAGES = 'messages'
 export const LIMITADOR_MOODBOARD_NOTES = 'moodboard-notes'
+export const LIMITADOR_ATTACHMENTS = 'attachments'
 
 type LimitadorDeRuta =
   | typeof LIMITADOR_RSVP
@@ -61,6 +62,7 @@ type LimitadorDeRuta =
   | typeof LIMITADOR_INVITE
   | typeof LIMITADOR_MESSAGES
   | typeof LIMITADOR_MOODBOARD_NOTES
+  | typeof LIMITADOR_ATTACHMENTS
 
 const reflector = new Reflector()
 const marca = (nombre: LimitadorDeRuta): string => `limitador-de-ruta:${nombre}`
@@ -191,6 +193,14 @@ export function crearLimitadores(limiteGlobalPorMinuto: number): ThrottlerOption
       ttl: 60_000,
       limit: 30,
       skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_MOODBOARD_NOTES),
+    },
+    // Pedir una URL de subida de adjunto: 20/min por IP. Cada una firma un PUT
+    // contra el bucket; por IP por el mismo DESIGN-GAP que `vendor-catalog`.
+    {
+      name: LIMITADOR_ATTACHMENTS,
+      ttl: 60_000,
+      limit: 20,
+      skipIf: (contexto) => !pedidoEn(contexto, LIMITADOR_ATTACHMENTS),
     },
   ]
 }

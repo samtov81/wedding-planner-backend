@@ -25,6 +25,8 @@ export interface MensajeJson {
   senderId: string
   body: string
   createdAt: string
+  /** Nunca lleva la key ni una URL: la descarga es `GET .../attachment`. */
+  attachment: { name: string; contentType: string; bytes: number } | null
 }
 
 export interface OtherMarksJson {
@@ -46,6 +48,16 @@ export const mensajeJson = (m: MensajeVista): MensajeJson => ({
   senderId: m.senderId,
   body: m.body,
   createdAt: m.createdAt.toISOString(),
+  // Campo a campo, no `m.attachment`: la vista puede llevar la key en memoria y
+  // un spread la filtraría al cable.
+  attachment:
+    m.attachment === null
+      ? null
+      : {
+          name: m.attachment.name,
+          contentType: m.attachment.contentType,
+          bytes: m.attachment.bytes,
+        },
 })
 
 /** Una sala en el cable (`GET /me/rooms`, `GET /events/:eventId/room`). */

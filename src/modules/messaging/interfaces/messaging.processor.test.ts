@@ -67,6 +67,7 @@ describe('MessagingProcessor', () => {
         senderId: PAREJA,
         body: 'hola',
         createdAt: m.createdAt.toISOString(),
+        attachment: null,
       },
     }
     expect(realtime.emitidas).toHaveLength(2)
@@ -76,6 +77,29 @@ describe('MessagingProcessor', () => {
         { destino: { userId: PAREJA }, tipo: 'message.created', payload },
       ]),
     )
+  })
+
+  it('message.created con adjunto lleva attachment y nunca la key', async () => {
+    const m = await repo.agregarMensaje(conversationId, PAREJA, '', new Date(), {
+      key: 'events/x/messages/y/secreta.pdf',
+      name: 'plano.pdf',
+      contentType: 'application/pdf',
+      bytes: 42,
+    })
+
+    await procesador.process(job(EVENTO_MENSAJE_CREADO, { conversationId, messageId: m.id }))
+
+    expect(realtime.emitidas.length).toBeGreaterThan(0)
+    for (const e of realtime.emitidas) {
+      const { message } = e.payload as { message: { attachment: unknown } }
+      expect(message.attachment).toEqual({
+        name: 'plano.pdf',
+        contentType: 'application/pdf',
+        bytes: 42,
+      })
+      expect(JSON.stringify(e.payload)).not.toContain('secreta')
+      expect(message.attachment).not.toHaveProperty('key')
+    }
   })
 
   it('no se emite a un proveedor que ya no puede ver la conversación', async () => {

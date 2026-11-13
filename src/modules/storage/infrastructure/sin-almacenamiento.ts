@@ -17,6 +17,10 @@ export class SinAlmacenamiento implements ObjectStorage {
     return Promise.reject(new AlmacenamientoNoDisponibleError())
   }
 
+  copiar(): Promise<void> {
+    return Promise.reject(new AlmacenamientoNoDisponibleError())
+  }
+
   borrar(): Promise<void> {
     return Promise.resolve()
   }

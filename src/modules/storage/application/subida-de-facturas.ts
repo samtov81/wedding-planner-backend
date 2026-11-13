@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+
 import { Inject, Injectable } from '@nestjs/common'
 
 import {
@@ -6,6 +8,7 @@ import {
   esTipoDeFactura,
   TIPOS_DE_FACTURA,
 } from '../domain/archivo-de-factura'
+import { AlmacenamientoNoDisponibleError } from '../domain/imagen'
 import { OBJECT_STORAGE, type ObjectStorage } from './object-storage.port'
 import { SubidaDirecta, type SubidaPreparada } from './subida-directa'
 
@@ -37,6 +40,21 @@ export class SubidaDeFacturas {
 
   firmarLectura(key: string, nombre: string): Promise<string | null> {
     return this.storage.firmarLectura(key, nombre)
+  }
+
+  /**
+   * Copia un objeto ya guardado (p. ej. el adjunto de un mensaje) a una key
+   * nueva bajo `prefijo`, para que la factura tenga su propio archivo y borrar
+   * el mensaje o la factura no toque al otro. El tipo lo dice el llamante (lo
+   * guardado en la fila del adjunto) y debe ser de factura.
+   */
+  async copiarDesde(origen: string, prefijo: string, contentType: string): Promise<string> {
+    if (!this.storage.disponible) throw new AlmacenamientoNoDisponibleError()
+    if (!esTipoDeFactura(contentType)) throw new ArchivoDeFacturaInvalidoError()
+    // eslint-disable-next-line security/detect-object-injection -- `esTipoDeFactura` ya acotó la clave
+    const destino = `${prefijo}/${randomUUID()}.${TIPOS_DE_FACTURA[contentType]}`
+    await this.storage.copiar(origen, destino)
+    return destino
   }
 
   borrar(key: string): Promise<void> {

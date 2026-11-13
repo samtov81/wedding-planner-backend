@@ -1,4 +1,5 @@
 import {
+  CopyObjectCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -84,6 +85,16 @@ export class R2ObjectStorage implements ObjectStorage {
       if (error instanceof NotFound) return null
       throw error
     }
+  }
+
+  async copiar(origen: string, destino: string): Promise<void> {
+    await this.client.send(
+      new CopyObjectCommand({
+        Bucket: this.config.bucket,
+        Key: destino,
+        CopySource: `${this.config.bucket}/${origen}`,
+      }),
+    )
   }
 
   async borrar(key: string): Promise<void> {

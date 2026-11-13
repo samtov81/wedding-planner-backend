@@ -30,6 +30,13 @@ export class ObjectStorageEnMemoria implements ObjectStorage {
     return Promise.resolve()
   }
 
+  copiar(origen: string, destino: string): Promise<void> {
+    const objeto = this.objetos.get(origen)
+    if (objeto === undefined) return Promise.reject(new Error(`No existe el origen ${origen}`))
+    this.objetos.set(destino, { ...objeto })
+    return Promise.resolve()
+  }
+
   simularSubida(key: string, contentType = 'image/jpeg', bytes = 1024): void {
     this.objetos.set(key, { contentType, bytes })
   }

@@ -345,17 +345,34 @@ describe('adjuntos de mensajería e2e', () => {
   })
 
   describe('sala del evento', () => {
-    it('la pareja envía con adjunto: el planner, quien entra después y no el revocado lo descargan', async () => {
+    it('la pareja envía con adjunto: el planner y quien entra después lo descargan', async () => {
       const salaId = await abrirSala('pareja')
-      await membresia('revocado', 'ACTIVE')
-      await membresia('revocado', 'REVOKED')
       const m = await enviarPdf(salaId, 'pareja', 'menu.pdf', 'el menú')
       expect(m.body).toBe('el menú')
       await membresia('tarde', 'ACTIVE')
 
       await descargar(salaId, m.id, 'planner').expect(200)
       await descargar(salaId, m.id, 'tarde').expect(200)
-      await descargar(salaId, m.id, 'revocado').expect(404)
+    })
+
+    it('quien salió de la sala descarga el adjunto anterior a su salida y no el posterior (visibleHasta)', async () => {
+      // `revocado` es participante de verdad: abre la sala y marca leído antes de salir.
+      await membresia('revocado', 'ACTIVE')
+      const salaId = await abrirSala('revocado')
+      const inicial = await enviarPdf(salaId, 'pareja', 'inicial.pdf', 'bienvenidos')
+      await request(server)
+        .post(`/conversations/${salaId}/read`)
+        .set(como('revocado'))
+        .send({ upTo: inicial.id })
+        .expect(204)
+      const antes = await enviarPdf(salaId, 'pareja', 'antes.pdf')
+
+      await membresia('revocado', 'REVOKED')
+      const despues = await enviarPdf(salaId, 'pareja', 'despues.pdf')
+
+      await descargar(salaId, antes.id, 'revocado').expect(200)
+      await descargar(salaId, despues.id, 'revocado').expect(404)
+      await descargar(salaId, despues.id, 'planner').expect(200)
     })
   })
 
@@ -426,15 +443,19 @@ describe('adjuntos de mensajería e2e', () => {
   describe('factura desde el chat', () => {
     it('el creador convierte el adjunto de P en factura de un gasto PENDING que P no ve', async () => {
       const conv = await abrirUnoAUno('creador', 'provP')
-      const m = await enviarPdf(conv, 'provP')
       const socketP = await conectarComo('provP', true)
+      // El eco del propio envío de P llega por el worker: se espera antes de grabar,
+      // para que lo grabado sea sólo lo que provoque la conversión y el gasto.
+      const eco = esperar(socketP, 'message.created')
+      const m = await enviarPdf(conv, 'provP')
+      await eco
+      const recibidosP = grabar(socketP)
 
       const r = await facturaDeMensaje('creador', m.id).expect(201)
       const factura = r.body as FacturaDeMensajeCuerpo
       expect(factura.key.startsWith(`events/${eventoId}/invoices/`)).toBe(true)
       expect(factura.suggestedEventVendorId).toBe(contratacionP)
 
-      const recibidosP = grabar(socketP)
       const gasto = await request(server)
         .post(`/events/${eventoId}/expenses`)
         .set(como('creador'))

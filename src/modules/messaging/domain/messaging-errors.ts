@@ -14,6 +14,28 @@ export class MensajeInvalidoError extends UnprocessableError {
 }
 
 /**
+ * El nombre del adjunto no sirve: queda vacío al recortar, pasa de 200
+ * caracteres o lleva `/` o `\`. Es la segunda barrera tras el esquema Zod. Se
+ * rechazan las barras (en vez de limpiarlas) porque el nombre se muestra y se
+ * reutiliza al convertir en factura; cambiarlo en silencio sorprendería.
+ */
+export class NombreDeAdjuntoInvalidoError extends UnprocessableError {
+  constructor(message = 'El nombre del adjunto debe tener entre 1 y 200 caracteres, sin / ni \\') {
+    super(message, 'INVALID_ATTACHMENT_NAME')
+  }
+}
+
+/**
+ * Se intentó adjuntar un archivo en una conversación que no admite adjuntos
+ * (la de ficha de proveedor, `PROFILE`). Sólo se adjunta en las de evento.
+ */
+export class AdjuntosNoPermitidosError extends UnprocessableError {
+  constructor() {
+    super('Esta conversación no admite adjuntos', 'ATTACHMENTS_NOT_ALLOWED')
+  }
+}
+
+/**
  * La conversación no existe o el usuario no es participante: ambos casos
  * responden igual para que un id ajeno no confirme que existe.
  */

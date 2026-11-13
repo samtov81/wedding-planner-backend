@@ -4,11 +4,13 @@ import {
   avanzar,
   claveDePar,
   MAX_CARACTERES_MENSAJE,
+  MAX_NOMBRE_ADJUNTO,
   normalizarCuerpo,
+  normalizarNombreDeAdjunto,
   parPermitido,
   type RolEnEvento,
 } from './conversacion'
-import { MensajeInvalidoError } from './messaging-errors'
+import { MensajeInvalidoError, NombreDeAdjuntoInvalidoError } from './messaging-errors'
 
 const E = '11111111-1111-1111-1111-111111111111'
 const A = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
@@ -49,6 +51,53 @@ describe('normalizarCuerpo', () => {
     expect(normalizarCuerpo('x'.repeat(2000))).toHaveLength(2000)
     expect(() => normalizarCuerpo('x'.repeat(2001))).toThrow(MensajeInvalidoError)
   })
+})
+
+describe('normalizarCuerpo con adjunto', () => {
+  it('admite un cuerpo vacío cuando hay adjunto', () => {
+    expect(normalizarCuerpo('  ', true)).toBe('')
+  })
+
+  it('sin adjunto sigue rechazando el cuerpo vacío', () => {
+    expect(() => normalizarCuerpo('  ')).toThrow(MensajeInvalidoError)
+  })
+
+  it('con adjunto mantiene el tope de 2000 caracteres', () => {
+    expect(() => normalizarCuerpo('x'.repeat(2001), true)).toThrow(MensajeInvalidoError)
+    expect(normalizarCuerpo('x'.repeat(2000), true)).toHaveLength(2000)
+  })
+})
+
+describe('normalizarNombreDeAdjunto', () => {
+  it('recorta los espacios de los extremos', () => {
+    expect(normalizarNombreDeAdjunto(' factura.pdf ')).toBe('factura.pdf')
+  })
+
+  it('acepta caracteres no latinos y emojis', () => {
+    expect(normalizarNombreDeAdjunto('факту́ра 📎.pdf')).toBe('факту́ра 📎.pdf')
+  })
+
+  it('acepta 200 caracteres y rechaza 201', () => {
+    expect(MAX_NOMBRE_ADJUNTO).toBe(200)
+    expect(normalizarNombreDeAdjunto('a'.repeat(200))).toHaveLength(200)
+    expect(() => normalizarNombreDeAdjunto('a'.repeat(201))).toThrow(NombreDeAdjuntoInvalidoError)
+  })
+
+  it.each(['', '   ', '../x.pdf', 'a\\b.pdf'])(
+    'rechaza %j con INVALID_ATTACHMENT_NAME',
+    (nombre) => {
+      const error = (() => {
+        try {
+          normalizarNombreDeAdjunto(nombre)
+        } catch (e) {
+          return e
+        }
+        return undefined
+      })()
+      expect(error).toBeInstanceOf(NombreDeAdjuntoInvalidoError)
+      expect(error).toMatchObject({ code: 'INVALID_ATTACHMENT_NAME', httpStatus: 422 })
+    },
+  )
 })
 
 describe('marcas', () => {

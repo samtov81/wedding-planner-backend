@@ -15,6 +15,7 @@ import {
 } from '../domain/messaging-errors'
 import { ESPERA_TRAS_RECHAZO_MS } from '../domain/perfil'
 import type {
+  AdjuntoGuardado,
   ConversacionDePerfilVista,
   ConversacionVista,
   ConversationRepository,
@@ -133,8 +134,8 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
     body: string,
     min: number,
   ): Promise<Par> {
-    const r = await real.agregarMensaje(conv.real, senderId, body, minuto(min))
-    const d = await doble.agregarMensaje(conv.doble, senderId, body, minuto(min))
+    const r = await real.agregarMensaje(conv.real, senderId, body, minuto(min), null)
+    const d = await doble.agregarMensaje(conv.doble, senderId, body, minuto(min), null)
     return { real: r.id, doble: d.id }
   }
 
@@ -515,8 +516,8 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
     min: number,
     cuerpos: Map<string, string>,
   ): Promise<Par> {
-    const r = await real.agregarMensajeDeSala(sala.real, senderId, body, minuto(min))
-    const d = await doble.agregarMensajeDeSala(sala.doble, senderId, body, minuto(min))
+    const r = await real.agregarMensajeDeSala(sala.real, senderId, body, minuto(min), null)
+    const d = await doble.agregarMensajeDeSala(sala.doble, senderId, body, minuto(min), null)
     expect([...r.destinatarios].sort()).toEqual([...d.destinatarios].sort())
     cuerpos.set(r.mensaje.id, body)
     cuerpos.set(d.mensaje.id, body)
@@ -1241,5 +1242,119 @@ describe('Paridad: ConversationRepositoryEnMemoria vs PrismaConversationReposito
       expect((await repo.perfiles(parejaId)).items.map((v) => v.id)).toEqual([id])
       expect(await repo.buscarPerfil(directa.id, parejaId)).toBeNull()
     }
+  })
+
+  describe('adjuntos', () => {
+    const adjunto = (key: string, name = 'presupuesto.pdf'): AdjuntoGuardado => ({
+      key,
+      name,
+      contentType: 'application/pdf',
+      bytes: 2048,
+    })
+    const vista = { name: 'presupuesto.pdf', contentType: 'application/pdf', bytes: 2048 }
+
+    it('un mensaje 1:1 con adjunto sale en mensajes y en el lastMessage de la bandeja, sin key', async () => {
+      const eventId = await nuevoEvento(true)
+      await miembro(eventId, parejaId, 'COUPLE')
+      await miembro(eventId, plannerId, 'PLANNER')
+      const conv = await abrirEnAmbos(eventId, parejaId, plannerId)
+      await enviarEnAmbos(conv, plannerId, 'sólo texto', 1)
+      for (const [quien, repo] of implementaciones()) {
+        await repo.agregarMensaje(
+          idDe(conv, quien),
+          plannerId,
+          '',
+          minuto(2),
+          adjunto(`events/${eventId}/messages/${quien}/a.pdf`),
+        )
+      }
+
+      const resultados: unknown[] = []
+      for (const [quien, repo] of implementaciones()) {
+        const pagina = await repo.mensajes(idDe(conv, quien), { desde: null, limite: 10 })
+        expect(pagina.items.map((m) => [m.body, m.attachment])).toEqual([
+          ['', vista],
+          ['sólo texto', null],
+        ])
+        expect(JSON.stringify(pagina.items)).not.toContain('events/')
+        const bandeja = await repo.bandeja(parejaId)
+        expect(bandeja.items[0]?.lastMessage?.attachment).toEqual(vista)
+        expect(JSON.stringify(bandeja)).not.toContain('events/')
+        resultados.push(sinVolatiles(bandeja.items[0] as ConversacionVista))
+      }
+      expect(resultados[1]).toEqual(resultados[0])
+    })
+
+    it('un mensaje de sala con adjunto sale en mensajes y en salas', async () => {
+      const eventId = await nuevoEvento(true)
+      await miembro(eventId, parejaId, 'COUPLE')
+      await miembro(eventId, plannerId, 'PLANNER')
+      const sala = await abrirSalaEnAmbos(eventId, parejaId)
+      if (sala === null) throw new Error('sin sala')
+      for (const [quien, repo] of implementaciones()) {
+        await repo.agregarMensajeDeSala(
+          idDe(sala, quien),
+          parejaId,
+          'mira',
+          minuto(1),
+          adjunto(`events/${eventId}/messages/${quien}/s.pdf`),
+        )
+      }
+      for (const [quien, repo] of implementaciones()) {
+        const pagina = await repo.mensajes(idDe(sala, quien), { desde: null, limite: 10 })
+        expect(pagina.items.map((m) => [m.body, m.attachment])).toEqual([['mira', vista]])
+        const salas = await repo.salas(plannerId)
+        expect(salas.items[0]?.lastMessage?.attachment).toEqual(vista)
+        expect(JSON.stringify(salas)).not.toContain('events/')
+        const tope = await repo.mensaje(idDe(sala, quien), pagina.items[0]?.id ?? '')
+        expect(tope?.attachment).toEqual(vista)
+      }
+    })
+
+    it('adjuntoDe devuelve key, evento y remitente; sin adjunto o inexistente → null', async () => {
+      const eventId = await nuevoEvento(true)
+      await miembro(eventId, parejaId, 'COUPLE')
+      await miembro(eventId, plannerId, 'PLANNER')
+      const conv = await abrirEnAmbos(eventId, parejaId, plannerId)
+      const sinAdjunto = await enviarEnAmbos(conv, parejaId, 'hola', 1)
+      for (const [quien, repo] of implementaciones()) {
+        const key = `events/${eventId}/messages/${quien}/k.pdf`
+        const m = await repo.agregarMensaje(
+          idDe(conv, quien),
+          plannerId,
+          'con archivo',
+          minuto(2),
+          adjunto(key),
+        )
+        expect(await repo.adjuntoDe(m.id)).toEqual({
+          ...vista,
+          key,
+          messageId: m.id,
+          conversationId: idDe(conv, quien),
+          eventId,
+          senderId: plannerId,
+          createdAt: minuto(2),
+        })
+        expect(await repo.adjuntoDe(idDe(sinAdjunto, quien))).toBeNull()
+        expect(await repo.adjuntoDe(randomUUID())).toBeNull()
+      }
+    })
+
+    it('adjuntoDe en una conversación PROFILE devuelve eventId null', async () => {
+      const eventId = await nuevoEvento(true)
+      await miembro(eventId, parejaId, 'COUPLE')
+      await proveedor(eventId, proveedorId, true)
+      const conv = await solicitarEnAmbos(parejaId, proveedorId, 'hola', 1, true)
+      for (const [quien, repo] of implementaciones()) {
+        const m = await repo.agregarMensaje(
+          idDe(conv, quien),
+          parejaId,
+          'x',
+          minuto(2),
+          adjunto(`k/${quien}/p.pdf`),
+        )
+        expect((await repo.adjuntoDe(m.id))?.eventId).toBeNull()
+      }
+    })
   })
 })

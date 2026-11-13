@@ -63,14 +63,20 @@ export class SendMessageUseCase {
 
     const cuerpo = normalizarCuerpo(texto)
     if (localizada.tipo === 'sala') {
-      const r = await this.repo.agregarMensajeDeSala(conversationId, userId, cuerpo, new Date())
+      const r = await this.repo.agregarMensajeDeSala(
+        conversationId,
+        userId,
+        cuerpo,
+        new Date(),
+        null,
+      )
       await encolarAvisoMensaje(this.cola, this.registro, {
         conversationId,
         messageId: r.mensaje.id,
       })
       return r
     }
-    const mensaje = await this.repo.agregarMensaje(conversationId, userId, cuerpo, new Date())
+    const mensaje = await this.repo.agregarMensaje(conversationId, userId, cuerpo, new Date(), null)
     await encolarAvisoMensaje(this.cola, this.registro, { conversationId, messageId: mensaje.id })
     const participantes = await this.repo.participantes(conversationId)
     return { mensaje, destinatarios: participantes.filter((p) => p !== userId) }

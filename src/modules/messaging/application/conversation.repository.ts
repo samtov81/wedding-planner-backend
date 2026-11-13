@@ -11,11 +11,38 @@ export interface Contacto {
   role: RolEnEvento
 }
 
+/**
+ * Lo que el cliente ve de un adjunto: nunca la key del objeto ni una URL (la
+ * key es de la infraestructura; el archivo se pide aparte, con acceso).
+ */
+export interface AdjuntoVista {
+  name: string
+  contentType: string
+  bytes: number
+}
+
+/** Lo que se guarda: la vista más la key del objeto en el almacén. */
+export interface AdjuntoGuardado extends AdjuntoVista {
+  key: string
+}
+
+/** Un adjunto con el contexto que hace falta para decidir quién puede pedirlo. */
+export interface AdjuntoDeMensaje extends AdjuntoGuardado {
+  messageId: string
+  conversationId: string
+  /** Null en una conversación `PROFILE`, que no pertenece a ningún evento. */
+  eventId: string | null
+  senderId: string
+  createdAt: Date
+}
+
 export interface MensajeVista {
   id: string
   conversationId: string
   senderId: string
   body: string
+  /** Sin la key: ver `AdjuntoVista`. Null si el mensaje no lleva adjunto. */
+  attachment: AdjuntoVista | null
   createdAt: Date
 }
 
@@ -153,6 +180,7 @@ export interface ConversationRepository {
     senderId: string,
     body: string,
     ahora: Date,
+    adjunto: AdjuntoGuardado | null,
   ): Promise<MensajeVista>
 
   /** Un mensaje por id, acotado a su conversación; null si no existe ahí. */
@@ -196,7 +224,15 @@ export interface ConversationRepository {
     senderId: string,
     body: string,
     ahora: Date,
+    adjunto: AdjuntoGuardado | null,
   ): Promise<{ mensaje: MensajeVista; destinatarios: string[] }>
+
+  /**
+   * El adjunto de un mensaje con su key y el evento al que pertenece; null si
+   * el mensaje no existe o no lleva adjunto. No decide quién puede verlo: eso
+   * es del caso de uso.
+   */
+  adjuntoDe(messageId: string): Promise<AdjuntoDeMensaje | null>
 
   /** Las marcas de cada participante de la sala, con su nombre y su rol. */
   marcasDeSala(conversationId: string): Promise<MarcaDeMiembro[]>

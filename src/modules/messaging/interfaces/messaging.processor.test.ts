@@ -55,7 +55,7 @@ describe('MessagingProcessor', () => {
   })
 
   it('message.created llega al otro participante y también al emisor (otras sesiones)', async () => {
-    const m = await repo.agregarMensaje(conversationId, PAREJA, 'hola', new Date())
+    const m = await repo.agregarMensaje(conversationId, PAREJA, 'hola', new Date(), null)
 
     await procesador.process(job(EVENTO_MENSAJE_CREADO, { conversationId, messageId: m.id }))
 
@@ -79,7 +79,7 @@ describe('MessagingProcessor', () => {
   })
 
   it('no se emite a un proveedor que ya no puede ver la conversación', async () => {
-    const m = await repo.agregarMensaje(conversationId, PAREJA, 'hola', new Date())
+    const m = await repo.agregarMensaje(conversationId, PAREJA, 'hola', new Date(), null)
     repo.registrarProveedor(EVENTO, PROV, 'Foto', false)
 
     await procesador.process(job(EVENTO_MENSAJE_CREADO, { conversationId, messageId: m.id }))
@@ -89,7 +89,7 @@ describe('MessagingProcessor', () => {
   })
 
   it('message.receipt llega al otro participante con las marcas actuales', async () => {
-    const m = await repo.agregarMensaje(conversationId, PAREJA, 'hola', new Date())
+    const m = await repo.agregarMensaje(conversationId, PAREJA, 'hola', new Date(), null)
     await repo.marcar(conversationId, PROV, 'delivered', m.id)
     await repo.marcar(conversationId, PROV, 'read', m.id)
 
@@ -106,7 +106,7 @@ describe('MessagingProcessor', () => {
   })
 
   it('message.receipt no se emite a quien ya no puede ver la conversación', async () => {
-    const m = await repo.agregarMensaje(conversationId, PAREJA, 'hola', new Date())
+    const m = await repo.agregarMensaje(conversationId, PAREJA, 'hola', new Date(), null)
     await repo.marcar(conversationId, PAREJA, 'read', m.id)
     repo.registrarProveedor(EVENTO, PROV, 'Foto', false)
 
@@ -135,7 +135,7 @@ describe('MessagingProcessor', () => {
   })
 
   it('los errores de emisión salen, para que BullMQ reintente', async () => {
-    const m = await repo.agregarMensaje(conversationId, PAREJA, 'hola', new Date())
+    const m = await repo.agregarMensaje(conversationId, PAREJA, 'hola', new Date(), null)
     realtime.fallarProximaEmision(new Error('redis caído'))
 
     await expect(
@@ -154,7 +154,13 @@ describe('MessagingProcessor', () => {
     })
 
     it('message.created va al remitente y a sus destinatarios, nunca al proveedor', async () => {
-      const { mensaje } = await repo.agregarMensajeDeSala(salaId, PAREJA, 'hola', new Date(1000))
+      const { mensaje } = await repo.agregarMensajeDeSala(
+        salaId,
+        PAREJA,
+        'hola',
+        new Date(1000),
+        null,
+      )
 
       await procesador.process(
         job(EVENTO_MENSAJE_CREADO, { conversationId: salaId, messageId: mensaje.id }),
@@ -166,10 +172,16 @@ describe('MessagingProcessor', () => {
     })
 
     it('un participante revocado no recibe un mensaje posterior a su salida', async () => {
-      await repo.agregarMensajeDeSala(salaId, PAREJA, 'antes', new Date(1000))
+      await repo.agregarMensajeDeSala(salaId, PAREJA, 'antes', new Date(1000), null)
       repo.registrarMiembro(EVENTO, PLANNER, 'PLANNER', 'REVOKED', 'Planner')
       repo.registrarMiembro(EVENTO, TARDE, 'PLANNER', 'ACTIVE', 'Tarde')
-      const { mensaje } = await repo.agregarMensajeDeSala(salaId, PAREJA, 'después', new Date(2000))
+      const { mensaje } = await repo.agregarMensajeDeSala(
+        salaId,
+        PAREJA,
+        'después',
+        new Date(2000),
+        null,
+      )
 
       await procesador.process(
         job(EVENTO_MENSAJE_CREADO, { conversationId: salaId, messageId: mensaje.id }),
@@ -181,7 +193,13 @@ describe('MessagingProcessor', () => {
     })
 
     it('message.receipt lleva las marcas de quien marcó y no le llega a él', async () => {
-      const { mensaje } = await repo.agregarMensajeDeSala(salaId, PAREJA, 'hola', new Date(1000))
+      const { mensaje } = await repo.agregarMensajeDeSala(
+        salaId,
+        PAREJA,
+        'hola',
+        new Date(1000),
+        null,
+      )
       await repo.marcar(salaId, PLANNER, 'read', mensaje.id)
 
       await procesador.process(

@@ -14,6 +14,8 @@ import type {
   MarcaDeMiembro,
   MarcasDeParticipante,
   MensajeVista,
+  AdjuntoDeMensaje,
+  AdjuntoGuardado,
   SalaVista,
 } from '../application/conversation.repository'
 import { avanzar, claveDePar, type Marca, type RolEnEvento } from '../domain/conversacion'
@@ -284,10 +286,11 @@ export class PrismaConversationRepository implements ConversationRepository {
     senderId: string,
     body: string,
     ahora: Date,
+    adjunto: AdjuntoGuardado | null,
   ): Promise<MensajeVista> {
     return await enTransaccion(this.prisma, async (tx) => {
       const fila = await tx.message.create({
-        data: { conversationId, senderId, body, createdAt: ahora },
+        data: { conversationId, senderId, body, createdAt: ahora, ...columnasDeAdjunto(adjunto) },
       })
       await tx.conversation.updateMany({
         where: {
@@ -298,6 +301,43 @@ export class PrismaConversationRepository implements ConversationRepository {
       })
       return aMensaje(fila)
     })
+  }
+
+  async adjuntoDe(messageId: string): Promise<AdjuntoDeMensaje | null> {
+    const fila = await clienteDe(this.prisma).message.findUnique({
+      where: { id: messageId },
+      select: {
+        id: true,
+        conversationId: true,
+        senderId: true,
+        createdAt: true,
+        attachmentKey: true,
+        attachmentName: true,
+        attachmentType: true,
+        attachmentBytes: true,
+        conversation: { select: { eventId: true } },
+      },
+    })
+    if (
+      fila === null ||
+      fila.attachmentKey === null ||
+      fila.attachmentName === null ||
+      fila.attachmentType === null ||
+      fila.attachmentBytes === null
+    ) {
+      return null
+    }
+    return {
+      key: fila.attachmentKey,
+      name: fila.attachmentName,
+      contentType: fila.attachmentType,
+      bytes: fila.attachmentBytes,
+      messageId: fila.id,
+      conversationId: fila.conversationId,
+      eventId: fila.conversation.eventId,
+      senderId: fila.senderId,
+      createdAt: fila.createdAt,
+    }
   }
 
   async mensaje(conversationId: string, messageId: string): Promise<MensajeVista | null> {
@@ -428,6 +468,7 @@ export class PrismaConversationRepository implements ConversationRepository {
     senderId: string,
     body: string,
     ahora: Date,
+    adjunto: AdjuntoGuardado | null,
   ): Promise<{ mensaje: MensajeVista; destinatarios: string[] }> {
     return await enTransaccion(this.prisma, async (tx) => {
       const sala = await tx.conversation.findFirstOrThrow({
@@ -441,7 +482,7 @@ export class PrismaConversationRepository implements ConversationRepository {
       })
       const destinatarios = miembros.map((m) => m.userId)
       const fila = await tx.message.create({
-        data: { conversationId, senderId, body, createdAt: ahora },
+        data: { conversationId, senderId, body, createdAt: ahora, ...columnasDeAdjunto(adjunto) },
       })
       if (destinatarios.length > 0) {
         await tx.messageRecipient.createMany({
@@ -665,7 +706,13 @@ export class PrismaConversationRepository implements ConversationRepository {
         })
         conversationId = fila.id
       }
-      const mensaje = await this.agregarMensaje(conversationId, e.solicitante, e.cuerpo, e.ahora)
+      const mensaje = await this.agregarMensaje(
+        conversationId,
+        e.solicitante,
+        e.cuerpo,
+        e.ahora,
+        null,
+      )
       return { conversationId, mensaje, estado: decision.estado }
     })
   }
@@ -855,7 +902,8 @@ export class PrismaConversationRepository implements ConversationRepository {
   private async topesDeLectura(userId: string, ids: string[]): Promise<Map<string, MensajeFila>> {
     const filas = await clienteDe(this.prisma).$queryRaw<MensajeFila[]>`
       SELECT DISTINCT ON (m."conversationId")
-        m."id", m."conversationId", m."senderId", m."body", m."createdAt"
+        m."id", m."conversationId", m."senderId", m."body", m."createdAt",
+        m."attachmentName", m."attachmentType", m."attachmentBytes"
       FROM "messages" m
       WHERE m."conversationId" = ANY(${ids}::uuid[])
         AND (
@@ -995,10 +1043,12 @@ export class PrismaConversationRepository implements ConversationRepository {
    */
   private async ultimosMensajes(ids: string[]): Promise<Map<string, MensajeFila>> {
     const filas = await clienteDe(this.prisma).$queryRaw<MensajeFila[]>`
-      SELECT l."id", l."conversationId", l."senderId", l."body", l."createdAt"
+      SELECT l."id", l."conversationId", l."senderId", l."body", l."createdAt",
+        l."attachmentName", l."attachmentType", l."attachmentBytes"
       FROM unnest(${ids}::uuid[]) AS c(id)
       CROSS JOIN LATERAL (
-        SELECT m."id", m."conversationId", m."senderId", m."body", m."createdAt"
+        SELECT m."id", m."conversationId", m."senderId", m."body", m."createdAt",
+        m."attachmentName", m."attachmentType", m."attachmentBytes"
         FROM "messages" m
         WHERE m."conversationId" = c.id
         ORDER BY m."createdAt" DESC, m."id" DESC
@@ -1125,6 +1175,29 @@ function aMensaje(fila: MensajeFila): MensajeVista {
     conversationId: fila.conversationId,
     senderId: fila.senderId,
     body: fila.body,
+    // Las tres columnas van o no van juntas (CHECK `messages_adjunto_completo`).
+    attachment:
+      fila.attachmentName === null || fila.attachmentType === null || fila.attachmentBytes === null
+        ? null
+        : {
+            name: fila.attachmentName,
+            contentType: fila.attachmentType,
+            bytes: fila.attachmentBytes,
+          },
     createdAt: fila.createdAt,
+  }
+}
+
+function columnasDeAdjunto(a: AdjuntoGuardado | null): {
+  attachmentKey: string | null
+  attachmentName: string | null
+  attachmentType: string | null
+  attachmentBytes: number | null
+} {
+  return {
+    attachmentKey: a?.key ?? null,
+    attachmentName: a?.name ?? null,
+    attachmentType: a?.contentType ?? null,
+    attachmentBytes: a?.bytes ?? null,
   }
 }

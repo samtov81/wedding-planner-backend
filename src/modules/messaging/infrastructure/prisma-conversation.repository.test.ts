@@ -79,8 +79,20 @@ describe('PrismaConversationRepository', () => {
 
   it('dos marcados concurrentes no retroceden la marca', async () => {
     const { id } = await repo.abrir(eventId, aId, bId)
-    const viejo = await repo.agregarMensaje(id, bId, 'viejo', new Date('2026-03-01T00:00:00Z'))
-    const nuevo = await repo.agregarMensaje(id, bId, 'nuevo', new Date('2026-03-01T00:05:00Z'))
+    const viejo = await repo.agregarMensaje(
+      id,
+      bId,
+      'viejo',
+      new Date('2026-03-01T00:00:00Z'),
+      null,
+    )
+    const nuevo = await repo.agregarMensaje(
+      id,
+      bId,
+      'nuevo',
+      new Date('2026-03-01T00:05:00Z'),
+      null,
+    )
 
     await Promise.all([
       repo.marcar(id, aId, 'read', nuevo.id),
@@ -100,7 +112,7 @@ describe('PrismaConversationRepository', () => {
     const { reabierta, mensaje } = await unidad.ejecutar(async () => {
       const reabierta = await repo.abrir(eventId, bId, aId)
       // Otra escritura en la misma transacción: falla si ésta quedó abortada.
-      const mensaje = await repo.agregarMensaje(existente.id, aId, 'tras abrir', new Date())
+      const mensaje = await repo.agregarMensaje(existente.id, aId, 'tras abrir', new Date(), null)
       return { reabierta, mensaje }
     })
 
@@ -116,7 +128,7 @@ describe('PrismaConversationRepository', () => {
       Array.from({ length: 4 }, () =>
         unidad.ejecutar(async () => {
           const r = await repo.abrir(otroEvento.id, aId, bId)
-          await repo.agregarMensaje(r.id, aId, 'hola', new Date())
+          await repo.agregarMensaje(r.id, aId, 'hola', new Date(), null)
           return r
         }),
       ),

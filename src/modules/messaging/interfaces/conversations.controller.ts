@@ -207,7 +207,7 @@ export class ConversationsController {
   ): Promise<MensajeJson> {
     const yo = exigirUsuario(usuario)
     const { body } = validarCon(enviarMensajeSchema, cuerpo)
-    const r = await this.enviar.ejecutar(yo.id, idDeConversacion(id), body)
+    const r = await this.enviar.ejecutar(yo.id, idDeConversacion(id), body, null)
     return mensajeJson(r.mensaje)
   }
 

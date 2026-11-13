@@ -1,4 +1,6 @@
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
+import { SubidaDeAdjuntos } from '@/modules/storage/application/subida-de-adjuntos'
+import { ObjectStorageEnMemoria } from '@/modules/storage/infrastructure/object-storage.fake'
 
 import { ConversationRepositoryEnMemoria } from '../infrastructure/conversation.repository.fake'
 import {
@@ -28,12 +30,14 @@ function escenario() {
   repo.registrarMiembro(EVENTO, PLANNER, 'PLANNER', 'ACTIVE', 'Planner')
   repo.registrarProveedor(EVENTO, PROV, 'Foto', true)
   const cola = new InMemoryQueueAdapter()
+  const almacen = new ObjectStorageEnMemoria()
   return {
     repo,
     cola,
+    almacen,
     abrirSala: new OpenRoomUseCase(repo),
     salas: new ListRoomsUseCase(repo),
-    enviar: new SendMessageUseCase(repo, cola),
+    enviar: new SendMessageUseCase(repo, cola, new SubidaDeAdjuntos(almacen)),
     marcar: new MarkConversationUseCase(repo, cola),
     mensajes: new ListMessagesUseCase(repo),
     lectores: new ListRoomReadersUseCase(repo),
@@ -72,7 +76,7 @@ describe('casos de uso de la sala del evento', () => {
   it('enviar fija los destinatarios sin el proveedor y encola el aviso', async () => {
     const { abrirSala, enviar, cola } = escenario()
     const { id } = await abrirSala.ejecutar(PAREJA, EVENTO)
-    const r = await enviar.ejecutar(PAREJA, id, '  hola  ')
+    const r = await enviar.ejecutar(PAREJA, id, '  hola  ', null)
     expect(r.mensaje.body).toBe('hola')
     expect(r.destinatarios).toEqual([PLANNER])
     expect(cola.encolados.map((j) => j.nombre)).toEqual(['message.created'])
@@ -81,12 +85,12 @@ describe('casos de uso de la sala del evento', () => {
   it('un revocado no escribe y no marca un mensaje posterior a su salida', async () => {
     const { repo, abrirSala, enviar, marcar } = escenario()
     const { id } = await abrirSala.ejecutar(PAREJA, EVENTO)
-    const antes = await enviar.ejecutar(PAREJA, id, 'antes')
+    const antes = await enviar.ejecutar(PAREJA, id, 'antes', null)
     repo.registrarMiembro(EVENTO, PLANNER, 'PLANNER', 'REVOKED', 'Planner')
     avanzar()
-    const despues = await enviar.ejecutar(PAREJA, id, 'después')
+    const despues = await enviar.ejecutar(PAREJA, id, 'después', null)
 
-    await expect(enviar.ejecutar(PLANNER, id, 'hola')).rejects.toBeInstanceOf(
+    await expect(enviar.ejecutar(PLANNER, id, 'hola', null)).rejects.toBeInstanceOf(
       ConversacionSoloLecturaError,
     )
     await expect(marcar.ejecutar(PLANNER, id, 'read', despues.mensaje.id)).rejects.toBeInstanceOf(
@@ -99,10 +103,10 @@ describe('casos de uso de la sala del evento', () => {
   it('un revocado sólo ve los mensajes hasta su salida', async () => {
     const { repo, abrirSala, enviar, mensajes } = escenario()
     const { id } = await abrirSala.ejecutar(PAREJA, EVENTO)
-    await enviar.ejecutar(PAREJA, id, 'antes')
+    await enviar.ejecutar(PAREJA, id, 'antes', null)
     repo.registrarMiembro(EVENTO, PLANNER, 'PLANNER', 'REVOKED', 'Planner')
     avanzar()
-    await enviar.ejecutar(PAREJA, id, 'después')
+    await enviar.ejecutar(PAREJA, id, 'después', null)
 
     const r = await mensajes.ejecutar(PLANNER, id, { desde: null, limite: 10 })
     expect(r.pagina.items.map((m) => m.body)).toEqual(['antes'])
@@ -111,7 +115,7 @@ describe('casos de uso de la sala del evento', () => {
   it('un ACTIVE que entró tarde y nunca abrió la sala puede marcar', async () => {
     const { repo, abrirSala, enviar, marcar } = escenario()
     const { id } = await abrirSala.ejecutar(PAREJA, EVENTO)
-    const m = await enviar.ejecutar(PAREJA, id, 'historial')
+    const m = await enviar.ejecutar(PAREJA, id, 'historial', null)
     repo.registrarMiembro(EVENTO, TARDE, 'PLANNER', 'ACTIVE', 'Tarde')
 
     const r = await marcar.ejecutar(TARDE, id, 'read', m.mensaje.id)
@@ -122,7 +126,7 @@ describe('casos de uso de la sala del evento', () => {
     const { repo, abrirSala, enviar, mensajes } = escenario()
     const { id } = await abrirSala.ejecutar(PAREJA, EVENTO)
     repo.registrarMiembro(EVENTO, 'u-revocado', 'PLANNER', 'ACTIVE', 'Revocado')
-    await enviar.ejecutar(PAREJA, id, 'hola')
+    await enviar.ejecutar(PAREJA, id, 'hola', null)
     repo.registrarMiembro(EVENTO, 'u-revocado', 'PLANNER', 'REVOKED', 'Revocado')
     repo.registrarMiembro(EVENTO, TARDE, 'PLANNER', 'ACTIVE', 'Tarde')
 
@@ -140,8 +144,8 @@ describe('casos de uso de la sala del evento', () => {
   it('mensajes de sala: N de M sólo en mis mensajes y sube al leer', async () => {
     const { abrirSala, enviar, marcar, mensajes } = escenario()
     const { id } = await abrirSala.ejecutar(PAREJA, EVENTO)
-    const mio = await enviar.ejecutar(PAREJA, id, 'mío')
-    const ajeno = await enviar.ejecutar(PLANNER, id, 'ajeno')
+    const mio = await enviar.ejecutar(PAREJA, id, 'mío', null)
+    const ajeno = await enviar.ejecutar(PLANNER, id, 'ajeno', null)
 
     const antes = await mensajes.ejecutar(PAREJA, id, { desde: null, limite: 10 })
     if (antes.tipo !== 'sala') throw new Error('debía ser sala')
@@ -163,7 +167,7 @@ describe('casos de uso de la sala del evento', () => {
     const { repo, abrirSala, enviar, marcar, lectores } = escenario()
     repo.registrarMiembro(EVENTO, TARDE, 'PLANNER', 'ACTIVE', 'Tarde')
     const { id } = await abrirSala.ejecutar(PAREJA, EVENTO)
-    const m = await enviar.ejecutar(PAREJA, id, 'hola')
+    const m = await enviar.ejecutar(PAREJA, id, 'hola', null)
     await marcar.ejecutar(PLANNER, id, 'read', m.mensaje.id)
 
     expect(await lectores.ejecutar(PAREJA, id, m.mensaje.id)).toEqual({
@@ -178,7 +182,7 @@ describe('casos de uso de la sala del evento', () => {
   it('salas: lista la del evento con su unreadTotal', async () => {
     const { abrirSala, enviar, salas } = escenario()
     const { id } = await abrirSala.ejecutar(PAREJA, EVENTO)
-    await enviar.ejecutar(PAREJA, id, 'hola')
+    await enviar.ejecutar(PAREJA, id, 'hola', null)
     const r = await salas.ejecutar(PLANNER)
     expect(r.unreadTotal).toBe(1)
     expect(r.items.map((s) => s.id)).toEqual([id])

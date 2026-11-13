@@ -1,6 +1,8 @@
 import { Logger } from '@nestjs/common'
 
 import { InMemoryQueueAdapter } from '@/modules/queue/infrastructure/queue.adapter.fake'
+import { SubidaDeAdjuntos } from '@/modules/storage/application/subida-de-adjuntos'
+import { ObjectStorageEnMemoria } from '@/modules/storage/infrastructure/object-storage.fake'
 import { DomainError } from '@/shared/domain'
 
 import { ConversationRepositoryEnMemoria } from '../infrastructure/conversation.repository.fake'
@@ -32,15 +34,17 @@ function escenario(publicada = true) {
   repo.registrarUsuario(PEDIDOR, 'Ana')
   const ficha = repo.sembrarFicha(PROV, { businessName: 'Foto Sol', publicada })
   const cola = new InMemoryQueueAdapter()
+  const almacen = new ObjectStorageEnMemoria()
   return {
     repo,
     cola,
+    almacen,
     ficha,
     pedir: new RequestContactUseCase(repo, cola),
     responder: new RespondContactUseCase(repo, cola),
     estado: new GetContactStateUseCase(repo),
     lista: new ListProfileConversationsUseCase(repo),
-    enviar: new SendMessageUseCase(repo, cola),
+    enviar: new SendMessageUseCase(repo, cola, new SubidaDeAdjuntos(almacen)),
     mensajes: new ListMessagesUseCase(repo),
     marcar: new MarkConversationUseCase(repo, cola),
     lectores: new ListRoomReadersUseCase(repo),
@@ -95,7 +99,7 @@ describe('casos de uso del contacto desde la ficha', () => {
   it('el solicitante no escribe en PENDING (403 CONTACT_REQUEST_PENDING)', async () => {
     const { pedir, enviar, ficha } = escenario()
     const { conversacion } = await pedir.ejecutar(PEDIDOR, ficha, 'hola')
-    await expect(enviar.ejecutar(PEDIDOR, conversacion.id, 'otro')).rejects.toBeInstanceOf(
+    await expect(enviar.ejecutar(PEDIDOR, conversacion.id, 'otro', null)).rejects.toBeInstanceOf(
       EscrituraEnSolicitudPendienteError,
     )
   })
@@ -103,7 +107,7 @@ describe('casos de uso del contacto desde la ficha', () => {
   it('el proveedor tampoco escribe en PENDING', async () => {
     const { pedir, enviar, ficha } = escenario()
     const { conversacion } = await pedir.ejecutar(PEDIDOR, ficha, 'hola')
-    await expect(enviar.ejecutar(PROV, conversacion.id, 'otro')).rejects.toBeInstanceOf(
+    await expect(enviar.ejecutar(PROV, conversacion.id, 'otro', null)).rejects.toBeInstanceOf(
       EscrituraEnSolicitudPendienteError,
     )
   })
@@ -121,9 +125,9 @@ describe('casos de uso del contacto desde la ficha', () => {
       mensajeId: null,
     })
 
-    const m1 = await enviar.ejecutar(PEDIDOR, conversacion.id, 'gracias')
+    const m1 = await enviar.ejecutar(PEDIDOR, conversacion.id, 'gracias', null)
     expect(m1.destinatarios).toEqual([PROV])
-    const m2 = await enviar.ejecutar(PROV, conversacion.id, 'a ti')
+    const m2 = await enviar.ejecutar(PROV, conversacion.id, 'a ti', null)
     expect(m2.destinatarios).toEqual([PEDIDOR])
   })
 
@@ -156,12 +160,12 @@ describe('casos de uso del contacto desde la ficha', () => {
     const vista = await responder.ejecutar(PROV, conversacion.id, 'DECLINED')
     expect(vista).toMatchObject({ status: 'DECLINED', readOnly: true })
 
-    await expect(enviar.ejecutar(PEDIDOR, conversacion.id, 'x')).rejects.toBeInstanceOf(
+    await expect(enviar.ejecutar(PEDIDOR, conversacion.id, 'x', null)).rejects.toBeInstanceOf(
       ConversacionSoloLecturaError,
     )
     const pagina = await mensajes.ejecutar(PEDIDOR, conversacion.id, { desde: null, limite: 50 })
     expect(pagina.tipo).toBe('directa')
-    await expect(enviar.ejecutar(PROV, conversacion.id, 'x')).rejects.toBeInstanceOf(
+    await expect(enviar.ejecutar(PROV, conversacion.id, 'x', null)).rejects.toBeInstanceOf(
       ConversacionNoEncontradaError,
     )
     await expect(
